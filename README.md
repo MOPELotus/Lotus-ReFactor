@@ -6,20 +6,18 @@
 
 ## 大功能
 
-- 米游社扫码登录、cookie/stoken 刷新、genshin/miao 兼容桥接。
-- 单 QQ 多 profile：`#扫码登录2`、`#刷新cookie2`、`#补签2` 这类后缀指令都按 profile 生效。
-- 自动签到：游戏签到、社区签到、签到前刷新、失败通知本人、私聊失败时共同群 at。
-- 随机/固定签到调度：前一天生成次日计划，并给用户推送签到时间图片。
-- 多 provider 验证码链：`test_nine -> ttocr -> GT-Manual`，同时服务 JS handler 与 Python 签到。
-- Python venv 初始化：`MihoyoBBSTools`、`test_nine`、模型和运行依赖默认不污染系统 Python。
-- 内置设备信息绑定：社区签到和米游社请求统一注入设备信息与 UA。
-- 全 profile 全游戏体力：原神、星铁、绝区零按 profile/UID 汇总，单项失败不影响其他项。
-- 抽卡记录与面板更新：按 profile 指定登录态生成 authkey 或调用底层插件逻辑。
-- 本地图鉴：接入 nanoka atlas 数据，首次全量抓取，后续按版本差异增量更新。
-- B 站解析/下载：长链、短链、BV、av、QQ 分享卡片；下载只走 BBDown，直播只发信息卡和独立播放器链接。
-- 远程 spawn、上传、下载：master + 2FA + 审计 + 脱敏 + 超时限制。
-- scope 权限系统：替代旧黑白名单模型。
-- 统一 Skia Canvas 图片渲染：全局 MiSans，复用 calendar 风格，不再依赖 Puppeteer 截大页面。
+- 米游社扫码登录与 cookie/stoken 刷新，兼容 genshin/miao。
+- 单 QQ 多 profile，`#扫码登录2`、`#刷新cookie2` 等后缀指令按 profile 生效。
+- 自动签到支持游戏签到、社区签到、签到前刷新和用户结果通知。
+- 签到调度支持随机/固定时间，并提前通知次日计划。
+- 验证码链按顺序尝试 `test_nine`、`ttocr`、`GT-Manual`。
+- 默认使用 Python venv，自动准备 `MihoyoBBSTools`、`test_nine`、模型和工具链。
+- 内置设备绑定，为社区签到和米游社请求提供设备信息。
+- 体力、面板、抽卡按 profile 和 UID 处理原神、星铁、绝区零数据。
+- 本地图鉴接入 nanoka atlas，首次全量抓取，后续增量更新。
+- B 站支持长链、短链、BV、av、QQ 分享卡片；视频走 BBDown，直播发播放器链接。
+- 远程 spawn、上传、下载需要 master 权限、2FA、审计和脱敏。
+- scope 权限系统替代旧黑白名单。
 
 ## 文档
 
