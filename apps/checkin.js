@@ -36,20 +36,25 @@ export class LotusCheckin extends BasePlugin {
 
   async initSigninEnv() {
     await replyText(this, "[荷花插件]正在初始化 Python、MihoyoBBSTools、test_nine 和下载工具链，首次执行可能需要一会儿。")
+    const progress = createInitProgressReporter(this)
     try {
       const globalConfig = await loadGlobalConfig()
       const results = []
       results.push(await runInitStep("MihoyoBBSTools", async () => {
-        const python = await new PythonEnvService({ config: globalConfig.python }).ensureVenv({ installRequirements: true })
+        const python = await new PythonEnvService({
+          config: globalConfig.python,
+          onProgress: progress,
+        }).ensureVenv({ installRequirements: true })
         return {
           ok: true,
           value: `${python.mode} · ${python.command}`,
         }
-      }))
+      }, progress))
       results.push(await runInitStep("test_nine", async () => {
         const env = await new TestNineEnvService({
           config: globalConfig.captcha?.test_nine,
           pythonConfig: globalConfig.python,
+          onProgress: progress,
         }).ensureEnv()
         return {
           ok: env.ok,
@@ -57,14 +62,17 @@ export class LotusCheckin extends BasePlugin {
             ? `${env.python.command} · 模型 ${env.models?.items?.filter(item => item.ok).length || 0}/${env.models?.items?.length || 0}`
             : env.reason,
         }
-      }))
+      }, progress))
       results.push(await runInitStep("BBDown/ffmpeg/aria2", async () => {
-        const tools = await new ToolInstallerService({ config: globalConfig.tools }).ensureAll()
+        const tools = await new ToolInstallerService({
+          config: globalConfig.tools,
+          onProgress: progress,
+        }).ensureAll()
         return {
           ok: tools.ok,
           value: (tools.items || []).map(item => `${item.name}:${item.ok ? item.status || item.reason || "ok" : "fail"}`).join(" / "),
         }
-      }))
+      }, progress))
 
       const ok = results.every(item => item.ok)
       const image = await renderStatusCard({
@@ -146,9 +154,13 @@ export class LotusCheckin extends BasePlugin {
   }
 }
 
-async function runInitStep(name, fn) {
+async function runInitStep(name, fn, onProgress = null) {
+  await emitInitProgress(onProgress, `${name}：开始`)
   try {
     const result = await fn()
+    await emitInitProgress(onProgress, result.ok === false
+      ? `${name}：失败：${result.reason || result.value || "unknown"}`
+      : `${name}：完成`)
     return {
       name,
       ok: result.ok !== false,
@@ -156,6 +168,7 @@ async function runInitStep(name, fn) {
       reason: result.reason || "",
     }
   } catch (error) {
+    await emitInitProgress(onProgress, `${name}：失败：${error.message}`)
     return {
       name,
       ok: false,
@@ -163,4 +176,16 @@ async function runInitStep(name, fn) {
       reason: error.message,
     }
   }
+}
+
+function createInitProgressReporter(plugin) {
+  return async message => {
+    logger?.mark?.(`[Lotus-Plugin] init signin env: ${message}`)
+    await replyText(plugin, `[荷花插件]${message}`)
+  }
+}
+
+async function emitInitProgress(onProgress, message) {
+  if (typeof onProgress !== "function") return
+  await onProgress(message)
 }

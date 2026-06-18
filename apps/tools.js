@@ -32,7 +32,14 @@ export class LotusTools extends BasePlugin {
     }
 
     await replyText(this, "[荷花插件]正在检查 BBDown、ffmpeg、aria2，缺失时会从 GitHub Release 自动下载。")
-    const result = await new ToolInstallerService({ config: globalConfig.tools }).ensureAll()
+    const progress = async message => {
+      logger?.mark?.(`[Lotus-Plugin] init tools: ${message}`)
+      await replyText(this, `[荷花插件]${message}`)
+    }
+    const result = await new ToolInstallerService({
+      config: globalConfig.tools,
+      onProgress: progress,
+    }).ensureAll()
     const image = await renderToolsResult(result, this.e.user_id)
     await replyImage(this, image, result.ok ? "[荷花插件]工具环境初始化完成。" : "[荷花插件]工具环境有项目初始化失败。")
     return true

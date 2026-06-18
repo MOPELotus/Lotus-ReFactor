@@ -12,6 +12,7 @@ export class PythonEnvService {
   constructor(options = {}) {
     this.config = options.config
     this.spawn = options.spawn || spawn
+    this.onProgress = options.onProgress
   }
 
   async getConfig() {
@@ -44,6 +45,7 @@ export class PythonEnvService {
 
   async ensureVenv(options = {}) {
     const { installRequirements = true } = options
+    const onProgress = options.onProgress || this.onProgress
     const config = await this.getConfig()
     if (config.mode === "system") return this.getPythonExecutable()
 
@@ -54,14 +56,18 @@ export class PythonEnvService {
     } catch (error) {
       if (error?.code !== "ENOENT") throw error
       const systemPython = config.system_python || "python"
+      await emitProgress(onProgress, `Python：创建虚拟环境 ${venvPath}`)
       await runProcess(this.spawn, systemPython, ["-m", "venv", venvPath], {
         cwd: rootPath,
       })
+      await emitProgress(onProgress, "Python：虚拟环境创建完成")
     }
 
     const python = await this.getPythonExecutable()
+    await emitProgress(onProgress, "MihoyoBBSTools：检查依赖指纹")
     const status = await this.getFingerprintStatus(venvPath)
     if (installRequirements && status.stale) {
+      await emitProgress(onProgress, `MihoyoBBSTools：安装 Python 依赖（${status.reasons.join(", ") || "首次初始化"}）`)
       await runProcess(this.spawn, python.command, [
         "-m",
         "pip",
@@ -71,6 +77,9 @@ export class PythonEnvService {
       ], {
         cwd: rootPath,
       })
+      await emitProgress(onProgress, "MihoyoBBSTools：Python 依赖安装完成")
+    } else if (installRequirements) {
+      await emitProgress(onProgress, "MihoyoBBSTools：Python 依赖未变化")
     }
 
     if (installRequirements) await this.writeFingerprint(venvPath, status.current)
@@ -129,6 +138,15 @@ export class PythonEnvService {
     } catch {
       return ""
     }
+  }
+}
+
+async function emitProgress(onProgress, message) {
+  if (typeof onProgress !== "function") return
+  try {
+    await onProgress(message)
+  } catch (error) {
+    logger?.debug?.(`[Lotus-Plugin] progress callback failed: ${error.message}`)
   }
 }
 

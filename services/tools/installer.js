@@ -16,6 +16,7 @@ export class ToolInstallerService {
     this.spawn = options.spawn || spawn
     this.platform = options.platform || process.platform
     this.arch = options.arch || process.arch
+    this.onProgress = options.onProgress
   }
 
   async getConfig() {
@@ -25,8 +26,10 @@ export class ToolInstallerService {
   }
 
   async ensureAll(options = {}) {
+    const onProgress = options.onProgress || this.onProgress
     const config = normalizeToolsConfig(options.config || await this.getConfig())
     if (config.auto_install === false) {
+      await emitProgress(onProgress, "工具链：自动安装已关闭")
       return {
         ok: true,
         skipped: true,
@@ -39,14 +42,19 @@ export class ToolInstallerService {
     for (const name of TOOL_NAMES) {
       const item = config[name] || {}
       if (item.enable === false) {
+        await emitProgress(onProgress, `工具链：${name} 已禁用`)
         items.push({ name, ok: true, skipped: true, reason: "disabled" })
         continue
       }
-      items.push(await this.ensureTool(name, config).catch(error => ({
-        name,
-        ok: false,
-        reason: error.message,
-      })))
+      await emitProgress(onProgress, `工具链：检查 ${name}`)
+      items.push(await this.ensureTool(name, config, { onProgress }).catch(async error => {
+        await emitProgress(onProgress, `工具链：${name} 失败：${error.message}`)
+        return {
+          name,
+          ok: false,
+          reason: error.message,
+        }
+      }))
     }
 
     return {
@@ -57,7 +65,8 @@ export class ToolInstallerService {
     }
   }
 
-  async ensureTool(name, config = null) {
+  async ensureTool(name, config = null, options = {}) {
+    const onProgress = options.onProgress || this.onProgress
     const normalized = normalizeToolsConfig(config || await this.getConfig())
     const tool = normalized[name]
     if (!tool) throw new Error(`unknown tool: ${name}`)
@@ -65,6 +74,7 @@ export class ToolInstallerService {
     const binDir = resolveMaybeData(normalized.bin_dir || "data/tools/bin")
     const existing = await findCommandExecutable(tool.command, [binDir])
     if (existing) {
+      await emitProgress(onProgress, `工具链：${name} 已存在`)
       return {
         name,
         ok: true,
@@ -74,6 +84,7 @@ export class ToolInstallerService {
     }
 
     if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
+    await emitProgress(onProgress, `工具链：查询 ${tool.repo} 最新版本`)
     const release = await this.fetchLatestRelease(tool.repo, normalized.github_api)
     const asset = pickReleaseAsset(name, release.assets || [], {
       platform: this.platform,
@@ -91,7 +102,9 @@ export class ToolInstallerService {
     await fs.mkdir(extractDir, { recursive: true })
 
     const archive = path.join(archiveDir, safeFileName(asset.name))
+    await emitProgress(onProgress, `工具链：下载 ${asset.name}`)
     await this.downloadAsset(asset.browser_download_url || asset.url, archive)
+    await emitProgress(onProgress, `工具链：解压 ${asset.name}`)
     await extractArchive(this.spawn, archive, extractDir, {
       timeoutMs: normalized.timeout_ms,
     })
@@ -102,6 +115,7 @@ export class ToolInstallerService {
     const target = path.join(binDir, commandFileName(tool.command))
     await fs.copyFile(executable, target)
     if (this.platform !== "win32") await fs.chmod(target, 0o755).catch(() => null)
+    await emitProgress(onProgress, `工具链：${name} 安装完成`)
 
     return {
       name,
@@ -335,5 +349,14 @@ async function exists(file) {
     return true
   } catch {
     return false
+  }
+}
+
+async function emitProgress(onProgress, message) {
+  if (typeof onProgress !== "function") return
+  try {
+    await onProgress(message)
+  } catch (error) {
+    logger?.debug?.(`[Lotus-Plugin] progress callback failed: ${error.message}`)
   }
 }

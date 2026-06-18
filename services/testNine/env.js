@@ -23,6 +23,7 @@ export class TestNineEnvService {
     this.pythonConfig = options.pythonConfig
     this.spawn = options.spawn || spawn
     this.fetch = options.fetch || globalThis.fetch
+    this.onProgress = options.onProgress
   }
 
   async getConfig() {
@@ -47,11 +48,14 @@ export class TestNineEnvService {
   }
 
   async ensureEnv(options = {}) {
+    const onProgress = options.onProgress || this.onProgress
     const config = await this.getConfig()
     const installRequirements = options.installRequirements ?? config.install_requirements
     const downloadModels = options.downloadModels ?? config.download_models
     const submoduleRoot = resolveMaybeRoot(config.submodule_path)
+    await emitProgress(onProgress, `test_nine：检查子模块 ${submoduleRoot}`)
     if (!await exists(path.join(submoduleRoot, "main.py"))) {
+      await emitProgress(onProgress, "test_nine：子模块缺失，跳过本地模型初始化")
       return {
         ok: false,
         reason: "test_nine_submodule_missing",
@@ -60,11 +64,13 @@ export class TestNineEnvService {
     }
 
     const venvPath = resolveMaybeData(config.venv_path)
-    await this.ensureVenv(venvPath)
+    await this.ensureVenv(venvPath, { onProgress })
     const python = await this.getPythonExecutable()
+    await emitProgress(onProgress, "test_nine：检查依赖指纹")
     const fingerprint = await this.getFingerprintStatus(venvPath, config)
 
     if (installRequirements && fingerprint.stale) {
+      await emitProgress(onProgress, `test_nine：安装 Python 依赖（${fingerprint.reasons.join(", ") || "首次初始化"}）`)
       await runProcess(this.spawn, python.command, [
         "-m",
         "pip",
@@ -74,11 +80,15 @@ export class TestNineEnvService {
       ], {
         cwd: rootPath,
       })
+      await emitProgress(onProgress, "test_nine：Python 依赖安装完成")
+    } else if (installRequirements) {
+      await emitProgress(onProgress, "test_nine：Python 依赖未变化")
     }
 
     const models = downloadModels
-      ? await this.ensureModels(config)
+      ? await this.ensureModels(config, { onProgress })
       : await this.modelStatus(config)
+    await emitProgress(onProgress, "test_nine：同步模型目录")
     const link = await linkModelDirectory({
       submoduleRoot,
       modelDir: resolveMaybeData(config.model_dir),
@@ -101,7 +111,8 @@ export class TestNineEnvService {
     }
   }
 
-  async ensureVenv(venvPath) {
+  async ensureVenv(venvPath, options = {}) {
+    const onProgress = options.onProgress || this.onProgress
     const pyvenv = path.join(venvPath, "pyvenv.cfg")
     try {
       await fs.access(pyvenv)
@@ -110,12 +121,15 @@ export class TestNineEnvService {
       if (error?.code !== "ENOENT") throw error
     }
     const systemPython = this.pythonConfig?.system_python || "python"
+    await emitProgress(onProgress, `test_nine：创建虚拟环境 ${venvPath}`)
     await runProcess(this.spawn, systemPython, ["-m", "venv", venvPath], {
       cwd: rootPath,
     })
+    await emitProgress(onProgress, "test_nine：虚拟环境创建完成")
   }
 
-  async ensureModels(config = null) {
+  async ensureModels(config = null, options = {}) {
+    const onProgress = options.onProgress || this.onProgress
     const normalized = normalizeTestNineConfig(config || await this.getConfig())
     const modelDir = resolveMaybeData(normalized.model_dir)
     await fs.mkdir(modelDir, { recursive: true })
@@ -123,10 +137,13 @@ export class TestNineEnvService {
     for (const file of normalized.model_files) {
       const target = path.join(modelDir, file)
       if (await exists(target)) {
+        await emitProgress(onProgress, `test_nine：模型已存在 ${file}`)
         items.push({ file, ok: true, status: "exists", path: target })
         continue
       }
+      await emitProgress(onProgress, `test_nine：下载模型 ${file}`)
       await this.downloadModel(normalized.model_repo, file, target)
+      await emitProgress(onProgress, `test_nine：模型下载完成 ${file}`)
       items.push({ file, ok: true, status: "downloaded", path: target })
     }
     return {
@@ -350,5 +367,14 @@ async function exists(file) {
     return true
   } catch {
     return false
+  }
+}
+
+async function emitProgress(onProgress, message) {
+  if (typeof onProgress !== "function") return
+  try {
+    await onProgress(message)
+  } catch (error) {
+    logger?.debug?.(`[Lotus-Plugin] progress callback failed: ${error.message}`)
   }
 }
