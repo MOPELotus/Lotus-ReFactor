@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import { installLotusRuntimeInterception } from "./services/intercept/runtime.js"
 import { ensureGlobalConfig } from "./core/config/global.js"
+import { autoStartTestNineServer } from "./services/testNine/server.js"
 
 const pluginName = "Lotus-Plugin"
 const appsDir = new URL("./apps/", import.meta.url)
@@ -15,6 +16,10 @@ await ensureGlobalConfig().then(result => {
 
 await installLotusRuntimeInterception().catch(error => {
   logger?.debug?.(`[${pluginName}] runtime interception skipped: ${error.message}`)
+})
+
+autoStartTestNineServer().catch(error => {
+  logger?.warn?.(`[${pluginName}] test_nine auto start failed: ${error.message}`)
 })
 
 const files = await fs.readdir(appsDir).catch(err => {

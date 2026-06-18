@@ -247,6 +247,7 @@ export class TestNineEnvService {
 export function normalizeTestNineConfig(config = {}) {
   return {
     enable: config.enable !== false,
+    auto_start: config.auto_start !== false,
     endpoint: config.endpoint || "http://127.0.0.1:9645/pass_uni",
     timeout_ms: Number(config.timeout_ms || 20000),
     submodule_path: config.submodule_path || "test_nine",

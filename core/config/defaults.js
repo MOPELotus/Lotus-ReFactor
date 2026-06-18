@@ -33,6 +33,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     },
     test_nine: {
       enable: true,
+      auto_start: true,
       endpoint: "http://127.0.0.1:9645/pass_uni",
       timeout_ms: 20000,
       submodule_path: "test_nine",

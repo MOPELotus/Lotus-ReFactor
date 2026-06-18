@@ -109,6 +109,7 @@ const GUOBA_SCHEMAS = [
   sw("captcha.refresh.enable_on_challenge_used", "刷新失效 challenge", "遇到 challenge 已使用时重新请求。"),
   number("captcha.refresh.max_attempts", "最大刷新次数", "避免无限重试。"),
   sw("captcha.test_nine.enable", "启用 test_nine", "本地模型过码。"),
+  sw("captcha.test_nine.auto_start", "启动 test_nine 服务", "插件加载后自动启动本地服务。"),
   input("captcha.test_nine.endpoint", "test_nine 接口", "默认本机 pass_uni。"),
   number("captcha.test_nine.timeout_ms", "test_nine 超时", "单位毫秒。"),
   input("captcha.test_nine.submodule_path", "test_nine 目录", "子模块目录。"),

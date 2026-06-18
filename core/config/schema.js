@@ -231,7 +231,7 @@ function validateCaptchaConfig(captcha = {}, errors) {
     if (!Array.isArray(captcha.test_nine.model_files) || !captcha.test_nine.model_files.every(isString)) {
       errors.push("captcha.test_nine.model_files must be an array of strings")
     }
-    for (const field of ["install_requirements", "download_models"]) {
+    for (const field of ["auto_start", "install_requirements", "download_models"]) {
       if (typeof captcha.test_nine[field] !== "boolean") {
         errors.push(`captcha.test_nine.${field} must be boolean`)
       }

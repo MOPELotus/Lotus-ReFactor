@@ -122,6 +122,34 @@ export class TestNineServerService {
   }
 }
 
+export async function autoStartTestNineServer(options = {}) {
+  const globalConfig = options.globalConfig || await loadGlobalConfig()
+  const config = normalizeTestNineConfig(globalConfig.captcha?.test_nine || {})
+
+  if (config.enable === false) {
+    return { ok: true, skipped: true, reason: "disabled" }
+  }
+  if (config.auto_start === false) {
+    return { ok: true, skipped: true, reason: "auto_start_disabled" }
+  }
+
+  logger?.mark?.("[Lotus-Plugin] test_nine auto start begin")
+  const result = await new TestNineServerService({
+    config,
+    pythonConfig: globalConfig.python,
+  }).start({
+    installRequirements: config.install_requirements,
+    downloadModels: config.download_models,
+  })
+
+  if (result.ok) {
+    logger?.mark?.(`[Lotus-Plugin] test_nine auto start ${result.alreadyRunning ? "already running" : "ok"} pid=${result.pid || "-"} endpoint=${result.endpoint || config.endpoint}`)
+  } else {
+    logger?.warn?.(`[Lotus-Plugin] test_nine auto start skipped: ${result.reason || "unknown"}`)
+  }
+  return result
+}
+
 async function appendServerLog(state, text) {
   state.lastOutput = cap(`${state.lastOutput}${text}`, 1000)
   await fs.appendFile(state.logFile, text, "utf8").catch(() => null)
