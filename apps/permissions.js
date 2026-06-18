@@ -54,7 +54,7 @@ export class LotusPermissions extends BasePlugin {
   async permissionCommand() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-    if (!permission.isMaster(this.e.user_id)) {
+    if (!permission.isMaster(this.e)) {
       await replyText(this, "[荷花插件]只有 bot 主人可以修改或查看权限配置。")
       return true
     }

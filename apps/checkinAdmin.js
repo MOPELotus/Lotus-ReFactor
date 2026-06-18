@@ -118,7 +118,7 @@ export class LotusCheckinAdmin extends BasePlugin {
 }
 
 function isMaster(e, globalConfig) {
-  return new PermissionService({ permissions: globalConfig.permissions }).isMaster(e?.user_id)
+  return new PermissionService({ permissions: globalConfig.permissions }).isMaster(e)
 }
 
 async function buildProfileListView(e, globalConfig) {

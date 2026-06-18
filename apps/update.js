@@ -37,7 +37,7 @@ export class LotusUpdate extends BasePlugin {
   async runUpdate(options = {}) {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "plugin.update")
+      .explain(this.e, "plugin.update")
     if (!permission.ok) {
       await replyText(this, "[荷花插件]只有 bot 主人可以更新插件。")
       return true

@@ -105,7 +105,7 @@ export class LotusBilibili extends BasePlugin {
   async login() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "bilibili.login")
+      .explain(this.e, "bilibili.login")
     if (!permission.ok) {
       await this.renderError("B站登录", new Error("只有 bot 主人可以登录 B站账号。"))
       return true
@@ -151,7 +151,7 @@ export class LotusBilibili extends BasePlugin {
   async bbdownLogin() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "bilibili.login")
+      .explain(this.e, "bilibili.login")
     if (!permission.ok) {
       await this.renderError("BBDown登录", new Error("只有 bot 主人可以维护 BBDown 登录态。"))
       return true
@@ -202,7 +202,7 @@ export class LotusBilibili extends BasePlugin {
   async downloadVideo() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "bilibili.download")
+      .explain(this.e, "bilibili.download")
     if (!permission.ok) {
       await this.renderError("B站下载", new Error("你没有使用 B站下载的权限。"))
       return true
@@ -226,7 +226,7 @@ export class LotusBilibili extends BasePlugin {
     const service = await createService()
     try {
       const installPermission = new PermissionService({ permissions: globalConfig.permissions })
-        .explain(this.e.user_id, this.e.group_id, "tools.install")
+        .explain(this.e, "tools.install")
       if (globalConfig.tools?.auto_install !== false && installPermission.ok) {
         await replyText(this, "[荷花插件]正在检查 BBDown/ffmpeg/aria2 工具链，缺失时会自动安装。")
         const tools = await new ToolInstallerService({ config: globalConfig.tools }).ensureAll()

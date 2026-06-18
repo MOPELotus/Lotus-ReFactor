@@ -185,7 +185,7 @@ export class LotusRemote extends BasePlugin {
   async checkRemoteMaster() {
     const globalConfig = await loadGlobalConfig()
     return new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "remote.spawn")
+      .explain(this.e, "remote.spawn")
   }
 }
 

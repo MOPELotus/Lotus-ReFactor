@@ -25,7 +25,7 @@ export class LotusTools extends BasePlugin {
   async initTools() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "tools.install")
+      .explain(this.e, "tools.install")
     if (!permission.ok) {
       await replyText(this, "[荷花插件]只有 bot 主人可以初始化工具环境。")
       return true

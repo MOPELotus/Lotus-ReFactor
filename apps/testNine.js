@@ -52,7 +52,7 @@ export class LotusTestNine extends BasePlugin {
   async canManage() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "captcha.manage")
+      .explain(this.e, "captcha.manage")
     if (permission.ok) return true
     await replyText(this, "[荷花插件]只有 bot 主人可以管理 test_nine 服务。")
     return false

@@ -138,7 +138,7 @@ export class LotusAtlas extends BasePlugin {
   async assertUpdatePermission(title) {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "atlas.update")
+      .explain(this.e, "atlas.update")
     if (!permission.ok) {
       const image = await renderStatusCard({
         title: "图鉴更新",

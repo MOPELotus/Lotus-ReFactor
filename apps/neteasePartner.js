@@ -147,7 +147,7 @@ export class LotusNeteasePartner extends BasePlugin {
 
   async requireMaster(globalConfig) {
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "netease.partner")
+      .explain(this.e, "netease.partner")
     if (permission.ok) return true
     await this.renderReport("网易云合伙人", {
       trigger: "权限检查",

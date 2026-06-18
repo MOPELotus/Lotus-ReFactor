@@ -34,7 +34,7 @@ export class LotusGroupManager extends BasePlugin {
   async sendGroupMembersFile() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "group.members.export")
+      .explain(this.e, "group.members.export")
     if (!permission.ok) {
       await this.replyStatus("群成员导出", "拒绝", "只有 bot 主人可以导出群成员列表。", [
         { label: "原因", value: permission.reason },
@@ -70,7 +70,7 @@ export class LotusGroupManager extends BasePlugin {
   async manualCleanupMemberLeave() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "group.cleanup")
+      .explain(this.e, "group.cleanup")
     if (!permission.ok) {
       await this.replyStatus("群配置清理", "拒绝", "只有 bot 主人可以执行群配置清理。", [
         { label: "原因", value: permission.reason },

@@ -9,14 +9,15 @@ export class PermissionService {
     this.masters = new Set([...masters, ...readRuntimeMasters()].map(String))
   }
 
-  can(userId, groupId, scope) {
-    return this.explain(userId, groupId, scope).ok
+  can(subject, groupIdOrScope, scope) {
+    return this.explain(subject, groupIdOrScope, scope).ok
   }
 
-  explain(userId, groupId, scope) {
-    const user = String(userId || "")
-    const group = groupId ? String(groupId) : ""
-    const scopeRule = this.permissions.scopes[scope] || {}
+  explain(subject, groupIdOrScope, scope) {
+    const target = resolvePermissionSubject(subject, groupIdOrScope, scope)
+    const user = target.user
+    const group = target.group
+    const scopeRule = this.permissions.scopes[target.scope] || {}
     const policy = scopeRule.policy || POLICY_INHERIT
 
     if (this.permissions.users.deny.has(user)) {
@@ -30,7 +31,7 @@ export class PermissionService {
       return deny("scope_deny")
     }
     if (policy === POLICY_MASTER_ONLY) {
-      return this.isMaster(user) ? allow("master") : deny("master_only")
+      return this.isMaster(target) ? allow("master") : deny("master_only")
     }
     if (policy === POLICY_ALLOW) {
       return allow("scope_allow")
@@ -48,8 +49,36 @@ export class PermissionService {
       : allow("default_allow")
   }
 
-  isMaster(userId) {
-    return this.masters.has(String(userId || ""))
+  isMaster(subject) {
+    const target = resolvePermissionSubject(subject)
+    return target.eventIsMaster || this.masters.has(target.user)
+  }
+}
+
+export function resolvePermissionSubject(subject, groupIdOrScope = "", scope = "") {
+  if (isEventLike(subject)) {
+    return {
+      user: String(subject.user_id || subject.userId || ""),
+      group: subject.group_id ? String(subject.group_id) : subject.groupId ? String(subject.groupId) : "",
+      scope: scope || String(groupIdOrScope || ""),
+      eventIsMaster: isTrue(subject.isMaster),
+    }
+  }
+
+  if (subject && typeof subject === "object" && "user" in subject) {
+    return {
+      user: String(subject.user || ""),
+      group: subject.group ? String(subject.group) : "",
+      scope: subject.scope ? String(subject.scope) : scope || String(groupIdOrScope || ""),
+      eventIsMaster: isTrue(subject.eventIsMaster) || isTrue(subject.isMaster),
+    }
+  }
+
+  return {
+    user: String(subject || ""),
+    group: groupIdOrScope && scope ? String(groupIdOrScope) : "",
+    scope: scope || "",
+    eventIsMaster: false,
   }
 }
 
@@ -135,6 +164,25 @@ function readRuntimeMasters() {
     ...toArray(config.master),
     ...toArray(config.master_qq),
   ]
+}
+
+function isEventLike(value) {
+  return value && typeof value === "object" && (
+    Object.prototype.hasOwnProperty.call(value, "user_id")
+    || Object.prototype.hasOwnProperty.call(value, "group_id")
+    || Object.prototype.hasOwnProperty.call(value, "isMaster")
+  )
+}
+
+function isTrue(value) {
+  if (typeof value === "function") {
+    try {
+      return isTrue(value())
+    } catch {
+      return false
+    }
+  }
+  return value === true || value === 1 || value === "true"
 }
 
 function toSet(value) {

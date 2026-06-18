@@ -26,7 +26,7 @@ export class RemoteSpawnService {
     if (!remote.enable) return { ok: false, reason: "remote_disabled" }
 
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(e?.user_id, e?.group_id, scope)
+      .explain(e, scope)
     if (!permission.ok) return permission
 
     if (remote.require_otp !== false) {

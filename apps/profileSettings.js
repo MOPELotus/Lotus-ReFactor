@@ -69,7 +69,7 @@ export class LotusProfileSettings extends BasePlugin {
 
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "checkin.group_register")
+      .explain(this.e, "checkin.group_register")
     if (!permission.ok) return false
 
     if (!this.e.group?.getMemberMap) {

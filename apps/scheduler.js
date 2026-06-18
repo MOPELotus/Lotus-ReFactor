@@ -84,7 +84,7 @@ export class LotusScheduler extends BasePlugin {
   async generatePlan() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "scheduler.generate")
+      .explain(this.e, "scheduler.generate")
     if (!permission.ok) {
       await replyText(this, "[荷花插件]只有 bot 主人可以生成全局签到计划。")
       return true
@@ -156,7 +156,7 @@ export class LotusScheduler extends BasePlugin {
   async runDueCommand() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "scheduler.run_due")
+      .explain(this.e, "scheduler.run_due")
     if (!permission.ok) {
       await replyText(this, "[荷花插件]只有 bot 主人可以执行到期签到。")
       return true
@@ -186,7 +186,7 @@ export class LotusScheduler extends BasePlugin {
   async updateSchedulerSettings() {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e.user_id, this.e.group_id, "scheduler.manage")
+      .explain(this.e, "scheduler.manage")
     if (!permission.ok) {
       await replyText(this, "[荷花插件]只有 bot 主人可以修改全局签到调度。")
       return true
