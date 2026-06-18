@@ -166,9 +166,31 @@ const PERSONAL_CHALLENGE_TERMS = new Set([
   "强袭战",
 ])
 
+const GENERIC_ATLAS_SHORTCUT_TERMS = new Set([
+  "原神",
+  "星铁",
+  "崩铁",
+  "星穹铁道",
+  "绝区零",
+  "角色",
+  "武器",
+  "圣遗物",
+  "光锥",
+  "遗器",
+  "遗器套装",
+  "音擎",
+  "驱动盘",
+  "邦布",
+  "敌人",
+  "物品",
+  "材料",
+  "卡牌",
+  "七圣召唤",
+])
+
 const STATIC_QUERY_ALIASES = Object.freeze({
-  星见雅: ["雅"],
-  冰封迷途的勇士: ["冰风迷途的勇士"],
+  星见雅: { game: "绝区零", aliases: ["雅"] },
+  冰封迷途的勇士: { game: "原神", aliases: ["冰风迷途的勇士"] },
 })
 
 const SHORTCUT_GAME_BY_PREFIX = Object.freeze({
@@ -176,6 +198,8 @@ const SHORTCUT_GAME_BY_PREFIX = Object.freeze({
   "*": "星铁",
   "%": "绝区零",
 })
+
+const SHORTCUT_MIN_SCORE = 100
 
 const ZZZ_ICON_MAP_ASSETS = Object.freeze({
   Icon_Normal: ["Icon_Normal"],
@@ -292,7 +316,12 @@ export class NanokaAtlasService {
     const index = await loadAtlasIndex(root, locale, this.fs)
     const results = challenge
       ? await findChallengeResults(index, challenge, root, this.fs, maxResults)
-      : await findSearchResults(index, keyword, root, this.fs, maxResults, { game, aliases })
+      : await findSearchResults(index, keyword, root, this.fs, maxResults, {
+        game,
+        aliases,
+        minScore: options.minScore,
+        strict: options.strict,
+      })
 
     return {
       ok: results.length > 0,
@@ -316,6 +345,8 @@ export class NanokaAtlasService {
       ...options,
       challenge: parsed.challenge,
       game: parsed.game,
+      minScore: parsed.challenge ? undefined : SHORTCUT_MIN_SCORE,
+      strict: !parsed.challenge,
       maxResults: 1,
     })
     return {
@@ -473,6 +504,7 @@ export function parseAtlasShortcutMessage(message = "") {
     }
     return { ok: true, query: text, prefix, game: challenge.game || game, challenge, shortcut: true }
   }
+  if (GENERIC_ATLAS_SHORTCUT_TERMS.has(normalizeShortcutText(text))) return { ok: false, reason: "generic_query" }
   if (looksLikeNonAtlasCommand(text)) return { ok: false, reason: "known_command" }
   if (text.length < 2) return { ok: false, reason: "too_short" }
   return { ok: true, query: text, prefix, game, shortcut: true }
@@ -507,7 +539,7 @@ export function resolveChallengeQuery(query = "", now = new Date()) {
 }
 
 async function findSearchResults(index, keyword, root, fsImpl, maxResults, filters = {}) {
-  const variants = buildKeywordVariants(keyword, filters.aliases)
+  const variants = buildKeywordVariants(keyword, filters.aliases, filters.game)
   const scored = []
 
   for (const entry of index.entries) {
@@ -523,6 +555,7 @@ async function findSearchResults(index, keyword, root, fsImpl, maxResults, filte
   const loaded = []
   const seen = new Set()
   for (const { entry, score } of scored.slice(0, Math.max(maxResults * 5, maxResults))) {
+    if (Number.isFinite(filters.minScore) && score < filters.minScore) continue
     if (seen.has(entry.file)) continue
     seen.add(entry.file)
     const item = await readAtlasItem(entry.file, root, fsImpl, entry).catch(() => null)
@@ -531,12 +564,12 @@ async function findSearchResults(index, keyword, root, fsImpl, maxResults, filte
     loaded.push(item)
   }
 
-  if (needsDetailFallback(loaded, maxResults)) {
+  if (shouldRunDetailFallback(loaded, maxResults, variants, filters)) {
     const detailMatches = await findDetailFallbackMatches(index, variants, root, fsImpl, seen, maxResults, filters)
     loaded.push(...detailMatches)
   }
 
-  if (!loaded.length && index.source !== "files") {
+  if (!filters.strict && !loaded.length && index.source !== "files") {
     const fallback = await findCandidateFiles(index.itemsRoot, keyword, fsImpl)
     for (const candidate of fallback.slice(0, Math.max(maxResults * 3, maxResults))) {
       if (!candidateMatchesAtlasFilters(candidate, index.itemsRoot, filters)) continue
@@ -585,6 +618,12 @@ function needsDetailFallback(loaded, maxResults) {
   if (loaded.length < maxResults) return true
   const topPriority = PAGE_PRIORITY[loaded[0]?.page] || 0
   return topPriority < 180
+}
+
+function shouldRunDetailFallback(loaded, maxResults, variants, filters = {}) {
+  if (!needsDetailFallback(loaded, maxResults)) return false
+  if (!filters.strict) return true
+  return Math.max(...variants.map(variant => variant.key.length), 0) >= 3
 }
 
 async function findChallengeResults(index, challenge, root, fsImpl, maxResults) {
@@ -1088,8 +1127,6 @@ function buildEntryAliases(record, page, game) {
     stripDuplicateSuffix(record.name),
     path.basename(record.path || "", ".json"),
     stripDuplicateSuffix(path.basename(record.path || "", ".json")),
-    page,
-    game,
   ].filter(Boolean).map(String))
   return aliases
 }
@@ -1098,19 +1135,19 @@ async function loadAtlasAliasMap() {
   if (ALIAS_CACHE.loaded) return ALIAS_CACHE.map
 
   const aliases = new Map()
-  for (const [canonical, values] of Object.entries(STATIC_QUERY_ALIASES)) {
-    addAliasPair(aliases, canonical, values)
+  for (const [canonical, config] of Object.entries(STATIC_QUERY_ALIASES)) {
+    addAliasPair(aliases, canonical, config.aliases, config.game)
   }
 
   for (const file of atlasMiaoAliasFiles()) {
     const exports = await readJsAliasExports(file.path, file.exports)
     for (const name of file.exports) {
-      addAliasObject(aliases, exports[name])
+      addAliasObject(aliases, exports[name], file.game)
     }
   }
 
   for (const file of atlasZzzAliasFiles()) {
-    addAliasObject(aliases, readYamlAliasObject(file))
+    addAliasObject(aliases, readYamlAliasObject(file), "绝区零")
   }
 
   ALIAS_CACHE.loaded = true
@@ -1122,12 +1159,12 @@ function atlasMiaoAliasFiles() {
   const files = []
   for (const base of atlasMiaoPluginRoots()) {
     files.push(
-      { path: path.join(base, "resources", "meta-gs", "character", "alias.js"), exports: ["alias"] },
-      { path: path.join(base, "resources", "meta-gs", "weapon", "alias.js"), exports: ["alias", "abbr"] },
-      { path: path.join(base, "resources", "meta-gs", "artifact", "alias.js"), exports: ["alias", "abbr", "setAbbr"] },
-      { path: path.join(base, "resources", "meta-sr", "character", "alias.js"), exports: ["alias"] },
-      { path: path.join(base, "resources", "meta-sr", "weapon", "alias.js"), exports: ["alias", "abbr"] },
-      { path: path.join(base, "resources", "meta-sr", "artifact", "alias.js"), exports: ["alias", "abbr", "setAbbr"] },
+      { path: path.join(base, "resources", "meta-gs", "character", "alias.js"), exports: ["alias"], game: "原神" },
+      { path: path.join(base, "resources", "meta-gs", "weapon", "alias.js"), exports: ["alias", "abbr"], game: "原神" },
+      { path: path.join(base, "resources", "meta-gs", "artifact", "alias.js"), exports: ["alias", "abbr", "setAbbr"], game: "原神" },
+      { path: path.join(base, "resources", "meta-sr", "character", "alias.js"), exports: ["alias"], game: "星铁" },
+      { path: path.join(base, "resources", "meta-sr", "weapon", "alias.js"), exports: ["alias", "abbr"], game: "星铁" },
+      { path: path.join(base, "resources", "meta-sr", "artifact", "alias.js"), exports: ["alias", "abbr", "setAbbr"], game: "星铁" },
     )
   }
   return uniqueExistingFiles(files)
@@ -1265,37 +1302,43 @@ function readYamlAliasObject(file) {
   }
 }
 
-function addAliasObject(map, object) {
+function addAliasObject(map, object, game = "") {
   if (!object || typeof object !== "object") return
   for (const [canonical, aliases] of Object.entries(object)) {
-    addAliasPair(map, canonical, aliases)
+    addAliasPair(map, canonical, aliases, game)
   }
 }
 
-function addAliasPair(map, canonical, aliases) {
+function addAliasPair(map, canonical, aliases, game = "") {
   const values = Array.isArray(aliases) ? aliases : String(aliases || "").split(/[,，]/)
   for (const alias of values) {
     const aliasText = String(alias || "").trim()
     const canonicalText = String(canonical || "").trim()
     if (!aliasText || !canonicalText || aliasText === canonicalText) continue
-    addAliasValue(map, canonicalText, aliasText)
-    addAliasValue(map, aliasText, canonicalText)
+    addAliasValue(map, canonicalText, aliasText, game)
+    addAliasValue(map, aliasText, canonicalText, game)
   }
 }
 
-function addAliasValue(map, key, value) {
+function addAliasValue(map, key, value, game = "") {
   const normalized = normalizeForMatch(key)
   if (!normalized) return
   const list = map.get(normalized) || []
-  if (!list.includes(value)) list.push(value)
+  if (!list.some(item => item.value === value && item.game === game)) list.push({ value, game })
   map.set(normalized, list)
 }
 
-function buildKeywordVariants(keyword, aliases = new Map()) {
+function buildKeywordVariants(keyword, aliases = new Map(), game = "") {
   const text = normalizeKeyword(keyword)
-  const values = new Set([text, ...(STATIC_QUERY_ALIASES[text] || [])])
+  const values = new Set([text])
   const aliasValues = aliases.get(normalizeForMatch(text)) || []
-  for (const value of aliasValues) values.add(value)
+  for (const item of aliasValues) {
+    if (typeof item === "string") {
+      values.add(item)
+    } else if (!item.game || !game || item.game === game) {
+      values.add(item.value)
+    }
+  }
   if (text.includes("冰封")) values.add(text.replaceAll("冰封", "冰风"))
   return [...values].filter(Boolean).map(value => ({
     raw: value,
@@ -3568,7 +3611,7 @@ function compareModules(a, b) {
 }
 
 function looksLikeNonAtlasCommand(text) {
-  return /^(扫码登录|米哈游登录|刷新cookie|绑定设备|体力|全部体力|多体力|更新抽卡记录|更新面板|帮助|菜单|签到|注册自动签到|远程|spawn|上传|下载)/i.test(text)
+  return /^(扫码登录|米哈游登录|锅巴登录|登录|刷新cookie|绑定设备|体力|全部体力|多体力|更新抽卡记录|更新面板|帮助|菜单|签到|注册自动签到|远程|spawn|上传|下载|测试)/i.test(text)
 }
 
 const CHALLENGE_TARGETS = Object.freeze({

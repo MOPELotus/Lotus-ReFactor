@@ -39,7 +39,7 @@ export class LotusBilibili extends BasePlugin {
     const service = await createService()
     const target = service.extractTarget(buildBilibiliMessageText(this.e))
     if (!target) return false
-    return this.renderInfo(await service.getInfo(target))
+    return this.renderInfo(await service.getInfo(target), { target, service })
   }
 
   async searchVideo() {
@@ -83,7 +83,8 @@ export class LotusBilibili extends BasePlugin {
       await replyText(this, `[荷花插件]请输入 1-${cached.results.length} 之间的序号。`)
       return true
     }
-    return this.renderInfo(await (await createService()).getInfo(item.url))
+    const service = await createService()
+    return this.renderInfo(await service.getInfo(item.url), { target: item.url, service })
   }
 
   async directWatch() {
@@ -95,7 +96,8 @@ export class LotusBilibili extends BasePlugin {
     try {
       const [first] = await (await createService()).search(keyword, { limit: 1 })
       if (!first) throw new Error("未搜索到相关视频")
-      return this.renderInfo(await (await createService()).getInfo(first.url))
+      const service = await createService()
+      return this.renderInfo(await service.getInfo(first.url), { target: first.url, service })
     } catch (error) {
       await this.renderError("B站直看", error)
       return true
@@ -200,85 +202,16 @@ export class LotusBilibili extends BasePlugin {
   }
 
   async downloadVideo() {
-    const globalConfig = await loadGlobalConfig()
-    const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e, "bilibili.download")
-    if (!permission.ok) {
-      await this.renderError("B站下载", new Error("你没有使用 B站下载的权限。"))
-      return true
-    }
-
-    const downloadConfig = normalizeDownloadConfig({
-      ...(globalConfig.bilibili || {}),
-      ...(globalConfig.bilibili?.download || {}),
-    })
-    if (!downloadConfig.enable) {
-      await this.renderError("B站下载", new Error("B站下载未启用，请由 bot 主人在 global.yaml 中开启 bilibili.download.enable。"))
-      return true
-    }
-
     const target = String(this.e.msg || "").replace(/^#(?:B站|b站|荷花)(?:下载|下视频)\s*/i, "").trim()
     if (!target) {
       await replyText(this, "[荷花插件]请输入要下载的 B站链接、BV号或 av号。")
       return true
     }
 
-    const service = await createService()
-    try {
-      const installPermission = new PermissionService({ permissions: globalConfig.permissions })
-        .explain(this.e, "tools.install")
-      if (globalConfig.tools?.auto_install !== false && installPermission.ok) {
-        await replyText(this, "[荷花插件]正在检查 BBDown/ffmpeg/aria2 工具链，缺失时会自动安装。")
-        const tools = await new ToolInstallerService({ config: globalConfig.tools }).ensureAll()
-        if (!tools.ok) {
-          throw new Error(`工具链初始化失败：${tools.items?.filter(item => !item.ok).map(item => `${item.name}:${item.reason}`).join(" / ") || "unknown"}`)
-        }
-      }
-      await replyText(this, "[荷花插件]开始处理 B站下载任务。")
-      const result = await service.download(target, {
-        ...(globalConfig.bilibili || {}),
-        ...(globalConfig.bilibili?.download || {}),
-      }, {
-        onEvent: async event => {
-          if (event.message) await replyText(this, `[荷花插件]${event.message}`)
-        },
-      })
-      if (!result.ok) {
-        if (result.reason === "live_download_unsupported" && result.info) {
-          await replyText(this, "[荷花插件]直播内容不进入下载流程，已改为发送直播信息和独立播放器链接。")
-          return this.renderInfo(result.info)
-        }
-        await this.renderError("B站下载", new Error(downloadFailureMessage(result)))
-        return true
-      }
-
-      for (const file of result.files || []) {
-        await sendBiliFile(this.e, file, downloadConfig)
-      }
-
-      const image = await renderStatusCard({
-        title: "B站下载",
-        subtitle: result.info?.bvid || "荷花插件 Bilibili",
-        badge: result.fromCache ? "缓存" : "完成",
-        message: `已生成 ${result.files?.length || 0} 个文件并尝试发送。`,
-        userId: this.e.user_id,
-        items: [
-          { label: "标题", value: result.info?.title || "-" },
-          { label: "方式", value: result.downloader || "-" },
-          { label: "多P策略", value: result.policy || "-" },
-          { label: "文件", value: (result.files || []).map(file => path.basename(file)).join(" / ") || "无" },
-        ],
-      }, {
-        saveId: `lotus-bili-download-${this.e.user_id || "user"}`,
-      })
-      await replyImage(this, image, "[荷花插件]B站下载完成。")
-    } catch (error) {
-      await this.renderError("B站下载", error)
-    }
-    return true
+    return this.runBiliDownload(target, { service: await createService() })
   }
 
-  async renderInfo(info) {
+  async renderInfo(info, options = {}) {
     const image = await renderTemplate("bilibili-info", {
       type: info.type,
       id: info.type === "live" ? `直播间 ${info.roomId}` : info.bvid,
@@ -297,8 +230,85 @@ export class LotusBilibili extends BasePlugin {
     await replyImage(this, image, "[荷花插件]B站解析完成。")
     if (info.type === "live" && info.playerUrl) {
       await replyText(this, `[荷花插件]独立播放器：${info.playerUrl}`)
-    } else if (info.type === "video" && info.url) {
-      await replyText(this, `[荷花插件]视频链接：${info.url}`)
+    } else if (info.type === "video" && info.url && options.download !== false) {
+      await this.runBiliDownload(options.target || info.url, {
+        service: options.service,
+        title: "B站解析下载",
+        announce: false,
+      })
+    }
+    return true
+  }
+
+  async runBiliDownload(target, options = {}) {
+    const globalConfig = await loadGlobalConfig()
+    const permission = new PermissionService({ permissions: globalConfig.permissions })
+      .explain(this.e, "bilibili.download")
+    if (!permission.ok) {
+      await this.renderError(options.title || "B站下载", new Error("你没有使用 B站下载的权限。"))
+      return true
+    }
+
+    const downloadConfig = normalizeDownloadConfig({
+      ...(globalConfig.bilibili || {}),
+      ...(globalConfig.bilibili?.download || {}),
+    })
+    if (!downloadConfig.enable) {
+      await this.renderError(options.title || "B站下载", new Error("B站下载未启用，请由 bot 主人在 global.yaml 中开启 bilibili.download.enable。"))
+      return true
+    }
+
+    const service = options.service || await createService()
+    try {
+      const installPermission = new PermissionService({ permissions: globalConfig.permissions })
+        .explain(this.e, "tools.install")
+      if (globalConfig.tools?.auto_install !== false && installPermission.ok) {
+        await replyText(this, "[荷花插件]正在检查 BBDown/ffmpeg/aria2 工具链，缺失时会自动安装。")
+        const tools = await new ToolInstallerService({ config: globalConfig.tools }).ensureAll()
+        if (!tools.ok) {
+          throw new Error(`工具链初始化失败：${tools.items?.filter(item => !item.ok).map(item => `${item.name}:${item.reason}`).join(" / ") || "unknown"}`)
+        }
+      }
+      if (options.announce !== false) await replyText(this, "[荷花插件]开始处理 B站下载任务。")
+      const result = await service.download(target, {
+        ...(globalConfig.bilibili || {}),
+        ...(globalConfig.bilibili?.download || {}),
+      }, {
+        onEvent: async event => {
+          if (event.message) await replyText(this, `[荷花插件]${event.message}`)
+        },
+      })
+      if (!result.ok) {
+        if (result.reason === "live_download_unsupported" && result.info) {
+          await replyText(this, "[荷花插件]直播内容不进入下载流程，已改为发送直播信息和独立播放器链接。")
+          return this.renderInfo(result.info, { download: false })
+        }
+        await this.renderError(options.title || "B站下载", new Error(downloadFailureMessage(result)))
+        return true
+      }
+
+      for (const file of result.files || []) {
+        await sendBiliFile(this.e, file, downloadConfig)
+      }
+
+      const image = await renderStatusCard({
+        title: options.title || "B站下载",
+        subtitle: result.info?.bvid || "荷花插件 Bilibili",
+        badge: result.fromCache ? "缓存" : "完成",
+        message: `已生成 ${result.files?.length || 0} 个文件并尝试发送。`,
+        userId: this.e.user_id,
+        items: [
+          { label: "标题", value: result.info?.title || "-" },
+          { label: "方式", value: result.downloader || "-" },
+          { label: "多P策略", value: result.policy || "-" },
+          { label: "文件", value: (result.files || []).map(file => path.basename(file)).join(" / ") || "无" },
+        ],
+      }, {
+        saveId: `lotus-bili-download-${this.e.user_id || "user"}`,
+      })
+      await replyImage(this, image, "[荷花插件]B站下载完成。")
+    } catch (error) {
+      await this.renderError(options.title || "B站下载", error)
     }
     return true
   }

@@ -90,19 +90,27 @@ export class LotusProfileSettings extends BasePlugin {
       })
       await this.replyBulkRegisterStatus({
         title: "注册本群签到",
-        badge: `+${result.created}`,
-        message: "已为本群没有对应 profile 的成员创建默认自动签到配置；已有配置未被覆盖。",
+        badge: `+${result.updated}`,
+        message: "已为本群存在有效登录态的 profile 注册签到通知；缺少 profile 或 cookie/stoken 的成员已跳过。下方明细只展示部分样例。",
         items: [
           { label: "群号", value: result.groupId },
           { label: "profile", value: `P${result.profileId}` },
           { label: "群成员", value: String(result.totalMembers) },
-          { label: "新建/已有", value: `${result.created}/${result.existing}` },
+          { label: "注册/已有/跳过", value: `${result.updated}/${result.existing}/${result.skipped}` },
+          { label: "明细展示", value: "注册/已有前10条，跳过前6条" },
           ...result.results
-            .filter(item => item.created)
+            .filter(item => item.updated || item.existing)
             .slice(0, 10)
             .map(item => ({
               label: `${item.nickname || "群成员"} (${item.qq})`,
-              value: `已创建 P${item.profileId}`,
+              value: item.updated ? `已注册 P${item.profileId}` : `已存在 P${item.profileId}`,
+            })),
+          ...result.results
+            .filter(item => item.skipped)
+            .slice(0, 6)
+            .map(item => ({
+              label: `${item.nickname || "群成员"} (${item.qq})`,
+              value: groupRegisterSkipReason(item.reason),
             })),
         ],
       })
@@ -130,4 +138,10 @@ export class LotusProfileSettings extends BasePlugin {
     })
     await replyImage(this, image, `[荷花插件]${title}${badge}`)
   }
+}
+
+function groupRegisterSkipReason(reason = "") {
+  if (reason === "missing_profile") return "跳过：未找到 profile"
+  if (reason === "missing_login") return "跳过：缺少 cookie/stoken"
+  return `跳过：${reason || "未知原因"}`
 }

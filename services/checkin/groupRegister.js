@@ -1,5 +1,4 @@
 import {
-  ensureProfile,
   loadProfile,
   saveProfile,
 } from "../../core/config/profile.js"
@@ -25,55 +24,84 @@ export async function registerGroupCheckinProfiles({
   const results = []
   for (const member of members) {
     const qq = member.user_id
-    const existing = await profileExists(qq, profileId)
-    if (existing) {
+    const nickname = groupMemberDisplayName(member)
+    const profile = await loadProfileIfExists(qq, profileId)
+    if (!profile) {
       results.push({
         qq,
         profileId,
-        nickname: groupMemberDisplayName(member),
-        created: false,
-        reason: "exists",
+        nickname,
+        ok: false,
+        skipped: true,
+        reason: "missing_profile",
       })
       continue
     }
 
-    const profile = await ensureProfile({
-      qq,
-      profileId,
-      nickname: groupMemberDisplayName(member),
-    })
+    if (!hasSigninLoginState(profile)) {
+      results.push({
+        qq,
+        profileId,
+        nickname,
+        ok: false,
+        skipped: true,
+        reason: "missing_login",
+      })
+      continue
+    }
+
+    const alreadyEnabled = profile.enabled === true
+    const fallbackGroups = profile.profile?.notify?.fallback_groups || []
+    const alreadyInGroup = fallbackGroups.map(String).includes(resolvedGroupId)
     profile.enabled = true
+    profile.user ||= {}
+    profile.user.nickname ||= nickname
+    profile.profile ||= {}
     profile.profile.notify ||= {}
     profile.profile.notify.fallback_groups ||= []
-    if (!profile.profile.notify.fallback_groups.map(String).includes(resolvedGroupId)) {
+    if (!alreadyInGroup) {
       profile.profile.notify.fallback_groups.push(resolvedGroupId)
     }
-    await saveProfile(profile)
+    if (!alreadyEnabled || !alreadyInGroup) {
+      await saveProfile(profile)
+    }
     results.push({
       qq,
       profileId,
-      nickname: groupMemberDisplayName(member),
-      created: true,
+      nickname,
+      ok: true,
+      registered: true,
+      updated: !alreadyEnabled || !alreadyInGroup,
+      existing: alreadyEnabled && alreadyInGroup,
     })
   }
 
-  const created = results.filter(item => item.created).length
+  const updated = results.filter(item => item.updated).length
+  const existing = results.filter(item => item.existing).length
+  const skipped = results.filter(item => item.skipped).length
   return {
     groupId: resolvedGroupId,
     profileId,
     totalMembers: members.length,
-    created,
-    existing: results.length - created,
+    created: 0,
+    updated,
+    registered: updated + existing,
+    existing,
+    skipped,
     results,
   }
 }
 
-async function profileExists(qq, profileId) {
+async function loadProfileIfExists(qq, profileId) {
   try {
-    await loadProfile(qq, profileId)
-    return true
+    return await loadProfile(qq, profileId)
   } catch (error) {
-    if (error?.code === "ENOENT") return false
+    if (error?.code === "ENOENT") return null
     throw error
   }
+}
+
+function hasSigninLoginState(profile) {
+  const account = profile?.account || {}
+  return Boolean(account.cookie && (account.stoken || account.stoken_cookie))
 }
