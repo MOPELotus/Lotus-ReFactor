@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
+import { parse as parseYaml } from "yaml"
 import { loadGlobalConfig } from "../../core/config/global.js"
 import { rootPath } from "../../core/path.js"
 
@@ -28,6 +29,10 @@ const LOCALE_IDS = {
 }
 
 const INDEX_CACHE = new Map()
+const ALIAS_CACHE = {
+  loaded: false,
+  map: new Map(),
+}
 const ATLAS_PAGE_INDEX_CACHE = new Map()
 const NUMERIC_TOKEN_RE = /[-+]?\d+(?:\.\d+)?%?/g
 
@@ -161,9 +166,15 @@ const PERSONAL_CHALLENGE_TERMS = new Set([
   "强袭战",
 ])
 
-const QUERY_ALIASES = Object.freeze({
+const STATIC_QUERY_ALIASES = Object.freeze({
   星见雅: ["雅"],
   冰封迷途的勇士: ["冰风迷途的勇士"],
+})
+
+const SHORTCUT_GAME_BY_PREFIX = Object.freeze({
+  "#": "原神",
+  "*": "星铁",
+  "%": "绝区零",
 })
 
 const ZZZ_ICON_MAP_ASSETS = Object.freeze({
@@ -257,9 +268,11 @@ export class NanokaAtlasService {
 
   async search(query, options = {}) {
     const parsed = parseAtlasQuery(query)
-    const challenge = resolveChallengeQuery(parsed.keyword, options.now)
+    const challenge = options.challenge || resolveChallengeQuery(parsed.keyword, options.now)
     const keyword = normalizeKeyword(challenge?.search || parsed.keyword)
     if (!keyword && !challenge) return { ok: false, reason: "empty_query", results: [] }
+    const game = options.game || challenge?.game || ""
+    const aliases = await loadAtlasAliasMap()
 
     const config = this.config || (await loadGlobalConfig()).atlas || {}
     const root = resolveAtlasRoot(options.dataRoot || config.data_root)
@@ -279,7 +292,7 @@ export class NanokaAtlasService {
     const index = await loadAtlasIndex(root, locale, this.fs)
     const results = challenge
       ? await findChallengeResults(index, challenge, root, this.fs, maxResults)
-      : await findSearchResults(index, keyword, root, this.fs, maxResults)
+      : await findSearchResults(index, keyword, root, this.fs, maxResults, { game, aliases })
 
     return {
       ok: results.length > 0,
@@ -289,6 +302,7 @@ export class NanokaAtlasService {
       query: keyword,
       rawQuery: normalizeKeyword(query),
       challenge,
+      game,
       template: challenge ? "atlas-challenge" : "atlas-item",
       modules: index.modules,
       results,
@@ -300,6 +314,8 @@ export class NanokaAtlasService {
     if (!parsed.ok) return { ok: false, reason: parsed.reason }
     const result = await this.search(parsed.query, {
       ...options,
+      challenge: parsed.challenge,
+      game: parsed.game,
       maxResults: 1,
     })
     return {
@@ -436,7 +452,7 @@ export function selectAtlasTemplate(renderDataOrResult) {
 }
 
 export function parseAtlasShortcutMessage(message = "") {
-  const raw = String(message || "").trim()
+  const raw = stripAtlasMessagePrefix(message)
   if (!raw) return { ok: false, reason: "empty" }
   if (/^#?(?:Lotus|lotus|荷花)?图鉴/i.test(raw)) {
     const query = normalizeKeyword(raw)
@@ -445,16 +461,21 @@ export function parseAtlasShortcutMessage(message = "") {
 
   const prefix = raw[0]
   if (!["#", "*", "%"].includes(prefix)) return { ok: false, reason: "unsupported_prefix" }
+  const game = SHORTCUT_GAME_BY_PREFIX[prefix]
   const text = raw.slice(1).trim()
   if (!text) return { ok: false, reason: "empty_query" }
   if (isPersonalChallengeQuery(raw)) return { ok: false, reason: "personal_challenge" }
 
   const challenge = resolveChallengeQuery(text)
-  if (challenge) return { ok: true, query: text, challenge, shortcut: true }
-  if (prefix !== "#") return { ok: false, reason: "non_hash_requires_period_challenge" }
+  if (challenge) {
+    if (game && challenge.game && game !== challenge.game) {
+      return { ok: false, reason: "prefix_game_mismatch", game, challenge }
+    }
+    return { ok: true, query: text, prefix, game: challenge.game || game, challenge, shortcut: true }
+  }
   if (looksLikeNonAtlasCommand(text)) return { ok: false, reason: "known_command" }
   if (text.length < 2) return { ok: false, reason: "too_short" }
-  return { ok: true, query: text, shortcut: true }
+  return { ok: true, query: text, prefix, game, shortcut: true }
 }
 
 export function isPersonalChallengeQuery(query = "") {
@@ -485,11 +506,12 @@ export function resolveChallengeQuery(query = "", now = new Date()) {
   }
 }
 
-async function findSearchResults(index, keyword, root, fsImpl, maxResults) {
-  const variants = buildKeywordVariants(keyword)
+async function findSearchResults(index, keyword, root, fsImpl, maxResults, filters = {}) {
+  const variants = buildKeywordVariants(keyword, filters.aliases)
   const scored = []
 
   for (const entry of index.entries) {
+    if (!entryMatchesAtlasFilters(entry, filters)) continue
     const score = scoreIndexEntry(entry, variants, keyword)
     if (score > 0) scored.push({ entry, score })
   }
@@ -510,13 +532,14 @@ async function findSearchResults(index, keyword, root, fsImpl, maxResults) {
   }
 
   if (needsDetailFallback(loaded, maxResults)) {
-    const detailMatches = await findDetailFallbackMatches(index, variants, root, fsImpl, seen, maxResults)
+    const detailMatches = await findDetailFallbackMatches(index, variants, root, fsImpl, seen, maxResults, filters)
     loaded.push(...detailMatches)
   }
 
   if (!loaded.length && index.source !== "files") {
     const fallback = await findCandidateFiles(index.itemsRoot, keyword, fsImpl)
     for (const candidate of fallback.slice(0, Math.max(maxResults * 3, maxResults))) {
+      if (!candidateMatchesAtlasFilters(candidate, index.itemsRoot, filters)) continue
       const item = await readAtlasItem(candidate.file, root, fsImpl, candidate).catch(() => null)
       if (!item) continue
       item.score = scoreCandidateFile(candidate, keyword) + scoreLoadedItem(item, variants, keyword)
@@ -528,9 +551,11 @@ async function findSearchResults(index, keyword, root, fsImpl, maxResults) {
   return loaded.slice(0, maxResults)
 }
 
-async function findDetailFallbackMatches(index, variants, root, fsImpl, seen, maxResults) {
+async function findDetailFallbackMatches(index, variants, root, fsImpl, seen, maxResults, filters = {}) {
   const matches = []
-  const highPriorityEntries = index.entries.filter(entry => (PAGE_PRIORITY[entry.page] || 0) >= 180 && !seen.has(entry.file))
+  const highPriorityEntries = index.entries.filter(entry => (PAGE_PRIORITY[entry.page] || 0) >= 180
+    && !seen.has(entry.file)
+    && entryMatchesAtlasFilters(entry, filters))
   for (const entry of highPriorityEntries) {
     const raw = await fsImpl.readFile(entry.file, "utf8").catch(() => "")
     const normalized = normalizeForMatch(raw)
@@ -543,6 +568,17 @@ async function findDetailFallbackMatches(index, variants, root, fsImpl, seen, ma
     if (matches.length >= maxResults * 4) break
   }
   return matches
+}
+
+function entryMatchesAtlasFilters(entry, filters = {}) {
+  return !filters.game || entry.game === filters.game
+}
+
+function candidateMatchesAtlasFilters(candidate, itemsRoot, filters = {}) {
+  if (!filters.game) return true
+  const relative = path.relative(itemsRoot, candidate.file || "")
+  const [game] = relative.split(path.sep)
+  return game === filters.game
 }
 
 function needsDetailFallback(loaded, maxResults) {
@@ -1058,9 +1094,208 @@ function buildEntryAliases(record, page, game) {
   return aliases
 }
 
-function buildKeywordVariants(keyword) {
+async function loadAtlasAliasMap() {
+  if (ALIAS_CACHE.loaded) return ALIAS_CACHE.map
+
+  const aliases = new Map()
+  for (const [canonical, values] of Object.entries(STATIC_QUERY_ALIASES)) {
+    addAliasPair(aliases, canonical, values)
+  }
+
+  for (const file of atlasMiaoAliasFiles()) {
+    const exports = await readJsAliasExports(file.path, file.exports)
+    for (const name of file.exports) {
+      addAliasObject(aliases, exports[name])
+    }
+  }
+
+  for (const file of atlasZzzAliasFiles()) {
+    addAliasObject(aliases, readYamlAliasObject(file))
+  }
+
+  ALIAS_CACHE.loaded = true
+  ALIAS_CACHE.map = aliases
+  return aliases
+}
+
+function atlasMiaoAliasFiles() {
+  const files = []
+  for (const base of atlasMiaoPluginRoots()) {
+    files.push(
+      { path: path.join(base, "resources", "meta-gs", "character", "alias.js"), exports: ["alias"] },
+      { path: path.join(base, "resources", "meta-gs", "weapon", "alias.js"), exports: ["alias", "abbr"] },
+      { path: path.join(base, "resources", "meta-gs", "artifact", "alias.js"), exports: ["alias", "abbr", "setAbbr"] },
+      { path: path.join(base, "resources", "meta-sr", "character", "alias.js"), exports: ["alias"] },
+      { path: path.join(base, "resources", "meta-sr", "weapon", "alias.js"), exports: ["alias", "abbr"] },
+      { path: path.join(base, "resources", "meta-sr", "artifact", "alias.js"), exports: ["alias", "abbr", "setAbbr"] },
+    )
+  }
+  return uniqueExistingFiles(files)
+}
+
+function atlasZzzAliasFiles() {
+  const files = atlasZzzPluginRoots().map(base => path.join(base, "defSet", "alias.yaml"))
+  return uniqueExistingFiles(files)
+}
+
+function atlasMiaoPluginRoots() {
+  return [
+    path.join(process.cwd(), "plugins", "miao-plugin"),
+    path.join(process.cwd(), "plugins", "Miao-Plugin"),
+    path.join(process.cwd(), "plugins", "miao-plugin-fork"),
+    path.join(rootPath, "reference-projects", "mine", "miao-plugin"),
+  ]
+}
+
+function atlasZzzPluginRoots() {
+  return [
+    path.join(process.cwd(), "plugins", "ZZZ-Plugin"),
+    path.join(process.cwd(), "plugins", "zzz-plugin"),
+    path.join(rootPath, "reference-projects", "external", "ZZZ-Plugin"),
+  ]
+}
+
+function uniqueExistingFiles(files) {
+  const seen = new Set()
+  const result = []
+  for (const item of files) {
+    const file = typeof item === "string" ? item : item.path
+    const key = path.resolve(file).toLowerCase()
+    if (seen.has(key) || !existsSync(file)) continue
+    seen.add(key)
+    result.push(item)
+  }
+  return result
+}
+
+async function readJsAliasExports(file, exportNames = []) {
+  try {
+    const stat = await fs.stat(file)
+    const mod = await import(`${pathToFileURL(file).href}?lotusAlias=${stat.mtimeMs}`)
+    const ret = {}
+    for (const name of exportNames) ret[name] = mod[name]
+    return ret
+  } catch {
+    return readJsAliasExportsFallback(file, exportNames)
+  }
+}
+
+function readJsAliasExportsFallback(file, exportNames = []) {
+  const source = readFileSync(file, "utf8")
+  const ret = {}
+  for (const name of exportNames) {
+    const literal = extractExportObjectLiteral(source, name)
+    if (!literal) continue
+    try {
+      ret[name] = Function(`"use strict"; return (${literal});`)()
+    } catch {
+      // Ignore malformed third-party alias snippets; base atlas search still works.
+    }
+  }
+  return ret
+}
+
+function extractExportObjectLiteral(source, name) {
+  const marker = new RegExp(`export\\s+const\\s+${name}\\s*=`, "u")
+  const match = marker.exec(source)
+  if (!match) return ""
+  const start = source.indexOf("{", match.index + match[0].length)
+  if (start < 0) return ""
+  return extractBalancedObjectLiteral(source, start)
+}
+
+function extractBalancedObjectLiteral(source, start) {
+  let depth = 0
+  let quote = ""
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+  for (let index = start; index < source.length; index++) {
+    const char = source[index]
+    const next = source[index + 1]
+    if (lineComment) {
+      if (char === "\n") lineComment = false
+      continue
+    }
+    if (blockComment) {
+      if (char === "*" && next === "/") {
+        blockComment = false
+        index++
+      }
+      continue
+    }
+    if (quote) {
+      if (escaped) {
+        escaped = false
+      } else if (char === "\\") {
+        escaped = true
+      } else if (char === quote) {
+        quote = ""
+      }
+      continue
+    }
+    if (char === "/" && next === "/") {
+      lineComment = true
+      index++
+      continue
+    }
+    if (char === "/" && next === "*") {
+      blockComment = true
+      index++
+      continue
+    }
+    if (char === "'" || char === "\"" || char === "`") {
+      quote = char
+      continue
+    }
+    if (char === "{") depth++
+    if (char === "}") {
+      depth--
+      if (depth === 0) return source.slice(start, index + 1)
+    }
+  }
+  return ""
+}
+
+function readYamlAliasObject(file) {
+  try {
+    return parseYaml(readFileSync(file, "utf8"))
+  } catch {
+    return null
+  }
+}
+
+function addAliasObject(map, object) {
+  if (!object || typeof object !== "object") return
+  for (const [canonical, aliases] of Object.entries(object)) {
+    addAliasPair(map, canonical, aliases)
+  }
+}
+
+function addAliasPair(map, canonical, aliases) {
+  const values = Array.isArray(aliases) ? aliases : String(aliases || "").split(/[,，]/)
+  for (const alias of values) {
+    const aliasText = String(alias || "").trim()
+    const canonicalText = String(canonical || "").trim()
+    if (!aliasText || !canonicalText || aliasText === canonicalText) continue
+    addAliasValue(map, canonicalText, aliasText)
+    addAliasValue(map, aliasText, canonicalText)
+  }
+}
+
+function addAliasValue(map, key, value) {
+  const normalized = normalizeForMatch(key)
+  if (!normalized) return
+  const list = map.get(normalized) || []
+  if (!list.includes(value)) list.push(value)
+  map.set(normalized, list)
+}
+
+function buildKeywordVariants(keyword, aliases = new Map()) {
   const text = normalizeKeyword(keyword)
-  const values = new Set([text, ...(QUERY_ALIASES[text] || [])])
+  const values = new Set([text, ...(STATIC_QUERY_ALIASES[text] || [])])
+  const aliasValues = aliases.get(normalizeForMatch(text)) || []
+  for (const value of aliasValues) values.add(value)
   if (text.includes("冰封")) values.add(text.replaceAll("冰封", "冰风"))
   return [...values].filter(Boolean).map(value => ({
     raw: value,
@@ -3220,7 +3455,7 @@ function parseAtlasQuery(query) {
 }
 
 function normalizeKeyword(value) {
-  return String(value || "")
+  return stripAtlasMessagePrefix(value)
     .replace(/^#?(Lotus|lotus|荷花)?图鉴/i, "")
     .replace(/^[#*%]/, "")
     .trim()
@@ -3230,6 +3465,12 @@ function normalizeShortcutText(value) {
   return normalizeKeyword(value)
     .replace(/\s+/g, "")
     .trim()
+}
+
+function stripAtlasMessagePrefix(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^\s*[\[【](?:Lotus|荷花插件?|荷花)[\]】]\s*/i, "")
 }
 
 function normalizeForMatch(value) {

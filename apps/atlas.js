@@ -189,7 +189,10 @@ export class LotusAtlas extends BasePlugin {
     const parsed = parseAtlasShortcutMessage(this.e.msg)
     if (!parsed.ok) return false
 
-    const result = await new NanokaAtlasService().search(parsed.query)
+    const result = await new NanokaAtlasService().search(parsed.query, {
+      challenge: parsed.challenge,
+      game: parsed.game,
+    })
     if (!result.ok) return false
 
     const image = await renderAtlasSearchResult(result, this.e.user_id)
