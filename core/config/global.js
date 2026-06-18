@@ -31,6 +31,29 @@ export async function loadGlobalConfig(options = {}) {
   }
 }
 
+export async function ensureGlobalConfig(options = {}) {
+  const { fileName = GLOBAL_CONFIG_FILE } = options
+  const file = globalConfigFilePath(fileName)
+
+  try {
+    await fs.access(file)
+    return {
+      created: false,
+      file,
+      config: await loadGlobalConfig({ fileName }),
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error
+    const config = createDefaultGlobalConfig()
+    await saveGlobalConfig(config, { fileName })
+    return {
+      created: true,
+      file,
+      config,
+    }
+  }
+}
+
 export async function saveGlobalConfig(config, options = {}) {
   const { fileName = GLOBAL_CONFIG_FILE } = options
   const file = globalConfigFilePath(fileName)

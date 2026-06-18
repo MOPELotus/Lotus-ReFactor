@@ -16,6 +16,8 @@ corepack enable
 pnpm install
 ```
 
+插件首次加载时会自动生成 `config/global.yaml`。如果已经安装锅巴插件，可以直接在锅巴面板里修改荷花插件的全局配置。
+
 如果 clone 时没有拉子模块：
 
 ```bash

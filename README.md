@@ -18,6 +18,7 @@
 - B 站支持长链、短链、BV、av、QQ 分享卡片；视频走 BBDown，直播发播放器链接。
 - 远程 spawn、上传、下载需要 master 权限、2FA、审计和脱敏。
 - scope 权限系统替代旧黑白名单。
+- 支持锅巴面板修改全局配置。
 
 ## 文档
 
@@ -51,5 +52,6 @@
 - [MOPELotus/nanoka-atlas-backend](https://github.com/MOPELotus/nanoka-atlas-backend)
 - [TimeRainStarSky/Yunzai](https://github.com/TimeRainStarSky/Yunzai)
 - [yoimiya-kokomi/miao-plugin](https://github.com/yoimiya-kokomi/miao-plugin)
+- [guoba-yunzai/guoba-plugin](https://github.com/guoba-yunzai/guoba-plugin)
 
 敏感数据只允许写入 `data/` 或用户本地配置，不要提交 cookie、stoken、mid、打码平台 key、OTP secret 或远程 spawn 输出。

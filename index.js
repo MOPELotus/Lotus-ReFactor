@@ -1,10 +1,17 @@
 import fs from "node:fs/promises"
 import { installLotusRuntimeInterception } from "./services/intercept/runtime.js"
+import { ensureGlobalConfig } from "./core/config/global.js"
 
 const pluginName = "Lotus-Plugin"
 const appsDir = new URL("./apps/", import.meta.url)
 
 logger?.info?.("---- Lotus-Plugin refactor loading ----")
+
+await ensureGlobalConfig().then(result => {
+  if (result.created) logger?.mark?.(`[${pluginName}] created default config: ${result.file}`)
+}).catch(error => {
+  logger?.warn?.(`[${pluginName}] global config init skipped: ${error.message}`)
+})
 
 await installLotusRuntimeInterception().catch(error => {
   logger?.debug?.(`[${pluginName}] runtime interception skipped: ${error.message}`)

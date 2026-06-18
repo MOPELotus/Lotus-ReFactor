@@ -4,6 +4,8 @@
 
 全局配置样例在 `config/global.example.yaml`。用户 profile 样例在 `config/profile.example.yaml`。
 
+插件加载时如果没有 `config/global.yaml`，会自动按默认配置创建，不需要手动复制样例文件。已安装锅巴插件时，可以在锅巴面板里修改全局配置。
+
 运行时数据会写入：
 
 - `data/users/<qq>.yaml`
