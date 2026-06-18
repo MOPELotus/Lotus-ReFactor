@@ -1,0 +1,24 @@
+{
+  "name": "lotus-plugin",
+  "version": "0.1.0",
+  "description": "Lotus-Plugin refactor workspace for Yunzai/TRSS.",
+  "type": "module",
+  "main": "index.js",
+  "packageManager": "pnpm@10.12.4",
+  "private": true,
+  "scripts": {
+    "smoke": "node --check index.js && node --check core/intercept/priority.js && node --check services/intercept/runtime.js && node --check apps/status.js && node --check apps/login.js && node --check apps/profile.js && node --check apps/profileSettings.js && node --check apps/device.js && node --check apps/checkin.js && node --check apps/checkinAdmin.js && node --check apps/captchaHandler.js && node --check apps/dailyNote.js && node --check apps/gachaLog.js && node --check apps/panelUpdate.js && node --check apps/remote.js && node --check apps/scheduler.js && node --check apps/permissions.js && node --check apps/help.js && node --check apps/atlas.js && node --check apps/donate.js && node --check apps/groupManager.js && node --check apps/bilibili.js && node --check apps/tools.js && node --check apps/testNine.js && node --check apps/neteasePartner.js && node --check apps/update.js",
+    "check": "pnpm run smoke"
+  },
+  "dependencies": {
+    "cheerio": "1.0.0",
+    "qrcode": "^1.5.4",
+    "skia-canvas": "3.0.8",
+    "yaml": "^2.8.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "skia-canvas"
+    ]
+  }
+}

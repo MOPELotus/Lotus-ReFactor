@@ -1,0 +1,17 @@
+# Local planning notes for this refactor workspace
+开发构架.md
+AGENTS.md
+reference-projects/
+test-env/
+scripts/
+node_modules/
+__pycache__/
+*.pyc
+.yarn/
+.yarnrc.yml
+yarn.lock
+data/
+temp/
+config/global.yaml
+config/local.yaml
+config/*.local.yaml

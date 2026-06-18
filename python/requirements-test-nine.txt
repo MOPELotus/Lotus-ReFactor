@@ -1,0 +1,11 @@
+httpx
+cryptography
+onnxruntime
+opencv-python-headless
+numpy
+Pillow
+matplotlib
+tqdm
+fastapi
+uvicorn[standard]
+python-multipart

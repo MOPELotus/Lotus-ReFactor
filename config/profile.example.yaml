@@ -1,0 +1,109 @@
+version: 1
+enabled: false
+user:
+  qq: "10001"
+  nickname: ""
+profile:
+  id: 1
+  name: default
+  notify:
+    enable: true
+    prefer: private
+    fallback_groups: []
+account:
+  ltuid: ""
+  cookie: ""
+  stuid: ""
+  stoken: ""
+  mid: ""
+  ltoken: ""
+  game_roles:
+    gs: []
+    sr: []
+    zzz: []
+  current_uid:
+    gs: ""
+    sr: ""
+    zzz: ""
+device:
+  bound: false
+  name: ""
+  model: ""
+  id: ""
+  fp: ""
+  android_version: ""
+  raw: null
+schedule:
+  mode: inherit
+  fixed_time: ""
+  allow_random: true
+mihoyobbs:
+  enable: false
+  tasks:
+    checkin: false
+    read: true
+    like: true
+    cancel_like: true
+    share: true
+  checkin_list:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 8
+    - 9
+    - 10
+games:
+  cn:
+    enable: true
+    ua_mode: device
+    genshin:
+      checkin: true
+      black_list: []
+    honkai2:
+      checkin: false
+      black_list: []
+    honkai3rd:
+      checkin: false
+      black_list: []
+    tears_of_themis:
+      checkin: false
+      black_list: []
+    honkai_sr:
+      checkin: true
+      black_list: []
+    zzz:
+      checkin: true
+      black_list: []
+    hna:
+      checkin: false
+      black_list: []
+  os:
+    enable: false
+    cookie: ""
+    lang: zh-cn
+    genshin:
+      checkin: false
+      black_list: []
+    honkai3rd:
+      checkin: false
+      black_list: []
+    tears_of_themis:
+      checkin: false
+      black_list: []
+    honkai_sr:
+      checkin: false
+      black_list: []
+    zzz:
+      checkin: false
+      black_list: []
+cloud_games:
+  cn:
+    genshin:
+      enable: false
+      token: ""
+    zzz:
+      enable: false
+      token: ""

@@ -1,0 +1,9 @@
+[submodule "MihoyoBBSTools"]
+	path = MihoyoBBSTools
+	url = https://github.com/Womsxd/MihoyoBBSTools.git
+[submodule "test_nine"]
+	path = test_nine
+	url = https://github.com/luguoyixiazi/test_nine.git
+[submodule "nanoka-atlas-backend"]
+	path = nanoka-atlas-backend
+	url = https://github.com/MOPELotus/nanoka-atlas-backend.git
