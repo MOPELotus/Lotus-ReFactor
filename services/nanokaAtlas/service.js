@@ -198,6 +198,7 @@ const SHORTCUT_GAME_BY_PREFIX = Object.freeze({
   "#": "原神",
   "*": "星铁",
   "%": "绝区零",
+  "％": "绝区零",
 })
 
 const LOADER_GAME_PREFIXES = Object.freeze([
@@ -644,7 +645,7 @@ function buildChallengeShortcutRules(stats) {
 
 function shortcutRoutePrefixes(prefix) {
   if (prefix === "*") return ["*", "#星铁"]
-  if (prefix === "%") return ["%", "#绝区零"]
+  if (prefix === "%") return ["%", "％", "#绝区零"]
   if (prefix === "#") return ["#"]
   return [prefix]
 }
@@ -739,7 +740,7 @@ export function parseAtlasShortcutMessage(message = "") {
 
   const normalized = normalizeLoaderShortcutPrefix(raw)
   const prefix = normalized.prefix
-  const hasPrefix = ["#", "*", "%"].includes(prefix)
+  const hasPrefix = ["#", "*", "%", "％"].includes(prefix)
   const game = normalized.game || (hasPrefix ? SHORTCUT_GAME_BY_PREFIX[prefix] : "")
   const originalText = normalized.text
   const text = stripShortcutAtlasSuffix(originalText)
@@ -792,7 +793,7 @@ function normalizeLoaderShortcutPrefix(raw = "") {
   return {
     prefix,
     game: "",
-    text: ["#", "*", "%"].includes(prefix) ? text.slice(1).trim() : text,
+    text: ["#", "*", "%", "％"].includes(prefix) ? text.slice(1).trim() : text,
   }
 }
 
@@ -3813,7 +3814,7 @@ function parseAtlasQuery(query) {
 function normalizeKeyword(value) {
   return stripAtlasMessagePrefix(value)
     .replace(/^#?(Lotus|lotus|荷花)?图鉴/i, "")
-    .replace(/^[#*%]/, "")
+    .replace(/^[#*%％]/, "")
     .trim()
 }
 

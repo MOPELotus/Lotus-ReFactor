@@ -159,7 +159,45 @@ export function isConflictRule(entry, rule) {
     return false
   }
 
+  if (isMiaoWikiEntry(name, key)) {
+    return fnc === "wiki"
+      || /(?:图鉴|资料|天赋|技能|行迹|命座|命之座|星魂|照片|写真|图片|图像)/.test(reg)
+  }
+
+  if (isMiaoCharacterEntry(name, key)) {
+    return fnc === "character"
+  }
+
+  if (isZzzAtlasEntry(name, key)) {
+    if (fnc === "atlas" || fnc === "wiki") return true
+    if (/(?:图鉴|资料|影画|天赋|音擎|驱动盘|邦布)/.test(reg)) return true
+    return !/(?:面板|panel)/i.test(`${reg} ${fnc}`)
+  }
+
   return false
+}
+
+function isMiaoWikiEntry(name, key) {
+  return name.includes("喵喵:角色资料")
+    || key.includes("miao-plugin/apps/wiki")
+    || key.includes("miao-plugin\\apps\\wiki")
+}
+
+function isMiaoCharacterEntry(name, key) {
+  return name.includes("喵喵角色卡片")
+    || key.includes("miao-plugin/apps/character")
+    || key.includes("miao-plugin\\apps\\character")
+}
+
+function isZzzAtlasEntry(name, key) {
+  return name.includes("ZZZ-Plugin 图鉴")
+    || name.includes("ZZZ-Plugin Atlas")
+    || key.includes("ZZZ-Plugin/apps/atlas")
+    || key.includes("ZZZ-Plugin\\apps\\atlas")
+    || key.includes("ZZZ-Plugin/dist/apps/wiki")
+    || key.includes("ZZZ-Plugin\\dist\\apps\\wiki")
+    || key.includes("ZZZ-Plugin/apps/wiki")
+    || key.includes("ZZZ-Plugin\\apps\\wiki")
 }
 
 export function isLotusEntry(entry) {

@@ -263,24 +263,21 @@ export class LotusBilibili extends BasePlugin {
       const installPermission = new PermissionService({ permissions: globalConfig.permissions })
         .explain(this.e, "tools.install")
       if (globalConfig.tools?.auto_install !== false && installPermission.ok) {
-        await replyText(this, "[荷花插件]正在检查 BBDown/ffmpeg/aria2 工具链，缺失时会自动安装。")
         const tools = await new ToolInstallerService({ config: globalConfig.tools }).ensureAll()
         if (!tools.ok) {
           throw new Error(`工具链初始化失败：${tools.items?.filter(item => !item.ok).map(item => `${item.name}:${item.reason}`).join(" / ") || "unknown"}`)
         }
       }
-      if (options.announce !== false) await replyText(this, "[荷花插件]开始处理 B站下载任务。")
       const result = await service.download(target, {
         ...(globalConfig.bilibili || {}),
         ...(globalConfig.bilibili?.download || {}),
       }, {
         onEvent: async event => {
-          if (event.message) await replyText(this, `[荷花插件]${event.message}`)
+          if (event.message) logger?.debug?.(`[Lotus-Plugin] Bilibili download: ${event.message}`)
         },
       })
       if (!result.ok) {
         if (result.reason === "live_download_unsupported" && result.info) {
-          await replyText(this, "[荷花插件]直播内容不进入下载流程，已改为发送直播信息和独立播放器链接。")
           return this.renderInfo(result.info, { download: false })
         }
         await this.renderError(options.title || "B站下载", new Error(downloadFailureMessage(result)))
@@ -290,23 +287,6 @@ export class LotusBilibili extends BasePlugin {
       for (const file of result.files || []) {
         await sendBiliFile(this.e, file, downloadConfig)
       }
-
-      const image = await renderStatusCard({
-        title: options.title || "B站下载",
-        subtitle: result.info?.bvid || "荷花插件 Bilibili",
-        badge: result.fromCache ? "缓存" : "完成",
-        message: `已生成 ${result.files?.length || 0} 个文件并尝试发送。`,
-        userId: this.e.user_id,
-        items: [
-          { label: "标题", value: result.info?.title || "-" },
-          { label: "方式", value: result.downloader || "-" },
-          { label: "多P策略", value: result.policy || "-" },
-          { label: "文件", value: (result.files || []).map(file => path.basename(file)).join(" / ") || "无" },
-        ],
-      }, {
-        saveId: `lotus-bili-download-${this.e.user_id || "user"}`,
-      })
-      await replyImage(this, image, "[荷花插件]B站下载完成。")
     } catch (error) {
       await this.renderError(options.title || "B站下载", error)
     }
