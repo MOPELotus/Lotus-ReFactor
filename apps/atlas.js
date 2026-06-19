@@ -1,5 +1,6 @@
 const BasePlugin = globalThis.plugin
 
+import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { loadGlobalConfig } from "../core/config/global.js"
@@ -18,7 +19,7 @@ export class LotusAtlas extends BasePlugin {
       name: "[Lotus-Plugin] Atlas",
       dsc: "Lotus nanoka atlas query",
       event: "message",
-      priority: 10,
+      priority: LOTUS_INTERCEPT_PRIORITY,
       rule: [
         {
           reg: "^#?(Lotus|lotus|荷花)?图鉴状态$",
@@ -49,7 +50,7 @@ export class LotusAtlas extends BasePlugin {
           fnc: "shortcutQuery",
         },
         {
-          reg: "^(?!#(?:锅巴登录|登录)$)(?![#*%][\\s\\S]*面板$)[#*%][\\s\\S]{1,}$",
+          reg: "^(?![#*%]?(?:锅巴登录|登录|扫码登录|刷新cookie|绑定设备|全部体力|多体力|(?:原神|星铁|崩铁|绝区零)?体力|树脂|便笺|便签|(?:原神|星铁|崩铁|绝区零)?更新面板|(?:原神|星铁|崩铁|绝区零)?更新抽卡记录|帮助|菜单|签到|注册自动签到|远程|spawn|上传|下载|测试)\\d*(?:\\s|$))(?![#*%][\\s\\S]*面板$)[#*%][\\s\\S]{1,}$",
           fnc: "shortcutQuery",
         },
       ],
@@ -193,14 +194,41 @@ export class LotusAtlas extends BasePlugin {
     const parsed = parseAtlasShortcutMessage(this.e.msg)
     if (!parsed.ok) return false
 
-    const result = await new NanokaAtlasService().search(parsed.query, {
-      challenge: parsed.challenge,
-      game: parsed.game,
-      pages: parsed.pages,
-      minScore: parsed.challenge ? undefined : 100,
-      strict: !parsed.challenge,
-    })
-    if (!result.ok) return false
+    let result
+    try {
+      result = await new NanokaAtlasService().search(parsed.query, {
+        challenge: parsed.challenge,
+        game: parsed.game,
+        pages: parsed.pages,
+        minScore: parsed.challenge ? undefined : 100,
+        strict: !parsed.challenge,
+      })
+      if (!result.ok) {
+        if (!parsed.challenge && !parsed.explicitSuffix) return false
+        const image = await renderAtlasSearchResult(result, this.e.user_id)
+        await replyImage(this, image, atlasFailureReply(result))
+        return true
+      }
+    } catch (error) {
+      if (!parsed.challenge && !parsed.explicitSuffix) throw error
+      logger?.warn?.(`[Lotus-Plugin] atlas shortcut failed: ${error.stack || error.message}`)
+      const image = await renderStatusCard({
+        title: "图鉴查询",
+        subtitle: parsed.query,
+        badge: "失败",
+        message: `图鉴查询失败：${error.message || error}`,
+        userId: this.e.user_id,
+        items: [
+          { label: "类型", value: parsed.challenge ? parsed.challenge.label : "图鉴" },
+          { label: "查询", value: parsed.query },
+          { label: "处理", value: "已由荷花插件拦截，未继续交给后续插件。" },
+        ],
+      }, {
+        saveId: `lotus-atlas-shortcut-error-${this.e.user_id || "user"}`,
+      })
+      await replyImage(this, image, "[荷花插件]图鉴查询失败。")
+      return true
+    }
 
     const image = await renderAtlasSearchResult(result, this.e.user_id)
     await replyImage(this, image, "[荷花插件]图鉴查询完成。")
@@ -277,4 +305,9 @@ function atlasUpdateMessage(result) {
   if (result.skipped) return "[荷花插件]图鉴版本未变化，已跳过更新。"
   if (result.mode === "initial") return "[荷花插件]图鉴全量更新完成。"
   return "[荷花插件]图鉴增量更新完成。"
+}
+
+function atlasFailureReply(result) {
+  if (result.reason === "atlas_data_missing") return "[荷花插件]图鉴数据未初始化。"
+  return "[荷花插件]没有找到图鉴结果。"
 }

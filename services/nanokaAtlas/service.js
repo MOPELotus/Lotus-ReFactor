@@ -207,6 +207,8 @@ const ROLE_DETAIL_SUFFIX_GAME = Object.freeze({
   影画: "绝区零",
 })
 
+const ATLAS_QUERY_SUFFIX_RE = /图鉴$/
+
 const ZZZ_ICON_MAP_ASSETS = Object.freeze({
   Icon_Normal: ["Icon_Normal"],
   Icon_Evade: ["Icon_Evade"],
@@ -443,6 +445,7 @@ export function buildAtlasRenderData(searchResult) {
   const results = searchResult.results || []
   const main = results[0] || null
   const challenge = searchResult.challenge
+  const displayPage = challenge?.label || main?.page || ""
   const title = challenge
     ? `${challenge.period}${challenge.label}`
     : main?.title || searchResult.query || "图鉴"
@@ -451,9 +454,9 @@ export function buildAtlasRenderData(searchResult) {
     template: searchResult.template || main?.template || "atlas-item",
     title,
     subtitle: main
-      ? `${main.game} · ${main.page} · ${main.rarity || "未分类"}${main.version ? ` · 图鉴版本 ${main.version}` : ""}`
+      ? `${main.game} · ${displayPage} · ${main.rarity || "未分类"}${main.version ? ` · 图鉴版本 ${main.version}` : ""}`
       : "Nanoka Atlas",
-    badge: atlasBadgeLabel(main?.page) || (main ? "ATLAS" : "未找到"),
+    badge: challenge?.label || atlasBadgeLabel(main?.page) || (main ? "ATLAS" : "未找到"),
     query: searchResult.rawQuery || searchResult.query,
     message: atlasMessage(searchResult, main),
     image: main?.image || "",
@@ -501,17 +504,19 @@ export function parseAtlasShortcutMessage(message = "") {
   const prefix = raw[0]
   const hasPrefix = ["#", "*", "%"].includes(prefix)
   const game = hasPrefix ? SHORTCUT_GAME_BY_PREFIX[prefix] : ""
-  const text = hasPrefix ? raw.slice(1).trim() : raw.trim()
+  const originalText = hasPrefix ? raw.slice(1).trim() : raw.trim()
+  const text = stripShortcutAtlasSuffix(originalText)
+  const explicitSuffix = text !== originalText
   if (!text) return { ok: false, reason: "empty_query" }
-  if (isPanelShortcutQuery(text)) return { ok: false, reason: "panel_query" }
-  if (isPersonalChallengeQuery(raw)) return { ok: false, reason: "personal_challenge" }
+  if (isPanelShortcutQuery(originalText)) return { ok: false, reason: "panel_query" }
+  if (!explicitSuffix && isPersonalChallengeQuery(raw)) return { ok: false, reason: "personal_challenge" }
 
   const challenge = resolveChallengeQuery(text)
   if (challenge) {
     if (game && challenge.game && game !== challenge.game) {
       return { ok: false, reason: "prefix_game_mismatch", game, challenge }
     }
-    return { ok: true, query: text, prefix, game: challenge.game || game, challenge, shortcut: true }
+    return { ok: true, query: text, prefix, game: challenge.game || game, challenge, explicitSuffix, shortcut: true }
   }
   const roleDetail = parseRoleDetailShortcut(text, game)
   if (roleDetail?.conflict) return { ok: false, reason: "prefix_detail_mismatch" }
@@ -523,6 +528,7 @@ export function parseAtlasShortcutMessage(message = "") {
       game: roleDetail.game,
       pages: ["角色"],
       detailSuffix: roleDetail.suffix,
+      explicitSuffix,
       shortcut: true,
     }
   }
@@ -530,7 +536,7 @@ export function parseAtlasShortcutMessage(message = "") {
   if (GENERIC_ATLAS_SHORTCUT_TERMS.has(normalizeShortcutText(text))) return { ok: false, reason: "generic_query" }
   if (looksLikeNonAtlasCommand(text)) return { ok: false, reason: "known_command" }
   if (text.length < 2) return { ok: false, reason: "too_short" }
-  return { ok: true, query: text, prefix, game, shortcut: true }
+  return { ok: true, query: text, prefix, game, explicitSuffix, shortcut: true }
 }
 
 export function isPersonalChallengeQuery(query = "") {
@@ -541,6 +547,10 @@ export function isPersonalChallengeQuery(query = "") {
 
 function isPanelShortcutQuery(text = "") {
   return normalizeShortcutText(text).endsWith("面板")
+}
+
+function stripShortcutAtlasSuffix(text = "") {
+  return normalizeKeyword(text).replace(ATLAS_QUERY_SUFFIX_RE, "").trim()
 }
 
 function parseRoleDetailShortcut(text = "", prefixGame = "") {
