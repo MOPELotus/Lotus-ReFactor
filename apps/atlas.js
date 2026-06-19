@@ -7,11 +7,17 @@ import { loadGlobalConfig } from "../core/config/global.js"
 import { PermissionService } from "../core/permissions/service.js"
 import {
   buildAtlasRenderData,
+  buildAtlasShortcutRules,
   NanokaAtlasService,
   parseAtlasShortcutMessage,
   selectAtlasTemplate,
 } from "../services/nanokaAtlas/service.js"
 import { AtlasUpdateService } from "../services/nanokaAtlas/update.js"
+
+const startupShortcutRules = await buildAtlasShortcutRules().catch(error => {
+  globalThis.logger?.warn?.(`[Lotus-Plugin] build atlas startup shortcut routes failed: ${error.message}`)
+  return { rules: [], stats: { rules: 0 }, reason: error.message }
+})
 
 export class LotusAtlas extends BasePlugin {
   constructor() {
@@ -20,65 +26,47 @@ export class LotusAtlas extends BasePlugin {
       dsc: "Lotus nanoka atlas query",
       event: "message",
       priority: LOTUS_INTERCEPT_PRIORITY,
-      rule: [
-        {
-          reg: "^#?(Lotus|lotus|荷花)?图鉴状态$",
-          fnc: "status",
-        },
-        {
-          reg: "^#?(Lotus|lotus|荷花)?(更新图鉴|图鉴更新)$",
-          fnc: "updateAtlas",
-        },
-        {
-          reg: "^#?(Lotus|lotus|荷花)?(检查图鉴更新|图鉴检查更新)$",
-          fnc: "checkAtlasUpdate",
-        },
-        {
-          reg: "^#?(Lotus|lotus|荷花)?(全量更新图鉴|图鉴全量更新)$",
-          fnc: "fullUpdateAtlas",
-        },
-        {
-          reg: "^#?(Lotus|lotus|荷花)?图鉴帮助$",
-          fnc: "help",
-        },
-        {
-          reg: "^#?(Lotus|lotus|荷花)?图鉴\\s*[\\s\\S]+$",
-          fnc: "query",
-        },
-        {
-          reg: "^[^#*%\\s][\\s\\S]+(?:命座|星魂|影画|天赋)$",
-          fnc: "shortcutQuery",
-        },
-        {
-          reg: "^(?![#*%]?(?:锅巴登录|登录|扫码登录|刷新cookie|绑定设备|全部体力|多体力|(?:原神|星铁|崩铁|绝区零)?体力|树脂|便笺|便签|(?:原神|星铁|崩铁|绝区零)?更新面板|(?:原神|星铁|崩铁|绝区零)?更新抽卡记录|帮助|菜单|签到|注册自动签到|远程|spawn|上传|下载|测试)\\d*(?:\\s|$))(?![#*%][\\s\\S]*面板$)[#*%][\\s\\S]{1,}$",
-          fnc: "shortcutQuery",
-        },
-      ],
+      rule: composeAtlasRules(startupShortcutRules.rules || []),
     })
+    this.shortcutRouteStats = startupShortcutRules.stats || { rules: 0 }
     this.task = [
-      {
-        name: "荷花插件图鉴版本检查",
-        cron: "0 0 */6 * * ?",
-        fnc: this.runAtlasAutoUpdate.bind(this),
-        log: false,
-      },
+      ...this.buildAtlasTasks(),
     ]
   }
 
   async init() {
     try {
       const globalConfig = await loadGlobalConfig()
-      this.task = [
-        {
-          name: "荷花插件图鉴版本检查",
-          cron: globalConfig.atlas?.auto_update?.check_cron || "0 0 */6 * * ?",
-          fnc: this.runAtlasAutoUpdate.bind(this),
-          log: false,
-        },
-      ]
+      await this.refreshShortcutRoutes()
+      this.task = this.buildAtlasTasks(globalConfig)
     } catch (error) {
       logger?.warn?.(`[Lotus-Plugin] load atlas cron failed, fallback default: ${error.message}`)
     }
+  }
+
+  buildAtlasTasks(globalConfig = {}) {
+    return [
+      {
+        name: "荷花插件图鉴版本检查",
+        cron: globalConfig.atlas?.auto_update?.check_cron || "0 0 */6 * * ?",
+        fnc: this.runAtlasAutoUpdate.bind(this),
+        log: false,
+      },
+      {
+        name: "荷花插件图鉴快捷路由刷新",
+        cron: "0 0 0 * * ?",
+        fnc: this.refreshShortcutRoutes.bind(this),
+        log: false,
+      },
+    ]
+  }
+
+  async refreshShortcutRoutes(options = {}) {
+    const result = await buildAtlasShortcutRules(options)
+    this.rule = composeAtlasRules(result.rules || [])
+    this.shortcutRouteStats = result.stats || { rules: 0 }
+    globalThis.logger?.mark?.(`[Lotus-Plugin] atlas shortcut routes refreshed: ${this.shortcutRouteStats.rules || 0} rule(s), ${this.shortcutRouteStats.directNames || 0} direct name(s), ${this.shortcutRouteStats.roleNames || 0} role name(s)`)
+    return result
   }
 
   async status() {
@@ -111,6 +99,7 @@ export class LotusAtlas extends BasePlugin {
     await replyText(this, "[荷花插件]正在检查图鉴版本；首次缺数据会全量拉取，后续版本变化才增量更新。")
     const globalConfig = await loadGlobalConfig()
     const result = await new AtlasUpdateService().checkAndRun(globalConfig.atlas || {})
+    await this.refreshRoutesAfterAtlasUpdate(result)
     const image = await renderAtlasUpdateResult(result, this.e.user_id)
     await replyImage(this, image, atlasUpdateMessage(result))
     return true
@@ -123,6 +112,7 @@ export class LotusAtlas extends BasePlugin {
     await replyText(this, "[荷花插件]正在检查图鉴版本差异。")
     const globalConfig = await loadGlobalConfig()
     const result = await new AtlasUpdateService().checkAndRun(globalConfig.atlas || {})
+    await this.refreshRoutesAfterAtlasUpdate(result)
     const image = await renderAtlasUpdateResult(result, this.e.user_id)
     await replyImage(this, image, atlasUpdateMessage(result))
     return true
@@ -135,6 +125,7 @@ export class LotusAtlas extends BasePlugin {
     await replyText(this, "[荷花插件]正在启动 nanoka-atlas-backend 全量抓取，首次初始化会比较久。")
     const globalConfig = await loadGlobalConfig()
     const result = await new AtlasUpdateService().run(globalConfig.atlas || {}, { mode: "initial" })
+    await this.refreshRoutesAfterAtlasUpdate(result)
     const image = await renderAtlasUpdateResult(result, this.e.user_id)
     await replyImage(this, image, result.ok ? "[荷花插件]图鉴全量更新完成。" : "[荷花插件]图鉴全量更新失败。")
     return true
@@ -170,11 +161,19 @@ export class LotusAtlas extends BasePlugin {
     }
     const result = await new AtlasUpdateService().checkAndRun(globalConfig.atlas || {})
     if (result.ok && !result.skipped) {
+      await this.refreshRoutesAfterAtlasUpdate(result)
       logger?.mark?.(`[Lotus-Plugin] atlas ${result.mode || "update"} completed`)
     } else if (!result.ok) {
       logger?.warn?.(`[Lotus-Plugin] atlas update failed: ${result.reason}`)
     }
     return result
+  }
+
+  async refreshRoutesAfterAtlasUpdate(result) {
+    if (!result?.ok || result.skipped) return
+    await this.refreshShortcutRoutes().catch(error => {
+      globalThis.logger?.warn?.(`[Lotus-Plugin] refresh atlas shortcut routes after update failed: ${error.message}`)
+    })
   }
 
   async query() {
@@ -204,13 +203,11 @@ export class LotusAtlas extends BasePlugin {
         strict: !parsed.challenge,
       })
       if (!result.ok) {
-        if (!parsed.challenge && !parsed.explicitSuffix) return false
         const image = await renderAtlasSearchResult(result, this.e.user_id)
         await replyImage(this, image, atlasFailureReply(result))
         return true
       }
     } catch (error) {
-      if (!parsed.challenge && !parsed.explicitSuffix) throw error
       logger?.warn?.(`[Lotus-Plugin] atlas shortcut failed: ${error.stack || error.message}`)
       const image = await renderStatusCard({
         title: "图鉴查询",
@@ -259,6 +256,36 @@ export class LotusAtlas extends BasePlugin {
     await replyImage(this, image, "[荷花插件]图鉴帮助生成完成。")
     return true
   }
+}
+
+function composeAtlasRules(shortcutRules = []) {
+  return [
+    {
+      reg: "^#?(Lotus|lotus|荷花)?图鉴状态$",
+      fnc: "status",
+    },
+    {
+      reg: "^#?(Lotus|lotus|荷花)?(更新图鉴|图鉴更新)$",
+      fnc: "updateAtlas",
+    },
+    {
+      reg: "^#?(Lotus|lotus|荷花)?(检查图鉴更新|图鉴检查更新)$",
+      fnc: "checkAtlasUpdate",
+    },
+    {
+      reg: "^#?(Lotus|lotus|荷花)?(全量更新图鉴|图鉴全量更新)$",
+      fnc: "fullUpdateAtlas",
+    },
+    {
+      reg: "^#?(Lotus|lotus|荷花)?图鉴帮助$",
+      fnc: "help",
+    },
+    {
+      reg: "^#?(Lotus|lotus|荷花)?图鉴\\s*[\\s\\S]+$",
+      fnc: "query",
+    },
+    ...shortcutRules,
+  ]
 }
 
 async function renderAtlasSearchResult(result, userId) {

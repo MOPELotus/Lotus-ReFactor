@@ -199,7 +199,27 @@ const SHORTCUT_GAME_BY_PREFIX = Object.freeze({
   "%": "绝区零",
 })
 
+const SHORTCUT_PREFIX_BY_GAME = Object.freeze({
+  原神: "#",
+  星铁: "*",
+  绝区零: "%",
+})
+
+const DIRECT_SHORTCUT_PAGES_BY_GAME = Object.freeze({
+  原神: new Set(["角色", "武器", "圣遗物"]),
+  星铁: new Set(["角色", "光锥", "遗器套装"]),
+  绝区零: new Set(["角色", "音擎", "驱动盘"]),
+})
+
+const ROLE_DETAIL_SUFFIXES_BY_GAME = Object.freeze({
+  原神: ["命座", "天赋"],
+  星铁: ["星魂", "天赋"],
+  绝区零: ["影画", "天赋"],
+})
+
 const SHORTCUT_MIN_SCORE = 100
+const SHORTCUT_ROUTE_CHUNK_SIZE = 80
+const SHORTCUT_ROUTE_NAME_LIMIT = 48
 
 const ROLE_DETAIL_SUFFIX_GAME = Object.freeze({
   命座: "原神",
@@ -439,6 +459,198 @@ export class NanokaAtlasService {
       modules,
     }
   }
+}
+
+export async function buildAtlasShortcutRules(options = {}) {
+  const fsImpl = options.fs || fs
+  const config = options.config || (await loadGlobalConfig()).atlas || {}
+  const root = resolveAtlasRoot(options.dataRoot || config.data_root)
+  const locale = options.locale || config.locale || "简体中文"
+  const itemsRoot = path.join(root, "data", "items", locale)
+  const rules = []
+  const stats = {
+    directNames: 0,
+    roleNames: 0,
+    challengeNames: 0,
+    rules: 0,
+  }
+
+  rules.push(...buildChallengeShortcutRules(stats))
+
+  if (!await exists(itemsRoot, fsImpl)) {
+    stats.rules = rules.length
+    return {
+      ok: false,
+      reason: "atlas_data_missing",
+      root,
+      locale,
+      rules,
+      stats,
+    }
+  }
+
+  const index = await loadAtlasIndex(root, locale, fsImpl)
+  const aliasMap = await loadAtlasAliasMap()
+  const directNamesByPrefix = new Map()
+  const roleNamesByGame = new Map()
+
+  for (const entry of index.entries) {
+    if (!isDirectShortcutEntry(entry)) continue
+    const prefix = SHORTCUT_PREFIX_BY_GAME[entry.game]
+    if (!prefix) continue
+    const names = await shortcutNamesForEntry(entry, aliasMap, fsImpl)
+    if (!names.length) continue
+    addSetValues(directNamesByPrefix, prefix, names)
+    if (entry.page === "角色") addSetValues(roleNamesByGame, entry.game, names)
+  }
+
+  for (const [prefix, names] of directNamesByPrefix.entries()) {
+    const list = [...names].sort(shortcutNameSort)
+    stats.directNames += list.length
+    rules.push(...buildNameShortcutRules(prefix, list, "(?:图鉴)?"))
+  }
+
+  const allRoleNames = new Set()
+  for (const [game, names] of roleNamesByGame.entries()) {
+    const prefix = SHORTCUT_PREFIX_BY_GAME[game]
+    const suffixes = ROLE_DETAIL_SUFFIXES_BY_GAME[game] || []
+    const list = [...names].sort(shortcutNameSort)
+    stats.roleNames += list.length
+    for (const name of list) allRoleNames.add(name)
+    if (prefix && suffixes.length) {
+      rules.push(...buildNameShortcutRules(prefix, list, `(?:${suffixes.map(escapeRegExp).join("|")})`))
+    }
+  }
+  rules.push(...buildNameShortcutRules("", [...allRoleNames].sort(shortcutNameSort), "(?:命座|星魂|影画|天赋)"))
+
+  stats.rules = rules.length
+  return {
+    ok: true,
+    root,
+    locale,
+    rules,
+    stats,
+  }
+}
+
+function isDirectShortcutEntry(entry = {}) {
+  const pages = DIRECT_SHORTCUT_PAGES_BY_GAME[entry.game]
+  return Boolean(pages?.has(entry.page))
+}
+
+async function shortcutNamesForEntry(entry = {}, aliasMap = new Map(), fsImpl = fs) {
+  const names = new Set()
+  const push = value => {
+    const text = normalizeShortcutRouteName(value)
+    if (text) names.add(text)
+  }
+
+  push(entry.title)
+  push(entry.basename)
+  for (const alias of entry.aliases || []) push(alias)
+  for (const alias of await readShortcutNameSeeds(entry, fsImpl)) push(alias)
+
+  const seeds = [...names]
+  for (const seed of seeds) {
+    const values = aliasMap.get(normalizeForMatch(seed)) || []
+    for (const item of values) {
+      if (typeof item === "string") push(item)
+      else if (!item.game || !entry.game || item.game === entry.game) push(item.value)
+    }
+  }
+
+  return [...names]
+}
+
+async function readShortcutNameSeeds(entry = {}, fsImpl = fs) {
+  if (!entry.file) return []
+  try {
+    const raw = await fsImpl.readFile(entry.file, "utf8")
+    const json = JSON.parse(raw)
+    const meta = json.meta || {}
+    const list = json.content?.list || {}
+    const detail = json.content?.detail || {}
+    return [
+      meta.name,
+      list.name,
+      list.zh,
+      detail.name,
+      detail.partner_info?.full_name,
+      displayTitle(meta, list, detail, entry),
+      ...(Array.isArray(detail.affix) ? detail.affix.map(item => item?.name) : []),
+    ].filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function normalizeShortcutRouteName(value = "") {
+  const text = cleanText(value).replace(/\s+/g, "").trim()
+  if (!text) return ""
+  if (text.length < 2 || text.length > SHORTCUT_ROUTE_NAME_LIMIT) return ""
+  if (/[\r\n#*%^$\\]/.test(text)) return ""
+  if (text.endsWith("面板")) return ""
+  if (text.endsWith("图鉴")) return ""
+  if (looksLikeNonAtlasCommand(text)) return ""
+  if (GENERIC_ATLAS_SHORTCUT_TERMS.has(normalizeShortcutText(text))) return ""
+  return text
+}
+
+function addSetValues(map, key, values) {
+  const set = map.get(key) || new Set()
+  for (const value of values) set.add(value)
+  map.set(key, set)
+}
+
+function buildChallengeShortcutRules(stats) {
+  const namesByPrefix = new Map()
+  for (const [name, target] of Object.entries(CHALLENGE_TARGETS)) {
+    const prefix = SHORTCUT_PREFIX_BY_GAME[target.game]
+    if (!prefix) continue
+    addSetValues(namesByPrefix, prefix, [name])
+  }
+
+  const rules = []
+  const datePrefix = "(?:\\d{4}[./年-]\\d{1,2}[./月-]\\d{1,2}日?)?"
+  for (const [prefix, names] of namesByPrefix.entries()) {
+    const list = [...names].sort(shortcutNameSort)
+    stats.challengeNames += list.length
+    for (const chunk of chunkArray(list, SHORTCUT_ROUTE_CHUNK_SIZE)) {
+      rules.push({
+        reg: `^${escapeRegExp(prefix)}${datePrefix}(?:上期|本期|当期|下期)(?:${chunk.map(escapeRegExp).join("|")})$`,
+        fnc: "shortcutQuery",
+      })
+    }
+  }
+  return rules
+}
+
+function buildNameShortcutRules(prefix, names, suffixPattern) {
+  if (!names.length) return []
+  const rules = []
+  for (const chunk of chunkArray(names, SHORTCUT_ROUTE_CHUNK_SIZE)) {
+    rules.push({
+      reg: `^${escapeRegExp(prefix)}(?:${chunk.map(escapeRegExp).join("|")})${suffixPattern}$`,
+      fnc: "shortcutQuery",
+    })
+  }
+  return rules
+}
+
+function shortcutNameSort(a, b) {
+  return b.length - a.length || a.localeCompare(b, "zh-Hans-CN")
+}
+
+function chunkArray(values, size) {
+  const chunks = []
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size))
+  }
+  return chunks
+}
+
+function escapeRegExp(value = "") {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 export function buildAtlasRenderData(searchResult) {
