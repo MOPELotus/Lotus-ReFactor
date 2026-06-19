@@ -12,6 +12,22 @@ export async function getRenderBackground(configOverride = null) {
   return resolveRenderBackgroundFromConfig(config)
 }
 
+export async function createRenderBackgroundProvider(configOverride = null) {
+  const config = configOverride || await loadGlobalConfig()
+  return async () => resolveRenderBackgroundFromConfig(config)
+}
+
+export async function getRenderBackgrounds(count = 1, configOverride = null) {
+  const provider = await createRenderBackgroundProvider(configOverride)
+  const total = Math.max(1, Number(count) || 1)
+  const results = []
+  for (let index = 0; index < total; index += 1) {
+    const bg = await provider()
+    if (bg && !results.includes(bg)) results.push(bg)
+  }
+  return results.length ? results : [await getRenderBackground(configOverride)]
+}
+
 export async function resolveRenderBackgroundFromConfig(config) {
   const source = config.render?.background || FALLBACK_BACKGROUND
   const imageUrl = await resolveBackgroundUrl(source, config)

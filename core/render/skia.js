@@ -122,19 +122,51 @@ class SkiaRenderer {
   async drawBackground(ctx, width, height) {
     ctx.fillStyle = "#222"
     ctx.fillRect(0, 0, width, height)
-    const bg = await this.loadImage(this.data.bg)
-    if (bg) {
-      const tileW = Math.max(width, bg.width)
-      const scale = tileW / bg.width
-      const tileH = Math.max(1, bg.height * scale)
-      for (let y = 0; y < height; y += tileH) {
-        for (let x = (width - tileW) / 2; x < width; x += tileW) {
-          ctx.drawImage(bg, x, y, tileW, tileH)
-        }
-      }
+
+    const sources = normalizeBackgroundSources(this.data)
+    let y = 0
+    let index = 0
+    let lastSource = ""
+    const maxSegments = Math.max(8, Math.ceil(height / 120) + 8)
+    while (y < height && index < maxSegments) {
+      const source = await this.pickBackgroundSource(sources, index, lastSource)
+      index += 1
+      if (!source) break
+
+      const bg = await this.loadImage(source)
+      if (!bg) continue
+
+      const scale = width / Math.max(1, bg.width)
+      const drawHeight = Math.max(1, bg.height * scale)
+      ctx.drawImage(bg, 0, y, width, drawHeight)
+      y += drawHeight
+      lastSource = source
+    }
+
+    if (y > 0) {
       ctx.fillStyle = isAtlasTemplate(this.templateName) ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.18)"
       ctx.fillRect(0, 0, width, height)
     }
+  }
+
+  async pickBackgroundSource(sources, index, lastSource = "") {
+    if (sources[index]) return sources[index]
+    if (typeof this.data.backgroundProvider !== "function") {
+      return sources.length ? sources[index % sources.length] : ""
+    }
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const next = await this.data.backgroundProvider()
+        if (!next) continue
+        sources.push(next)
+        if (next !== lastSource || attempt === 3) return next
+      } catch (error) {
+        globalThis.logger?.warn?.(`[荷花插件渲染] 随机背景获取失败：${error.message}`)
+        break
+      }
+    }
+    return sources.length ? sources[index % sources.length] : ""
   }
 
   buildStatus() {
@@ -1128,6 +1160,15 @@ function getGalleryIndex(root) {
 function looksLikeImage(value) {
   return /^(?:data:image\/|https?:\/\/)/i.test(value)
     || /\.(?:png|jpe?g|webp|gif|svg)(?:[?#].*)?$/i.test(value)
+}
+
+function normalizeBackgroundSources(data = {}) {
+  const sources = []
+  for (const item of Array.isArray(data.backgrounds) ? data.backgrounds : []) {
+    if (typeof item === "string" && item) sources.push(item)
+  }
+  if (typeof data.bg === "string" && data.bg && !sources.includes(data.bg)) sources.unshift(data.bg)
+  return sources
 }
 
 function isAtlasTemplate(templateName) {

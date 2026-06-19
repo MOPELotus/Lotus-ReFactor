@@ -1,7 +1,7 @@
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { resourcesPath } from "../path.js"
-import { getRenderBackground } from "./background.js"
+import { createRenderBackgroundProvider } from "./background.js"
 import { renderWithSkia } from "./skia.js"
 
 const DEFAULT_RENDER_OPTIONS = Object.freeze({
@@ -12,11 +12,22 @@ const DEFAULT_RENDER_OPTIONS = Object.freeze({
 export async function renderTemplate(templateName, data = {}, options = {}) {
   const saveId = sanitizeSaveId(options.saveId || templateName)
   const fontPath = toFileUrl(path.join(resourcesPath, "fonts", "MiSans-VF.ttf"))
+  const hasExplicitBackground = Boolean(data.bg || data.backgrounds || data.backgroundProvider)
+  const backgroundProvider = data.backgroundProvider || (hasExplicitBackground
+    ? null
+    : await createRenderBackgroundProvider())
+  const bg = data.bg || firstBackground(data.backgrounds) || (backgroundProvider ? await backgroundProvider() : "")
   const payload = {
     pluginName: "荷花插件",
     generatedAt: formatTime(new Date()),
-    bg: data.bg || await getRenderBackground(),
     ...data,
+    bg,
+    backgrounds: Array.isArray(data.backgrounds) && data.backgrounds.length
+      ? data.backgrounds
+      : bg
+        ? [bg]
+        : [],
+    backgroundProvider,
     fontPath,
   }
 
@@ -26,6 +37,10 @@ export async function renderTemplate(templateName, data = {}, options = {}) {
     saveId,
     data: payload,
   })
+}
+
+function firstBackground(backgrounds) {
+  return Array.isArray(backgrounds) ? backgrounds.find(Boolean) || "" : ""
 }
 
 export async function renderStatusCard(data = {}, options = {}) {
