@@ -14,11 +14,6 @@ import {
 } from "../services/nanokaAtlas/service.js"
 import { AtlasUpdateService } from "../services/nanokaAtlas/update.js"
 
-const startupShortcutRules = await buildAtlasShortcutRules().catch(error => {
-  globalThis.logger?.warn?.(`[Lotus-Plugin] build atlas startup shortcut routes failed: ${error.message}`)
-  return { rules: [], stats: { rules: 0 }, reason: error.message }
-})
-
 export class LotusAtlas extends BasePlugin {
   constructor() {
     super({
@@ -26,9 +21,9 @@ export class LotusAtlas extends BasePlugin {
       dsc: "Lotus nanoka atlas query",
       event: "message",
       priority: LOTUS_INTERCEPT_PRIORITY,
-      rule: composeAtlasRules(startupShortcutRules.rules || []),
+      rule: composeAtlasRules(),
     })
-    this.shortcutRouteStats = startupShortcutRules.stats || { rules: 0 }
+    this.shortcutRouteStats = { rules: 0 }
     this.task = [
       ...this.buildAtlasTasks(),
     ]
@@ -283,6 +278,22 @@ function composeAtlasRules(shortcutRules = []) {
     {
       reg: "^#?(Lotus|lotus|荷花)?图鉴\\s*[\\s\\S]+$",
       fnc: "query",
+    },
+    {
+      reg: "^[#*%][\\s\\S]{1,}图鉴$",
+      fnc: "shortcutQuery",
+    },
+    {
+      reg: "^#(?:\\d{4}[./年-]\\d{1,2}[./月-]\\d{1,2}日?)?(?:上期|本期|当期|下期)(?:深渊|深境螺旋|幻想|幻想真境剧诗|剧诗)$",
+      fnc: "shortcutQuery",
+    },
+    {
+      reg: "^\\*(?:\\d{4}[./年-]\\d{1,2}[./月-]\\d{1,2}日?)?(?:上期|本期|当期|下期)(?:混沌|混沌回忆|忘却|忘却之庭|末日|末日幻影|虚构|虚构叙事|异相|异相仲裁)$",
+      fnc: "shortcutQuery",
+    },
+    {
+      reg: "^%(?:\\d{4}[./年-]\\d{1,2}[./月-]\\d{1,2}日?)?(?:上期|本期|当期|下期)(?:防卫战|式舆防卫战|危局|危局强袭战|强袭战)$",
+      fnc: "shortcutQuery",
     },
     ...shortcutRules,
   ]
