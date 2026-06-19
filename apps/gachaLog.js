@@ -4,9 +4,11 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import {
+  isMissingProfileError,
   listProfileIds,
   loadProfile,
   parseProfileIdFromMessage,
+  profileLoginRequiredMessage,
   PROFILE_ID_SUFFIX_PATTERN,
 } from "../core/config/profile.js"
 import { renderStatusCard } from "../core/render/service.js"
@@ -85,6 +87,11 @@ export class LotusGachaLog extends BasePlugin {
       })
       await replyImage(this, image, "[荷花插件]绝区零抽卡记录更新完成。")
     } catch (error) {
+      if (isMissingProfileError(error)) {
+        await replyText(this, `[荷花插件]${profileLoginRequiredMessage(profileId)}`)
+        return true
+      }
+
       logger?.error?.(`[Lotus-Plugin] zzz gacha update failed: ${error.stack || error.message}`)
       const image = await renderStatusCard({
         title: "绝区零抽卡记录",
@@ -134,6 +141,11 @@ export class LotusGachaLog extends BasePlugin {
       })
       await replyImage(this, image, "[荷花插件]抽卡记录更新完成。")
     } catch (error) {
+      if (isMissingProfileError(error)) {
+        await replyText(this, `[荷花插件]${profileLoginRequiredMessage(profileId)}`)
+        return true
+      }
+
       logger?.error?.(`[Lotus-Plugin] gacha log update failed: ${error.stack || error.message}`)
       const image = await renderStatusCard({
         title: "抽卡记录",

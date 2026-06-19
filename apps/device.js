@@ -1,5 +1,6 @@
 const BasePlugin = globalThis.plugin
 
+import fs from "node:fs/promises"
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import {
   ensureProfile,
@@ -8,6 +9,7 @@ import {
   parseProfileIdFromMessage,
   PROFILE_ID_SUFFIX_PATTERN,
 } from "../core/config/profile.js"
+import { resolveRoot } from "../core/path.js"
 import { DeviceService } from "../core/devices/service.js"
 import { renderTemplate } from "../core/render/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
@@ -24,7 +26,7 @@ export class LotusDevice extends BasePlugin {
       priority: LOTUS_INTERCEPT_PRIORITY,
       rule: [
         {
-          reg: `^#(原神|星铁|绝区零)?绑定设备${PROFILE_ID_SUFFIX_PATTERN}([\\s\\S]*)$`,
+          reg: `^#(原神|星铁|绝区零)?绑定设备(?:信息)?${PROFILE_ID_SUFFIX_PATTERN}(?:\\s+[\\s\\S]*)?$`,
           fnc: "bindDevice",
         },
         {
@@ -43,7 +45,8 @@ export class LotusDevice extends BasePlugin {
     if (!payload) {
       pendingDeviceBind.set(userId, profileId)
       this.setContext("receiveDeviceJson")
-      await replyText(this, `[荷花插件]请发送 profile ${profileId} 的设备 JSON；发送“取消”可退出。`)
+      await replyText(this, `[荷花插件]请安装设备信息 APK，打开后获取设备信息，并把复制出的 JSON 发回来绑定到 profile ${profileId}；发送“取消”可退出。`)
+      await sendDeviceInfoApk(this)
       return true
     }
 
@@ -112,11 +115,33 @@ export class LotusDevice extends BasePlugin {
 }
 
 function parseDeviceProfileId(message = "") {
-  const match = String(message).match(/^#(?:原神|星铁|绝区零)?绑定设备(\d*)/)
+  const match = String(message).match(/^#(?:原神|星铁|绝区零)?绑定设备(?:信息)?(\d*)/)
   return normalizeProfileId(match?.[1] || 1)
 }
 
 function extractJsonPayload(message = "") {
   const match = String(message || "").match(/(\{[\s\S]*\})/)
   return match?.[1] || ""
+}
+
+export function resolveDeviceInfoApkPath() {
+  return resolveRoot("resources", "apk", "copy_device_info_1.2.apk")
+}
+
+async function sendDeviceInfoApk(target) {
+  const apkPath = resolveDeviceInfoApkPath()
+  try {
+    await fs.access(apkPath)
+  } catch {
+    await replyText(target, `[荷花插件]设备信息 APK 文件缺失，请联系 bot 主人检查 ${apkPath}`)
+    return
+  }
+
+  if (globalThis.segment?.file) {
+    const payload = globalThis.segment.file(apkPath, "copy_device_info_1.2.apk")
+    if (typeof target?.reply === "function") await target.reply(payload)
+    else await target.e.reply(payload)
+    return
+  }
+  await replyText(target, `[荷花插件]当前适配器不支持直接发送文件，请向 bot 主人索取设备信息 APK：${apkPath}`)
 }

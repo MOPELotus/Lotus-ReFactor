@@ -30,6 +30,15 @@ export function profileFilePath(qq, profileId = 1) {
   return resolveData("users", profileFileName(qq, profileId))
 }
 
+export function isMissingProfileError(error) {
+  return error?.code === "ENOENT"
+}
+
+export function profileLoginRequiredMessage(profileId = 1) {
+  const id = normalizeProfileId(profileId)
+  return `profile ${id} 需要重新扫码登录，请发送 #扫码登录${id === 1 ? "" : id} 后再使用。`
+}
+
 export async function listProfileIds(qq) {
   if (!qq) throw new Error("qq is required")
   const dir = resolveData("users")

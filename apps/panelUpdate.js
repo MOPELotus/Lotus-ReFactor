@@ -2,8 +2,10 @@ const BasePlugin = globalThis.plugin
 
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import {
+  isMissingProfileError,
   loadProfile,
   parseProfileIdFromMessage,
+  profileLoginRequiredMessage,
   PROFILE_ID_SUFFIX_PATTERN,
 } from "../core/config/profile.js"
 import { renderStatusCard } from "../core/render/service.js"
@@ -73,6 +75,11 @@ export class LotusPanelUpdate extends BasePlugin {
         await replyText(this, `[荷花插件]${message}`)
       }
     } catch (error) {
+      if (isMissingProfileError(error)) {
+        await replyText(this, `[荷花插件]${profileLoginRequiredMessage(profileId)}`)
+        return true
+      }
+
       logger?.error?.(`[Lotus-Plugin] panel update failed: ${error.stack || error.message}`)
       const image = await renderStatusCard({
         title: "面板更新",
