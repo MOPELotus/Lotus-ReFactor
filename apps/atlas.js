@@ -45,7 +45,11 @@ export class LotusAtlas extends BasePlugin {
           fnc: "query",
         },
         {
-          reg: "^(?!#(?:锅巴登录|登录)$)[#*%][\\s\\S]{1,}$",
+          reg: "^[^#*%\\s][\\s\\S]+(?:命座|星魂|影画|天赋)$",
+          fnc: "shortcutQuery",
+        },
+        {
+          reg: "^(?!#(?:锅巴登录|登录)$)(?![#*%][\\s\\S]*面板$)[#*%][\\s\\S]{1,}$",
           fnc: "shortcutQuery",
         },
       ],
@@ -192,6 +196,7 @@ export class LotusAtlas extends BasePlugin {
     const result = await new NanokaAtlasService().search(parsed.query, {
       challenge: parsed.challenge,
       game: parsed.game,
+      pages: parsed.pages,
       minScore: parsed.challenge ? undefined : 100,
       strict: !parsed.challenge,
     })

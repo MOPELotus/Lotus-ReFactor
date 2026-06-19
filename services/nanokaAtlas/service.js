@@ -201,6 +201,12 @@ const SHORTCUT_GAME_BY_PREFIX = Object.freeze({
 
 const SHORTCUT_MIN_SCORE = 100
 
+const ROLE_DETAIL_SUFFIX_GAME = Object.freeze({
+  命座: "原神",
+  星魂: "星铁",
+  影画: "绝区零",
+})
+
 const ZZZ_ICON_MAP_ASSETS = Object.freeze({
   Icon_Normal: ["Icon_Normal"],
   Icon_Evade: ["Icon_Evade"],
@@ -318,6 +324,7 @@ export class NanokaAtlasService {
       ? await findChallengeResults(index, challenge, root, this.fs, maxResults)
       : await findSearchResults(index, keyword, root, this.fs, maxResults, {
         game,
+        pages: options.pages,
         aliases,
         minScore: options.minScore,
         strict: options.strict,
@@ -345,6 +352,7 @@ export class NanokaAtlasService {
       ...options,
       challenge: parsed.challenge,
       game: parsed.game,
+      pages: parsed.pages,
       minScore: parsed.challenge ? undefined : SHORTCUT_MIN_SCORE,
       strict: !parsed.challenge,
       maxResults: 1,
@@ -491,10 +499,11 @@ export function parseAtlasShortcutMessage(message = "") {
   }
 
   const prefix = raw[0]
-  if (!["#", "*", "%"].includes(prefix)) return { ok: false, reason: "unsupported_prefix" }
-  const game = SHORTCUT_GAME_BY_PREFIX[prefix]
-  const text = raw.slice(1).trim()
+  const hasPrefix = ["#", "*", "%"].includes(prefix)
+  const game = hasPrefix ? SHORTCUT_GAME_BY_PREFIX[prefix] : ""
+  const text = hasPrefix ? raw.slice(1).trim() : raw.trim()
   if (!text) return { ok: false, reason: "empty_query" }
+  if (isPanelShortcutQuery(text)) return { ok: false, reason: "panel_query" }
   if (isPersonalChallengeQuery(raw)) return { ok: false, reason: "personal_challenge" }
 
   const challenge = resolveChallengeQuery(text)
@@ -504,6 +513,20 @@ export function parseAtlasShortcutMessage(message = "") {
     }
     return { ok: true, query: text, prefix, game: challenge.game || game, challenge, shortcut: true }
   }
+  const roleDetail = parseRoleDetailShortcut(text, game)
+  if (roleDetail?.conflict) return { ok: false, reason: "prefix_detail_mismatch" }
+  if (roleDetail) {
+    return {
+      ok: true,
+      query: roleDetail.query,
+      prefix: hasPrefix ? prefix : "",
+      game: roleDetail.game,
+      pages: ["角色"],
+      detailSuffix: roleDetail.suffix,
+      shortcut: true,
+    }
+  }
+  if (!hasPrefix) return { ok: false, reason: "unsupported_prefix" }
   if (GENERIC_ATLAS_SHORTCUT_TERMS.has(normalizeShortcutText(text))) return { ok: false, reason: "generic_query" }
   if (looksLikeNonAtlasCommand(text)) return { ok: false, reason: "known_command" }
   if (text.length < 2) return { ok: false, reason: "too_short" }
@@ -514,6 +537,26 @@ export function isPersonalChallengeQuery(query = "") {
   const text = normalizeShortcutText(query)
   if (!text || resolveChallengeQuery(text)) return false
   return PERSONAL_CHALLENGE_TERMS.has(text)
+}
+
+function isPanelShortcutQuery(text = "") {
+  return normalizeShortcutText(text).endsWith("面板")
+}
+
+function parseRoleDetailShortcut(text = "", prefixGame = "") {
+  const clean = normalizeKeyword(text).replace(/\s+/g, "")
+  const match = clean.match(/^(.+?)(命座|星魂|影画|天赋)$/)
+  if (!match) return null
+  const query = match[1]?.trim()
+  const suffix = match[2]
+  if (!query || GENERIC_ATLAS_SHORTCUT_TERMS.has(normalizeShortcutText(query))) return null
+  const suffixGame = ROLE_DETAIL_SUFFIX_GAME[suffix] || ""
+  if (prefixGame && suffixGame && prefixGame !== suffixGame) return { conflict: true, suffix }
+  return {
+    query,
+    suffix,
+    game: suffixGame || prefixGame || "",
+  }
 }
 
 export function resolveChallengeQuery(query = "", now = new Date()) {
@@ -604,14 +647,17 @@ async function findDetailFallbackMatches(index, variants, root, fsImpl, seen, ma
 }
 
 function entryMatchesAtlasFilters(entry, filters = {}) {
-  return !filters.game || entry.game === filters.game
+  if (filters.game && entry.game !== filters.game) return false
+  if (filters.pages?.length && !filters.pages.includes(entry.page)) return false
+  return true
 }
 
 function candidateMatchesAtlasFilters(candidate, itemsRoot, filters = {}) {
-  if (!filters.game) return true
   const relative = path.relative(itemsRoot, candidate.file || "")
-  const [game] = relative.split(path.sep)
-  return game === filters.game
+  const [game, page] = relative.split(path.sep)
+  if (filters.game && game !== filters.game) return false
+  if (filters.pages?.length && !filters.pages.includes(page)) return false
+  return true
 }
 
 function needsDetailFallback(loaded, maxResults) {
