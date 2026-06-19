@@ -25,6 +25,7 @@ export class LotusProfileSettings extends BasePlugin {
       rule: [
         { reg: `^#注册自动签到${PROFILE_ID_SUFFIX_PATTERN}$`, fnc: "updateSettings" },
         { reg: `^#注册本群签到${PROFILE_ID_SUFFIX_PATTERN}$`, fnc: "updateSettings" },
+        { reg: `^#(绑定|设置|切换)(通知群|签到通知群|本群通知)${PROFILE_ID_SUFFIX_PATTERN}$`, fnc: "updateSettings" },
         { reg: `^#(启用|开启|关闭|禁用)社区签到${PROFILE_ID_SUFFIX_PATTERN}$`, fnc: "updateSettings" },
         { reg: `^#(启用|开启|关闭|禁用)(原神|崩坏2|崩二|崩坏3|崩三|未定事件簿|未定|星铁|崩铁|绝区零|绝|因缘精灵)(游戏)?签到${PROFILE_ID_SUFFIX_PATTERN}$`, fnc: "updateSettings" },
         { reg: `^#(启用|开启|关闭|禁用)全部游戏签到${PROFILE_ID_SUFFIX_PATTERN}$`, fnc: "updateSettings" },
@@ -45,7 +46,7 @@ export class LotusProfileSettings extends BasePlugin {
 
   async updateSettings() {
     const profileId = parseProfileIdFromSettingsMessage(this.e.msg)
-    if (await this.tryBulkRegisterGroup(profileId)) return true
+    if (isRegisterGroupCommand(this.e.msg)) return this.bulkRegisterGroup(profileId)
 
     const result = await updateProfileSettings({
       e: this.e,
@@ -65,14 +66,19 @@ export class LotusProfileSettings extends BasePlugin {
     return true
   }
 
-  async tryBulkRegisterGroup(profileId) {
-    if (!new RegExp(`^#注册本群签到${PROFILE_ID_SUFFIX_PATTERN}$`).test(String(this.e?.msg || ""))) return false
-    if (!this.e?.group_id) return false
+  async bulkRegisterGroup(profileId) {
+    if (!this.e?.group_id) {
+      await replyText(this, "[荷花插件]请在目标群内执行 #注册本群签到。普通用户切换通知群请在目标群发送 #绑定通知群。")
+      return true
+    }
 
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
       .explain(this.e, "checkin.group_register")
-    if (!permission.ok) return false
+    if (!permission.ok) {
+      await replyText(this, "[荷花插件]只有 bot 主人可以为本群批量注册签到。普通用户切换通知群请发送 #绑定通知群。")
+      return true
+    }
 
     if (!this.e.group?.getMemberMap) {
       await this.replyBulkRegisterStatus({
@@ -143,8 +149,12 @@ export class LotusProfileSettings extends BasePlugin {
   }
 }
 
+function isRegisterGroupCommand(message = "") {
+  return new RegExp(`^#注册本群签到${PROFILE_ID_SUFFIX_PATTERN}$`).test(String(message || ""))
+}
+
 async function tryAddLateSchedule(profile, action) {
-  if (!["register", "registerGroup"].includes(action?.type)) return
+  if (action?.type !== "register") return
   try {
     await new ScheduledSigninService().addLateProfileAndNotify(profile, {
       bot: globalThis.Bot,

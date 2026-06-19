@@ -53,6 +53,9 @@ export async function updateProfileSettings({ e, message, nickname = "" } = {}) 
   })
   const action = parseProfileSettingsCommand(message)
   if (!action.ok) return { ok: false, reason: action.reason, profile, profileId }
+  if (action.type === "bindNotifyGroup" && !e?.group_id) {
+    return { ok: false, reason: "group_required", profile, profileId }
+  }
 
   applyProfileSettingsAction(profile, action)
   if (action.type === "registerGroup" && e?.group_id) {
@@ -61,6 +64,14 @@ export async function updateProfileSettings({ e, message, nickname = "" } = {}) 
     if (!profile.profile.notify.fallback_groups.map(String).includes(groupId)) {
       profile.profile.notify.fallback_groups.push(groupId)
     }
+  }
+  if (action.type === "bindNotifyGroup" && e?.group_id) {
+    action.groupId = String(e.group_id)
+    profile.profile.notify.fallback_groups = [action.groupId]
+  }
+  if (action.type === "notify" && action.prefer === "group" && e?.group_id) {
+    action.groupId = String(e.group_id)
+    profile.profile.notify.fallback_groups = [action.groupId]
   }
   await saveProfile(profile)
   const profiles = await listProfileIds(userId)
@@ -88,6 +99,10 @@ export function parseProfileSettingsCommand(message = "") {
   if (/^#注册自动签到\d*$/.test(text)) return { ok: true, type: "register" }
 
   if (/^#注册本群签到\d*$/.test(text)) return { ok: true, type: "registerGroup" }
+
+  if (/^#(绑定|设置|切换)(通知群|签到通知群|本群通知)\d*$/.test(text)) {
+    return { ok: true, type: "bindNotifyGroup" }
+  }
 
   let match = text.match(/^#(启用|开启|关闭|禁用)社区签到\d*$/)
   if (match) {
@@ -260,6 +275,12 @@ export function applyProfileSettingsAction(profile, action) {
     return profile
   }
 
+  if (action.type === "bindNotifyGroup") {
+    profile.profile.notify.prefer = "group"
+    profile.profile.notify.fallback_groups ||= []
+    return profile
+  }
+
   if (action.type === "bbs") {
     profile.mihoyobbs.enable = action.enable
     if (action.enable) profile.mihoyobbs.tasks = { ...profile.mihoyobbs.tasks, checkin: true }
@@ -340,6 +361,7 @@ export function applyProfileSettingsAction(profile, action) {
 function describeAction(action) {
   if (action.type === "register") return "已注册自动签到 profile。"
   if (action.type === "registerGroup") return "已注册本群作为通知 fallback。"
+  if (action.type === "bindNotifyGroup") return `已将${action.groupId ? `群 ${action.groupId}` : "当前群"}设置为签到通知群。`
   if (action.type === "bbs") return action.enable ? "已启用社区签到。" : "已关闭社区签到。"
   if (action.type === "game") return `${gameLabel(action.game)}签到已${action.enable ? "启用" : "关闭"}。`
   if (action.type === "allGames") return `全部游戏签到已${action.enable ? "启用" : "关闭"}。`
