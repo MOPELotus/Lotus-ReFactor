@@ -3,7 +3,7 @@ const BasePlugin = globalThis.plugin
 import { buildProfileCardData } from "./profile.js"
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import { loadGlobalConfig } from "../core/config/global.js"
-import { PROFILE_ID_SUFFIX_PATTERN } from "../core/config/profile.js"
+import { loadProfile, PROFILE_ID_SUFFIX_PATTERN } from "../core/config/profile.js"
 import {
   parseProfileIdFromSettingsMessage,
   updateProfileSettings,
@@ -13,6 +13,7 @@ import { renderStatusCard } from "../core/render/service.js"
 import { renderTemplate } from "../core/render/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { registerGroupCheckinProfiles } from "../services/checkin/groupRegister.js"
+import { ScheduledSigninService } from "../services/checkin/scheduled.js"
 
 export class LotusProfileSettings extends BasePlugin {
   constructor() {
@@ -55,6 +56,7 @@ export class LotusProfileSettings extends BasePlugin {
       await replyText(this, `[荷花插件]配置指令无法识别：${result.reason}`)
       return true
     }
+    await tryAddLateSchedule(result.profile, result.action)
 
     const image = await renderTemplate("profile-card", buildProfileCardData(result.profile, result.profiles), {
       saveId: `lotus-profile-settings-${this.e.user_id}-${profileId}`,
@@ -88,6 +90,7 @@ export class LotusProfileSettings extends BasePlugin {
         groupId: this.e.group_id,
         profileId,
       })
+      await tryAddLateSchedulesForGroup(result.results)
       await this.replyBulkRegisterStatus({
         title: "注册本群签到",
         badge: `+${result.updated}`,
@@ -137,6 +140,31 @@ export class LotusProfileSettings extends BasePlugin {
       saveId: `lotus-group-register-${this.e.user_id || "master"}`,
     })
     await replyImage(this, image, `[荷花插件]${title}${badge}`)
+  }
+}
+
+async function tryAddLateSchedule(profile, action) {
+  if (!["register", "registerGroup"].includes(action?.type)) return
+  try {
+    await new ScheduledSigninService().addLateProfileAndNotify(profile, {
+      bot: globalThis.Bot,
+    })
+  } catch (error) {
+    logger?.warn?.(`[Lotus-Plugin] late schedule after profile settings skipped: ${error.message}`)
+  }
+}
+
+async function tryAddLateSchedulesForGroup(results = []) {
+  const service = new ScheduledSigninService()
+  for (const item of results.filter(result => result.ok)) {
+    try {
+      const profile = await loadProfile(item.qq, item.profileId)
+      await service.addLateProfileAndNotify(profile, {
+        bot: globalThis.Bot,
+      })
+    } catch (error) {
+      logger?.warn?.(`[Lotus-Plugin] late schedule after group register skipped for ${item.qq}: ${error.message}`)
+    }
   }
 }
 
