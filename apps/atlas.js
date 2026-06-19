@@ -198,6 +198,7 @@ export class LotusAtlas extends BasePlugin {
         strict: !parsed.challenge,
       })
       if (!result.ok) {
+        if (shouldPassThroughShortcutFailure(parsed, result)) return false
         const image = await renderAtlasSearchResult(result, this.e.user_id)
         await replyImage(this, image, atlasFailureReply(result))
         return true
@@ -284,6 +285,10 @@ function composeAtlasRules(shortcutRules = []) {
       fnc: "shortcutQuery",
     },
     {
+      reg: "^#(?:星铁|星穹铁道|崩坏星穹铁道|崩铁|绝区零|绝区|原神)?[\\s\\S]{1,}图鉴$",
+      fnc: "shortcutQuery",
+    },
+    {
       reg: "^#(?:\\d{4}[./年-]\\d{1,2}[./月-]\\d{1,2}日?)?(?:上期|本期|当期|下期)(?:深渊|深境螺旋|幻想|幻想真境剧诗|剧诗)$",
       fnc: "shortcutQuery",
     },
@@ -294,6 +299,24 @@ function composeAtlasRules(shortcutRules = []) {
     {
       reg: "^%(?:\\d{4}[./年-]\\d{1,2}[./月-]\\d{1,2}日?)?(?:上期|本期|当期|下期)(?:防卫战|式舆防卫战|危局|危局强袭战|强袭战)$",
       fnc: "shortcutQuery",
+    },
+    {
+      reg: "^#星铁(?:\\d{4}[./年-]\\d{1,2}[./月-]\\d{1,2}日?)?(?:上期|本期|当期|下期)(?:混沌|混沌回忆|忘却|忘却之庭|末日|末日幻影|虚构|虚构叙事|异相|异相仲裁)$",
+      fnc: "shortcutQuery",
+    },
+    {
+      reg: "^#绝区零(?:\\d{4}[./年-]\\d{1,2}[./月-]\\d{1,2}日?)?(?:上期|本期|当期|下期)(?:防卫战|式舆防卫战|危局|危局强袭战|强袭战)$",
+      fnc: "shortcutQuery",
+    },
+    {
+      reg: "^(?![#*%]?(?:星铁|绝区零|原神)?(?:锅巴登录|体力|树脂|便笺|便签|多体力|全部体力|更新面板|面板更新|更新抽卡记录|刷新抽卡记录|刷新cookie|扫码登录|米哈游登录|账号密码登录|密码登录|登录帮助|签到|注册自动签到|远程|spawn|上传|下载|B站|BBDown|帮助|菜单|命令|版本|状态)\\d{0,3}$)(?![#*%]?[\\s\\S]*面板$)(?:#[\\s\\S]{2,}|\\*[\\s\\S]{2,}|%[\\s\\S]{2,})$",
+      fnc: "shortcutQuery",
+      log: false,
+    },
+    {
+      reg: "^[^#*%\\s][\\s\\S]{1,}(?:命座|星魂|影画|天赋)$",
+      fnc: "shortcutQuery",
+      log: false,
     },
     ...shortcutRules,
   ]
@@ -348,4 +371,10 @@ function atlasUpdateMessage(result) {
 function atlasFailureReply(result) {
   if (result.reason === "atlas_data_missing") return "[荷花插件]图鉴数据未初始化。"
   return "[荷花插件]没有找到图鉴结果。"
+}
+
+function shouldPassThroughShortcutFailure(parsed, result) {
+  if (result?.reason === "atlas_data_missing") return false
+  if (parsed?.challenge || parsed?.detailSuffix || parsed?.explicit || parsed?.explicitSuffix) return false
+  return true
 }

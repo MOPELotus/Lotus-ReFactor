@@ -190,6 +190,7 @@ const GENERIC_ATLAS_SHORTCUT_TERMS = new Set([
 
 const STATIC_QUERY_ALIASES = Object.freeze({
   星见雅: { game: "绝区零", aliases: ["雅"] },
+  雾切之回光: { game: "原神", aliases: ["雾切"] },
   冰封迷途的勇士: { game: "原神", aliases: ["冰风迷途的勇士"] },
 })
 
@@ -198,6 +199,16 @@ const SHORTCUT_GAME_BY_PREFIX = Object.freeze({
   "*": "星铁",
   "%": "绝区零",
 })
+
+const LOADER_GAME_PREFIXES = Object.freeze([
+  { prefix: "#星铁", game: "星铁", shortcutPrefix: "*" },
+  { prefix: "#星穹铁道", game: "星铁", shortcutPrefix: "*" },
+  { prefix: "#崩坏星穹铁道", game: "星铁", shortcutPrefix: "*" },
+  { prefix: "#崩铁", game: "星铁", shortcutPrefix: "*" },
+  { prefix: "#绝区零", game: "绝区零", shortcutPrefix: "%" },
+  { prefix: "#绝区", game: "绝区零", shortcutPrefix: "%" },
+  { prefix: "#原神", game: "原神", shortcutPrefix: "#" },
+])
 
 const SHORTCUT_PREFIX_BY_GAME = Object.freeze({
   原神: "#",
@@ -507,7 +518,9 @@ export async function buildAtlasShortcutRules(options = {}) {
   for (const [prefix, names] of directNamesByPrefix.entries()) {
     const list = [...names].sort(shortcutNameSort)
     stats.directNames += list.length
-    rules.push(...buildNameShortcutRules(prefix, list, "(?:图鉴)?"))
+    for (const routePrefix of shortcutRoutePrefixes(prefix)) {
+      rules.push(...buildNameShortcutRules(routePrefix, list, "(?:图鉴)?"))
+    }
   }
 
   const allRoleNames = new Set()
@@ -518,7 +531,9 @@ export async function buildAtlasShortcutRules(options = {}) {
     stats.roleNames += list.length
     for (const name of list) allRoleNames.add(name)
     if (prefix && suffixes.length) {
-      rules.push(...buildNameShortcutRules(prefix, list, `(?:${suffixes.map(escapeRegExp).join("|")})`))
+      for (const routePrefix of shortcutRoutePrefixes(prefix)) {
+        rules.push(...buildNameShortcutRules(routePrefix, list, `(?:${suffixes.map(escapeRegExp).join("|")})`))
+      }
     }
   }
   rules.push(...buildNameShortcutRules("", [...allRoleNames].sort(shortcutNameSort), "(?:命座|星魂|影画|天赋)"))
@@ -615,14 +630,23 @@ function buildChallengeShortcutRules(stats) {
   for (const [prefix, names] of namesByPrefix.entries()) {
     const list = [...names].sort(shortcutNameSort)
     stats.challengeNames += list.length
-    for (const chunk of chunkArray(list, SHORTCUT_ROUTE_CHUNK_SIZE)) {
-      rules.push({
-        reg: `^${escapeRegExp(prefix)}${datePrefix}(?:上期|本期|当期|下期)(?:${chunk.map(escapeRegExp).join("|")})$`,
-        fnc: "shortcutQuery",
-      })
+    for (const routePrefix of shortcutRoutePrefixes(prefix)) {
+      for (const chunk of chunkArray(list, SHORTCUT_ROUTE_CHUNK_SIZE)) {
+        rules.push({
+          reg: `^${escapeRegExp(routePrefix)}${datePrefix}(?:上期|本期|当期|下期)(?:${chunk.map(escapeRegExp).join("|")})$`,
+          fnc: "shortcutQuery",
+        })
+      }
     }
   }
   return rules
+}
+
+function shortcutRoutePrefixes(prefix) {
+  if (prefix === "*") return ["*", "#星铁"]
+  if (prefix === "%") return ["%", "#绝区零"]
+  if (prefix === "#") return ["#"]
+  return [prefix]
 }
 
 function buildNameShortcutRules(prefix, names, suffixPattern) {
@@ -713,10 +737,11 @@ export function parseAtlasShortcutMessage(message = "") {
     return query ? { ok: true, query, explicit: true } : { ok: false, reason: "empty_query" }
   }
 
-  const prefix = raw[0]
+  const normalized = normalizeLoaderShortcutPrefix(raw)
+  const prefix = normalized.prefix
   const hasPrefix = ["#", "*", "%"].includes(prefix)
-  const game = hasPrefix ? SHORTCUT_GAME_BY_PREFIX[prefix] : ""
-  const originalText = hasPrefix ? raw.slice(1).trim() : raw.trim()
+  const game = normalized.game || (hasPrefix ? SHORTCUT_GAME_BY_PREFIX[prefix] : "")
+  const originalText = normalized.text
   const text = stripShortcutAtlasSuffix(originalText)
   const explicitSuffix = text !== originalText
   if (!text) return { ok: false, reason: "empty_query" }
@@ -749,6 +774,26 @@ export function parseAtlasShortcutMessage(message = "") {
   if (looksLikeNonAtlasCommand(text)) return { ok: false, reason: "known_command" }
   if (text.length < 2) return { ok: false, reason: "too_short" }
   return { ok: true, query: text, prefix, game, explicitSuffix, shortcut: true }
+}
+
+function normalizeLoaderShortcutPrefix(raw = "") {
+  const text = String(raw || "").trim()
+  for (const item of LOADER_GAME_PREFIXES) {
+    if (!text.startsWith(item.prefix)) continue
+    return {
+      prefix: item.shortcutPrefix,
+      game: item.game,
+      text: text.slice(item.prefix.length).trim(),
+      loaderPrefix: item.prefix,
+    }
+  }
+
+  const prefix = text[0]
+  return {
+    prefix,
+    game: "",
+    text: ["#", "*", "%"].includes(prefix) ? text.slice(1).trim() : text,
+  }
 }
 
 export function isPersonalChallengeQuery(query = "") {
