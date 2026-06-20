@@ -1,6 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
-import { resolveData } from "../../core/path.js"
+import { resolveData, rootPath } from "../../core/path.js"
 import {
   AuthKeyService,
   getServer,
@@ -25,6 +25,8 @@ export class ZzzGachaService {
     this.authKeyService = options.authKeyService || new AuthKeyService({ fetch: this.fetch })
     this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)))
     this.storageDir = options.storageDir || resolveData("zzzGachaJson")
+    this.zzzPluginDir = options.zzzPluginDir || ""
+    this.mirrorZzzPlugin = options.mirrorZzzPlugin !== false
     this.pageDelayMs = Number(options.pageDelayMs ?? 1000)
     this.maxPages = Number(options.maxPages ?? 50)
   }
@@ -154,11 +156,39 @@ export class ZzzGachaService {
     const file = this.logFile(qq, uid)
     await fs.mkdir(path.dirname(file), { recursive: true })
     await fs.writeFile(file, JSON.stringify(data, null, 2), "utf8")
+    await this.saveZzzPluginLog(uid, data)
     return file
   }
 
   logFile(qq, uid) {
     return path.join(this.storageDir, String(qq), `${uid}.json`)
+  }
+
+  async saveZzzPluginLog(uid, data) {
+    if (!this.mirrorZzzPlugin) return ""
+    const pluginDir = await this.resolveZzzPluginDir()
+    if (!pluginDir) return ""
+
+    const file = path.join(pluginDir, "data", "gacha", `${uid}.json`)
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.writeFile(file, JSON.stringify(data, null, 2), "utf8")
+    return file
+  }
+
+  async resolveZzzPluginDir() {
+    if (this.zzzPluginDir) return this.zzzPluginDir
+    const candidates = [
+      path.join(process.cwd(), "plugins", "ZZZ-Plugin"),
+      path.join(rootPath, "..", "ZZZ-Plugin"),
+    ].filter(Boolean)
+
+    for (const dir of candidates) {
+      try {
+        const stat = await fs.stat(dir)
+        if (stat.isDirectory()) return dir
+      } catch {}
+    }
+    return ""
   }
 
   async requestJson(url) {
