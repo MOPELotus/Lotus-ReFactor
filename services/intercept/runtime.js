@@ -179,12 +179,17 @@ export function isConflictRule(entry, rule) {
 
 function isMiaoWikiEntry(name, key) {
   return name.includes("喵喵:角色资料")
+    || name.includes("喵喵角色资料")
+    || name.includes("miao-plugin:wiki")
     || key.includes("miao-plugin/apps/wiki")
     || key.includes("miao-plugin\\apps\\wiki")
 }
 
 function isMiaoCharacterEntry(name, key) {
   return name.includes("喵喵角色卡片")
+    || name.includes("喵喵:角色查询")
+    || name.includes("喵喵角色查询")
+    || name.includes("miao-plugin:character")
     || key.includes("miao-plugin/apps/character")
     || key.includes("miao-plugin\\apps\\character")
 }

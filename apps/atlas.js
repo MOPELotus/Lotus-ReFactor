@@ -289,6 +289,14 @@ function composeAtlasRules(shortcutRules = []) {
       fnc: "shortcutQuery",
     },
     {
+      reg: "^[#*%％][\\s\\S]{1,}(?:命座|星魂|影画|天赋)$",
+      fnc: "shortcutQuery",
+    },
+    {
+      reg: "^#(?:星铁|星穹铁道|崩坏星穹铁道|崩铁|绝区零|绝区|原神)?[\\s\\S]{1,}(?:命座|星魂|影画|天赋)$",
+      fnc: "shortcutQuery",
+    },
+    {
       reg: "^#(?:\\d{4}[./年-]\\d{1,2}[./月-]\\d{1,2}日?)?(?:上期|本期|当期|下期)(?:深渊|深境螺旋|幻想|幻想真境剧诗|剧诗)$",
       fnc: "shortcutQuery",
     },

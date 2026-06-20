@@ -92,12 +92,13 @@ export class LotusGachaLog extends BasePlugin {
         return true
       }
 
+      const message = translateGachaError(error)
       logger?.error?.(`[Lotus-Plugin] zzz gacha update failed: ${error.stack || error.message}`)
       const image = await renderStatusCard({
         title: "绝区零抽卡记录",
         subtitle: `QQ ${userId} · Profile ${profileId}`,
         badge: "失败",
-        message: error.message,
+        message,
         userId,
         items: [
           { label: "阶段", value: "荷花插件 authkey / 绝区零抽卡接口" },
@@ -106,7 +107,7 @@ export class LotusGachaLog extends BasePlugin {
       }, {
         saveId: `lotus-zzz-gacha-error-${userId}-${profileId}`,
       })
-      await replyImage(this, image, `[荷花插件]绝区零抽卡记录更新失败：${error.message}`)
+      await replyImage(this, image, `[荷花插件]绝区零抽卡记录更新失败：${message}`)
     }
 
     return true
@@ -146,12 +147,13 @@ export class LotusGachaLog extends BasePlugin {
         return true
       }
 
+      const message = translateGachaError(error)
       logger?.error?.(`[Lotus-Plugin] gacha log update failed: ${error.stack || error.message}`)
       const image = await renderStatusCard({
         title: "抽卡记录",
         subtitle: `QQ ${userId} · Profile ${profileId}`,
         badge: "失败",
-        message: error.message,
+        message,
         userId,
         items: [
           { label: "阶段", value: "authkey / GachaLog" },
@@ -160,7 +162,7 @@ export class LotusGachaLog extends BasePlugin {
       }, {
         saveId: `lotus-gacha-error-${userId}-${profileId}-${game}`,
       })
-      await replyImage(this, image, `[荷花插件]抽卡记录更新失败：${error.message}`)
+      await replyImage(this, image, `[荷花插件]抽卡记录更新失败：${message}`)
     }
 
     return true
@@ -314,6 +316,19 @@ function gameLabel(game) {
   if (game === "sr") return "星铁"
   if (game === "zzz") return "绝区零"
   return game || "-"
+}
+
+export function translateGachaError(error) {
+  const message = String(error?.message || error || "未知错误").trim()
+  if (!message) return "未知错误"
+  if (/visit too frequently/i.test(message)) return "访问过于频繁，请稍后再试。"
+  if (/authkey/i.test(message) && /timeout|timed out/i.test(message)) return "authkey 请求超时，请稍后重试。"
+  if (/invalid authkey|authkey.*invalid/i.test(message)) return "authkey 已失效，请重新扫码登录后再试。"
+  if (/login|stoken|cookie/i.test(message)) return message
+    .replace(/stoken/gi, "stoken")
+    .replace(/cookie/gi, "cookie")
+    .replace(/login/gi, "登录")
+  return message
 }
 
 async function loadGachaLogModel() {
