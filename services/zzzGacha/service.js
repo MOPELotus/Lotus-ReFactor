@@ -7,6 +7,7 @@ import {
   getServer,
 } from "../mihoyoAuthKey/service.js"
 import { isCnServer } from "../../core/mihoyo/regions.js"
+import { formatLocalFileTimestamp } from "../../core/time.js"
 
 export const ZZZ_GACHA_POOLS = Object.freeze({
   "音擎频段": ["3001"],
@@ -241,9 +242,24 @@ export class ZzzGachaService {
 
   async saveLog(qq, uid, data) {
     const file = this.logFile(qq, uid)
+    const pluginFile = this.mirrorZzzPlugin ? await this.zzzPluginLogFile(uid) : ""
+    const previous = mergeLogs(
+      await readJsonFile(file),
+      pluginFile ? await readJsonFile(pluginFile) : {},
+    )
+    const safeData = mergeLogs(previous, data)
+
+    await backupExistingLogFile(file, { uid, source: "lotus" })
+    if (pluginFile && path.resolve(pluginFile) !== path.resolve(file)) {
+      await backupExistingLogFile(pluginFile, { uid, source: "zzz-plugin" })
+    }
+
     await fs.mkdir(path.dirname(file), { recursive: true })
-    await fs.writeFile(file, JSON.stringify(data, null, 2), "utf8")
-    await this.saveZzzPluginLog(uid, data)
+    await fs.writeFile(file, JSON.stringify(safeData, null, 2), "utf8")
+    await this.saveZzzPluginLog(uid, safeData, {
+      skipBackup: true,
+      skipMerge: true,
+    })
     return file
   }
 
@@ -251,12 +267,14 @@ export class ZzzGachaService {
     return path.join(this.storageDir, String(qq), `${uid}.json`)
   }
 
-  async saveZzzPluginLog(uid, data) {
+  async saveZzzPluginLog(uid, data, options = {}) {
     if (!this.mirrorZzzPlugin) return ""
     const file = await this.zzzPluginLogFile(uid)
     if (!file) return ""
+    if (!options.skipBackup) await backupExistingLogFile(file, { uid, source: "zzz-plugin" })
+    const safeData = options.skipMerge ? data : mergeLogs(await readJsonFile(file), data)
     await fs.mkdir(path.dirname(file), { recursive: true })
-    await fs.writeFile(file, JSON.stringify(data, null, 2), "utf8")
+    await fs.writeFile(file, JSON.stringify(safeData, null, 2), "utf8")
     return file
   }
 
@@ -434,6 +452,30 @@ async function readJsonFile(file) {
     if (error?.code === "ENOENT") return {}
     throw error
   }
+}
+
+async function backupExistingLogFile(file, { uid, source } = {}) {
+  if (!file) return ""
+  try {
+    const stat = await fs.stat(file)
+    if (!stat.isFile() || stat.size <= 0) return ""
+  } catch (error) {
+    if (error?.code === "ENOENT") return ""
+    throw error
+  }
+
+  const backupDir = resolveData("backups", "zzzGacha", String(uid || "unknown"))
+  const target = path.join(
+    backupDir,
+    `${formatLocalFileTimestamp()}-${safeFilePart(source || "log")}-${path.basename(file)}`,
+  )
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  await fs.copyFile(file, target)
+  return target
+}
+
+function safeFilePart(value = "") {
+  return String(value).replace(/[^\w.-]+/g, "_").slice(0, 64) || "log"
 }
 
 function pickRole(profile, game) {
