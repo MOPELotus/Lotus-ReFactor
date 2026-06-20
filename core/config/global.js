@@ -36,11 +36,17 @@ export async function ensureGlobalConfig(options = {}) {
   const file = globalConfigFilePath(fileName)
 
   try {
-    await fs.access(file)
+    const raw = await fs.readFile(file, "utf8")
+    const parsed = YAML.parse(raw) || {}
+    const config = assertValidGlobalConfig(migrateGlobalConfig(parsed))
+    const normalized = YAML.stringify(config)
+    if (raw !== normalized) {
+      await fs.writeFile(file, normalized, "utf8")
+    }
     return {
       created: false,
       file,
-      config: await loadGlobalConfig({ fileName }),
+      config,
     }
   } catch (error) {
     if (error?.code !== "ENOENT") throw error
