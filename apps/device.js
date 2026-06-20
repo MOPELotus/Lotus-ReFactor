@@ -3,8 +3,9 @@ const BasePlugin = globalThis.plugin
 import fs from "node:fs/promises"
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import {
-  ensureProfile,
+  isProfileLoginRequiredError,
   listProfileIds,
+  loadLoggedInProfile,
   normalizeProfileId,
   parseProfileIdFromMessage,
   PROFILE_ID_SUFFIX_PATTERN,
@@ -41,6 +42,14 @@ export class LotusDevice extends BasePlugin {
     const userId = String(this.e.user_id)
     const profileId = parseDeviceProfileId(this.e.msg)
     const payload = extractJsonPayload(this.e.msg)
+
+    try {
+      await loadLoggedInProfile(userId, profileId)
+    } catch (error) {
+      if (!isProfileLoginRequiredError(error)) throw error
+      await replyText(this, `[荷花插件]${error.message}`)
+      return true
+    }
 
     if (!payload) {
       pendingDeviceBind.set(userId, profileId)
@@ -80,11 +89,14 @@ export class LotusDevice extends BasePlugin {
   async deviceInfo() {
     const userId = String(this.e.user_id)
     const profileId = parseProfileIdFromMessage(this.e.msg)
-    const profile = await ensureProfile({
-      qq: userId,
-      profileId,
-      nickname: this.e.sender?.card || this.e.sender?.nickname || "",
-    })
+    let profile
+    try {
+      profile = await loadLoggedInProfile(userId, profileId)
+    } catch (error) {
+      if (!isProfileLoginRequiredError(error)) throw error
+      await replyText(this, `[荷花插件]${error.message}`)
+      return true
+    }
     const profiles = await listProfileIds(userId)
     return await this.replyProfile(profile, userId, profileId, profiles)
   }

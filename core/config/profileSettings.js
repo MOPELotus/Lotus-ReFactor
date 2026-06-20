@@ -1,6 +1,6 @@
 import {
-  ensureProfile,
   listProfileIds,
+  loadLoggedInProfile,
   normalizeProfileId,
   parseProfileIdFromMessage,
   saveProfile,
@@ -46,15 +46,16 @@ const ROLE_GAME_KEYS = {
 export async function updateProfileSettings({ e, message, nickname = "" } = {}) {
   const userId = String(e?.user_id || "")
   const profileId = parseProfileIdFromSettingsMessage(message)
-  const profile = await ensureProfile({
-    qq: userId,
-    profileId,
-    nickname,
-  })
   const action = parseProfileSettingsCommand(message)
-  if (!action.ok) return { ok: false, reason: action.reason, profile, profileId }
+  if (!action.ok) return { ok: false, reason: action.reason, profile: null, profileId }
   if (action.type === "bindNotifyGroup" && !e?.group_id) {
-    return { ok: false, reason: "group_required", profile, profileId }
+    return { ok: false, reason: "group_required", profile: null, profileId }
+  }
+
+  const profile = await loadLoggedInProfile(userId, profileId)
+  if (nickname && !profile.user?.nickname) {
+    profile.user ||= {}
+    profile.user.nickname = nickname
   }
 
   applyProfileSettingsAction(profile, action)

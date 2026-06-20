@@ -1,8 +1,9 @@
 const BasePlugin = globalThis.plugin
 
 import {
-  ensureProfile,
+  isProfileLoginRequiredError,
   listProfileIds,
+  loadLoggedInProfile,
   parseProfileIdFromMessage,
   PROFILE_ID_SUFFIX_PATTERN,
 } from "../core/config/profile.js"
@@ -29,11 +30,14 @@ export class LotusProfile extends BasePlugin {
   async profileCard() {
     const userId = String(this.e.user_id)
     const profileId = parseProfileIdFromMessage(this.e.msg)
-    const profile = await ensureProfile({
-      qq: userId,
-      profileId,
-      nickname: this.e.sender?.card || this.e.sender?.nickname || "",
-    })
+    let profile
+    try {
+      profile = await loadLoggedInProfile(userId, profileId)
+    } catch (error) {
+      if (!isProfileLoginRequiredError(error)) throw error
+      await replyText(this, `[荷花插件]${error.message}`)
+      return true
+    }
     const profiles = await listProfileIds(userId)
     const image = await renderTemplate("profile-card", buildProfileCardData(profile, profiles), {
       saveId: `lotus-profile-${userId}-${profileId}`,

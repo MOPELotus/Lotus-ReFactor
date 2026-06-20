@@ -1,5 +1,5 @@
 import {
-  ensureProfile,
+  loadLoggedInProfile,
   loadProfile,
   saveProfile,
 } from "../config/profile.js"
@@ -13,7 +13,11 @@ export class DeviceService {
   }
 
   async bindDevice({ qq, profileId = 1, input, nickname = "" } = {}) {
-    const profile = await ensureProfile({ qq, profileId, nickname })
+    const profile = await loadLoggedInProfile(qq, profileId)
+    if (nickname && !profile.user?.nickname) {
+      profile.user ||= {}
+      profile.user.nickname = nickname
+    }
     const device = await this.normalizeDevice(input)
 
     profile.device = {

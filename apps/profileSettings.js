@@ -3,7 +3,11 @@ const BasePlugin = globalThis.plugin
 import { buildProfileCardData } from "./profile.js"
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import { loadGlobalConfig } from "../core/config/global.js"
-import { loadProfile, PROFILE_ID_SUFFIX_PATTERN } from "../core/config/profile.js"
+import {
+  isProfileLoginRequiredError,
+  loadProfile,
+  PROFILE_ID_SUFFIX_PATTERN,
+} from "../core/config/profile.js"
 import {
   parseProfileIdFromSettingsMessage,
   updateProfileSettings,
@@ -48,11 +52,18 @@ export class LotusProfileSettings extends BasePlugin {
     const profileId = parseProfileIdFromSettingsMessage(this.e.msg)
     if (isRegisterGroupCommand(this.e.msg)) return this.bulkRegisterGroup(profileId)
 
-    const result = await updateProfileSettings({
-      e: this.e,
-      message: this.e.msg,
-      nickname: this.e.sender?.card || this.e.sender?.nickname || "",
-    })
+    let result
+    try {
+      result = await updateProfileSettings({
+        e: this.e,
+        message: this.e.msg,
+        nickname: this.e.sender?.card || this.e.sender?.nickname || "",
+      })
+    } catch (error) {
+      if (!isProfileLoginRequiredError(error)) throw error
+      await replyText(this, `[荷花插件]${error.message}`)
+      return true
+    }
     if (!result.ok) {
       await replyText(this, `[荷花插件]配置指令无法识别：${result.reason}`)
       return true

@@ -1,6 +1,7 @@
 import {
   ensureProfile,
   listProfileIds,
+  loadLoggedInProfile,
   loadProfile,
   saveProfile,
 } from "../config/profile.js"
@@ -35,11 +36,11 @@ export class AccountService {
   }
 
   async get(qq, profileId = 1) {
-    return loadProfile(qq, profileId)
+    return loadLoggedInProfile(qq, profileId)
   }
 
   async refresh(qq, profileId = 1) {
-    const profile = await loadProfile(qq, profileId)
+    const profile = await loadLoggedInProfile(qq, profileId)
     const account = profile.account || {}
     if (!account.stuid || !account.stoken) {
       throw new Error(`profile ${profileId} has no stoken`)
@@ -87,14 +88,14 @@ export class AccountService {
   }
 
   async syncGameRoles(qq, profileId = 1) {
-    const profile = await loadProfile(qq, profileId)
+    const profile = await loadLoggedInProfile(qq, profileId)
     await this.hydrateGameRoles(profile)
     await saveProfile(profile)
     return profile
   }
 
   async clearLogin(qq, profileId = 1) {
-    const profile = await loadProfile(qq, profileId)
+    const profile = await loadLoggedInProfile(qq, profileId)
     clearAccountSecrets(profile)
     await saveProfile(profile)
     return profile

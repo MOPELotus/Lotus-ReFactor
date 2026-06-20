@@ -39,6 +39,42 @@ export function profileLoginRequiredMessage(profileId = 1) {
   return `profile ${id} 需要重新扫码登录，请发送 #扫码登录${id === 1 ? "" : id} 后再使用。`
 }
 
+export function profileLoginRequiredError(profileId = 1) {
+  const error = new Error(profileLoginRequiredMessage(profileId))
+  error.code = "LOTUS_PROFILE_LOGIN_REQUIRED"
+  error.profileId = normalizeProfileId(profileId)
+  return error
+}
+
+export function isProfileLoginRequiredError(error) {
+  return error?.code === "LOTUS_PROFILE_LOGIN_REQUIRED" || isMissingProfileError(error)
+}
+
+export function hasProfileLogin(profile = {}) {
+  const account = profile?.account || {}
+  return Boolean(
+    String(account.cookie || "").trim()
+    && String(account.stoken || account.stoken_cookie || "").trim(),
+  )
+}
+
+export function assertProfileLogin(profile, profileId = profile?.profile?.id || 1) {
+  if (!hasProfileLogin(profile)) throw profileLoginRequiredError(profileId)
+  return profile
+}
+
+export async function loadLoggedInProfile(qq, profileId = 1) {
+  const id = normalizeProfileId(profileId)
+  let profile
+  try {
+    profile = await loadProfile(qq, id)
+  } catch (error) {
+    if (isMissingProfileError(error)) throw profileLoginRequiredError(id)
+    throw error
+  }
+  return assertProfileLogin(profile, id)
+}
+
 export async function listProfileIds(qq) {
   if (!qq) throw new Error("qq is required")
   const dir = resolveData("users")
