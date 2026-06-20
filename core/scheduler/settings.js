@@ -51,7 +51,7 @@ export function timeToCron(time) {
   const normalized = normalizeTime(time)
   if (!normalized) throw new Error(`Invalid time: ${time}`)
   const [hours, minutes] = normalized.split(":")
-  return `0 ${Number(minutes)} ${Number(hours)} * * ?`
+  return `0 ${Number(minutes)} ${Number(hours)} * * ? *`
 }
 
 function normalizeTime(value) {
@@ -62,4 +62,3 @@ function normalizeTime(value) {
   if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return ""
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`
 }
-

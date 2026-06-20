@@ -111,6 +111,8 @@ export function normalizeLegacyGlobalShape(config = {}) {
     next.netease_partner = normalizeLegacyNetease(next.neteasePartner)
   }
 
+  normalizeCronFields(next)
+
   if (looksLikeLoveMysCaptcha(next)) {
     next.captcha = mergeConfig(next.captcha || {}, normalizeLoveMysCaptcha(next))
   } else if (next.captcha && looksLikeLoveMysCaptcha(next.captcha)) {
@@ -194,10 +196,42 @@ function normalizeLegacyNetease(input = {}) {
   return {
     enable: Boolean(input.enable),
     api_url: input.apiUrl || input.api_url || "http://127.0.0.1:3000",
-    schedule: input.schedule || "0 5 0 * * *",
+    schedule: input.schedule || "0 5 0 * * ? *",
     auto_catch_up: Boolean(input.autoCatchUp ?? input.auto_catch_up),
     accounts: Array.isArray(input.accounts) ? input.accounts : [],
   }
+}
+
+function normalizeCronFields(config = {}) {
+  if (config.scheduler) {
+    config.scheduler.plan_generate_cron = normalizeQuartzCron(config.scheduler.plan_generate_cron)
+    config.scheduler.run_due_cron = normalizeQuartzCron(config.scheduler.run_due_cron)
+  }
+  if (config.netease_partner) {
+    config.netease_partner.schedule = normalizeQuartzCron(config.netease_partner.schedule)
+  }
+  if (config.atlas?.auto_update) {
+    config.atlas.auto_update.check_cron = normalizeQuartzCron(config.atlas.auto_update.check_cron)
+  }
+}
+
+function normalizeQuartzCron(cron = "") {
+  const parts = String(cron || "").trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return cron
+
+  if (parts.length === 5) {
+    const next = ["0", ...parts]
+    if (next[3] === "*" && next[5] === "*") next[5] = "?"
+    return `${next.join(" ")} *`
+  }
+
+  if (parts.length === 6) {
+    const next = [...parts]
+    if (next[3] === "*" && next[5] === "*") next[5] = "?"
+    return `${next.join(" ")} *`
+  }
+
+  return parts.join(" ")
 }
 
 function looksLikeLoveMysCaptcha(value = {}) {

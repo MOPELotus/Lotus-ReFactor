@@ -7,11 +7,8 @@ export const LOTUS_CONFIG_DISABLED_PLUGIN_NAMES = Object.freeze([
   "文件操作",
   "脚本执行",
 
-  // miao wiki/search overlaps. Keep 角色面板 for panel transform.
+  // miao wiki overlaps. Keep 角色查询/角色面板 for cards and panel transform.
   "角色资料",
-  "喵喵:角色资料",
-  "喵喵:角色资料(wiki)",
-  "喵喵:角色查询",
 
   // Nwflower/Atlas overlaps
   "Atlas图鉴",
@@ -53,16 +50,12 @@ export const LOTUS_CONFIG_DISABLED_PLUGIN_NAMES = Object.freeze([
   "[loveMys] 插件更新",
 
   // bujidao / bujidaoRUN overlaps.
-  "bujidao",
-  "ji-plugin",
   "寄·配置",
   "[寄]深渊查询",
   "[寄]角色查询",
   "寄·米游社更新面板",
   "寄·体力",
   "寄·签到",
-  "签到任务",
-  "米游社米币签到任务",
 
   // kissnavel/genshin overlaps. Avoid generic 用户绑定 so base genshin can stay alive.
   "genshin·星铁信息",
@@ -76,7 +69,6 @@ export const LOTUS_CONFIG_DISABLED_PLUGIN_NAMES = Object.freeze([
   // JS/Bilibili overlaps
   "bilitv",
   "[Yuki-Plugin] bilibili",
-  "B站功能",
 ])
 
 export const LOTUS_RUNTIME_DISABLED_PLUGIN_NAMES = LOTUS_CONFIG_DISABLED_PLUGIN_NAMES

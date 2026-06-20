@@ -3,7 +3,7 @@ const BasePlugin = globalThis.plugin
 import { loadGlobalConfig, saveGlobalConfig } from "../core/config/global.js"
 import { listProfileIds, loadProfile } from "../core/config/profile.js"
 import { PermissionService } from "../core/permissions/service.js"
-import { SchedulerService, nextDateString } from "../core/scheduler/service.js"
+import { SchedulerService, cronToMinuteOfDay, nextDateString } from "../core/scheduler/service.js"
 import { renderStatusCard } from "../core/render/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { ScheduledSigninService } from "../services/checkin/scheduled.js"
@@ -46,14 +46,20 @@ export class LotusScheduler extends BasePlugin {
     this.task = [
       {
         name: "荷花插件自动签到调度",
-        cron: "0 * * * * ?",
+        cron: "0 * * * * ? *",
         fnc: this.runDueCheckins.bind(this),
         log: false,
       },
       {
         name: "荷花插件生成明日签到计划",
-        cron: "0 30 10 * * ?",
+        cron: "0 0 0 * * ? *",
         fnc: this.generateTomorrowPlanTask.bind(this),
+        log: false,
+      },
+      {
+        name: "荷花插件签到计划补偿检查",
+        cron: "0 */10 * * * ? *",
+        fnc: this.catchUpTomorrowPlanTask.bind(this),
         log: false,
       },
     ]
@@ -65,17 +71,24 @@ export class LotusScheduler extends BasePlugin {
       this.task = [
         {
           name: "荷花插件自动签到调度",
-          cron: globalConfig.scheduler?.run_due_cron || "0 * * * * ?",
+          cron: globalConfig.scheduler?.run_due_cron || "0 * * * * ? *",
           fnc: this.runDueCheckins.bind(this),
           log: false,
         },
         {
           name: "荷花插件生成明日签到计划",
-          cron: globalConfig.scheduler?.plan_generate_cron || "0 30 10 * * ?",
+          cron: globalConfig.scheduler?.plan_generate_cron || "0 0 0 * * ? *",
           fnc: this.generateTomorrowPlanTask.bind(this),
           log: false,
         },
+        {
+          name: "荷花插件签到计划补偿检查",
+          cron: globalConfig.scheduler?.catch_up_cron || "0 */10 * * * ? *",
+          fnc: this.catchUpTomorrowPlanTask.bind(this),
+          log: false,
+        },
       ]
+      this.scheduleStartupCatchUp(globalConfig)
     } catch (error) {
       logger?.warn?.(`[Lotus-Plugin] load scheduler cron failed, fallback defaults: ${error.message}`)
     }
@@ -151,6 +164,61 @@ export class LotusScheduler extends BasePlugin {
     })
     logger?.mark?.(`[Lotus-Plugin] tomorrow schedule ready: ${generated.plan.date}, notify ${generated.notifications.length}`)
     return generated
+  }
+
+  scheduleStartupCatchUp(globalConfig) {
+    setTimeout(() => {
+      this.catchUpTomorrowPlanTask({
+        trigger: "启动补偿",
+      }).catch(error => {
+        logger?.error?.(`[Lotus-Plugin] schedule catch-up failed: ${error.stack || error.message}`)
+      })
+    }, 60 * 1000).unref?.()
+    return globalConfig
+  }
+
+  async catchUpTomorrowPlanTask(options = {}) {
+    const globalConfig = await loadGlobalConfig()
+    if (globalConfig.scheduler?.enable === false) return {
+      ok: true,
+      disabled: true,
+    }
+
+    const now = options.now || new Date()
+    const generateMinute = cronToMinuteOfDay(globalConfig.scheduler?.plan_generate_cron || "0 0 0 * * ? *")
+    if (!Number.isFinite(generateMinute)) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: "invalid_plan_generate_cron",
+      }
+    }
+
+    const currentMinute = now.getHours() * 60 + now.getMinutes()
+    if (currentMinute < generateMinute) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "before_generate_time",
+      }
+    }
+
+    const scheduler = new SchedulerService({ config: globalConfig.scheduler })
+    const date = nextDateString(now)
+    const existing = await scheduler.getPlan(date)
+    if (existing) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "plan_exists",
+        date,
+      }
+    }
+
+    logger?.mark?.(`[Lotus-Plugin] schedule catch-up creating tomorrow plan: ${date}`)
+    return this.generateTomorrowPlanTask({
+      trigger: options.trigger || "补偿检查",
+    })
   }
 
   async runDueCommand() {

@@ -3934,7 +3934,7 @@ function compareModules(a, b) {
 }
 
 function looksLikeNonAtlasCommand(text) {
-  return /^(扫码登录|米哈游登录|锅巴登录|登录|刷新cookie|绑定设备|体力|全部体力|多体力|更新抽卡记录|更新面板|帮助|菜单|签到|注册自动签到|远程|spawn|上传|下载|测试)/i.test(text)
+  return /^(扫码登录|米哈游登录|锅巴登录|登录|刷新cookie|绑定设备|体力|全部体力|多体力|更新抽卡记录|刷新抽卡记录|全部记录|角色记录|武器记录|常驻记录|新手记录|抽卡记录|更新面板|帮助|菜单|签到|注册自动签到|远程|spawn|上传|下载|测试)/i.test(text)
     || /(?:面板|面版)[\s\S]*[换变改]/.test(normalizeShortcutText(text))
 }
 

@@ -9,8 +9,8 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
   },
   scheduler: {
     enable: true,
-    plan_generate_cron: "0 30 10 * * ?",
-    run_due_cron: "0 * * * * ?",
+    plan_generate_cron: "0 0 0 * * ? *",
+    run_due_cron: "0 * * * * ? *",
     mode: "fixed",
     fixed_time: "04:30",
     random: {
@@ -34,6 +34,10 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     retry: {
       provider_attempts: 3,
       chain_attempts: 2,
+    },
+    notify: {
+      auto_recall: false,
+      recall_seconds: 12,
     },
     test_nine: {
       enable: true,
@@ -149,7 +153,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
   netease_partner: {
     enable: false,
     api_url: "http://127.0.0.1:3000",
-    schedule: "0 5 0 * * *",
+    schedule: "0 5 0 * * ? *",
     auto_catch_up: false,
     login_timeout_ms: 300000,
     login_poll_ms: 3000,
@@ -178,7 +182,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     update_output_limit: 12000,
     auto_update: {
       enable: true,
-      check_cron: "0 0 */6 * * ?",
+      check_cron: "0 0 */6 * * ? *",
       run_on_missing_data: true,
     },
   },

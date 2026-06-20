@@ -9,6 +9,7 @@ import {
   PROFILE_ID_SUFFIX_PATTERN,
 } from "../core/config/profile.js"
 import { renderStatusCard } from "../core/render/service.js"
+import { AccountService } from "../core/login/account.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { MiaoPanelBridge } from "../services/pluginBridge/miaoPanel.js"
 import { ZzzPanelBridge } from "../services/pluginBridge/zzzPanel.js"
@@ -61,7 +62,8 @@ export class LotusPanelUpdate extends BasePlugin {
     const userId = String(this.e.user_id)
     const profileId = parseProfileIdFromMessage(this.e.msg)
     try {
-      const profile = await loadProfile(userId, profileId)
+      const loadedProfile = await loadProfile(userId, profileId)
+      const profile = await refreshProfileBeforePanel(userId, profileId, loadedProfile)
       const result = await panelBridgeForGame(game).updatePanel({
         e: this.e,
         profile,
@@ -98,6 +100,16 @@ export class LotusPanelUpdate extends BasePlugin {
     }
 
     return true
+  }
+}
+
+async function refreshProfileBeforePanel(userId, profileId, profile) {
+  if (!profile?.account?.stoken) return profile
+  try {
+    return await new AccountService().refresh(userId, profileId)
+  } catch (error) {
+    logger?.debug?.(`[Lotus-Plugin] panel pre-refresh skipped: ${error.message}`)
+    return profile
   }
 }
 

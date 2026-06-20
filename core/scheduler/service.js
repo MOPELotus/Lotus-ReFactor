@@ -161,6 +161,16 @@ export function nextDateString(now = new Date()) {
   return dateString(next)
 }
 
+export function cronToMinuteOfDay(cron = "") {
+  const parts = String(cron || "").trim().split(/\s+/).filter(Boolean)
+  if (parts.length < 5) return Number.NaN
+  const minute = Number(parts.length >= 6 ? parts[1] : parts[0])
+  const hour = Number(parts.length >= 6 ? parts[2] : parts[1])
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return Number.NaN
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return Number.NaN
+  return hour * 60 + minute
+}
+
 export function dateString(date = new Date()) {
   const pad = value => String(value).padStart(2, "0")
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
@@ -216,8 +226,8 @@ function createLateEntry(profile, scheduler, lateCount, now) {
 function normalizeSchedulerConfig(config = {}) {
   return {
     enable: config.enable ?? true,
-    plan_generate_cron: config.plan_generate_cron || "0 30 10 * * ?",
-    run_due_cron: config.run_due_cron || "0 * * * * ?",
+    plan_generate_cron: config.plan_generate_cron || "0 0 0 * * ? *",
+    run_due_cron: config.run_due_cron || "0 * * * * ? *",
     mode: config.mode || "fixed",
     fixed_time: config.fixed_time || "04:30",
     random: {

@@ -105,12 +105,18 @@ export class LotusLogin extends BasePlugin {
       })
 
       const accountService = new AccountService()
-      const profile = await accountService.saveLoginResult({
+      let profile = await accountService.saveLoginResult({
         qq: userId,
         profileId,
         result: loginResult,
         nickname: this.e.sender?.card || this.e.sender?.nickname || "",
       })
+      if (!profile.account?.cookie || profile.account?.role_sync_error) {
+        profile = await accountService.refresh(userId, profileId).catch(error => {
+          logger?.warn?.(`[Lotus-Plugin] QR login post-refresh skipped: ${error.message}`)
+          return profile
+        })
+      }
       await safeRegisterGenshin(userId, profile)
       await safeAddLateSchedule(profile)
 

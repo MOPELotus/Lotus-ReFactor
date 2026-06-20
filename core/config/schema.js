@@ -231,6 +231,18 @@ function validateCaptchaConfig(captcha = {}, errors) {
       }
     }
   }
+  if (typeof captcha.notify !== "undefined") {
+    if (!isObject(captcha.notify)) {
+      errors.push("captcha.notify must be an object")
+    } else {
+      if (typeof captcha.notify.auto_recall !== "boolean") {
+        errors.push("captcha.notify.auto_recall must be boolean")
+      }
+      if (!isNonNegativeInteger(captcha.notify.recall_seconds)) {
+        errors.push("captcha.notify.recall_seconds must be a non-negative integer")
+      }
+    }
+  }
 
   validateProvider(captcha.test_nine, "captcha.test_nine", errors, [
     "endpoint",

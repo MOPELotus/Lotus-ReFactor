@@ -23,7 +23,7 @@ export class LotusNeteasePartner extends BasePlugin {
     this.task = [
       {
         name: "荷花插件网易云合伙人任务",
-        cron: "0 5 0 * * *",
+        cron: "0 5 0 * * ? *",
         fnc: this.scheduledTask.bind(this),
         log: false,
       },
@@ -37,7 +37,7 @@ export class LotusNeteasePartner extends BasePlugin {
       this.task = [
         {
           name: "荷花插件网易云合伙人任务",
-          cron: config.schedule || "0 5 0 * * *",
+          cron: config.schedule || "0 5 0 * * ? *",
           fnc: this.scheduledTask.bind(this),
           log: false,
         },

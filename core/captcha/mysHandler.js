@@ -1,5 +1,6 @@
 import { listProfileIds, loadProfile } from "../config/profile.js"
 import { deviceHeaders } from "../devices/service.js"
+import { AccountService } from "../login/account.js"
 import { parseCookieString } from "../mihoyo/cookies.js"
 import { getDs2 } from "../mihoyo/ds.js"
 import { MIHOYO } from "../mihoyo/constants.js"
@@ -13,6 +14,7 @@ import {
 import { solveCaptcha } from "./service.js"
 
 const CAPTCHA_RETCODES = new Set([1034, 10035, 10041])
+const COOKIE_REFRESH_RETCODES = new Set([-100, 10001, 10101, 10102, 10103])
 
 export async function solveMysRequestCaptcha({
   e,
@@ -21,9 +23,18 @@ export async function solveMysRequestCaptcha({
   fetchImpl = globalThis.fetch,
   solveCaptchaImpl = solveCaptcha,
   onCaptchaEvent,
+  accountService,
 } = {}) {
   const { mysApi, res, type, data = {} } = args || {}
   const retcode = Number(res?.retcode)
+  if (isCookieRefreshableResponse(res)) {
+    return await refreshCookieAndRetry({
+      e,
+      args,
+      reject,
+      accountService,
+    })
+  }
   if (!CAPTCHA_RETCODES.has(retcode)) return reject?.()
   if (!mysApi) return reject?.()
 
@@ -73,6 +84,17 @@ export async function solveMysRequestCaptcha({
     },
   }
   return mysApi.getData(type, retryData)
+}
+
+export function isCookieRefreshableResponse(res = {}) {
+  const retcode = Number(res?.retcode)
+  if (CAPTCHA_RETCODES.has(retcode)) return false
+  if (COOKIE_REFRESH_RETCODES.has(retcode)) return true
+
+  const message = String(res?.message || res?.msg || res?.data?.message || "")
+  if (!message) return false
+  if (/验证码|captcha|geetest|challenge|风控|频繁|visit too frequently/i.test(message)) return false
+  return /(cookie|ck|login|登录|登陆|未登录|失效|过期|expired|invalid|please login)/i.test(message)
 }
 
 export async function createMysCaptchaContext(e, mysApi, retcode) {
@@ -217,6 +239,50 @@ function buildLotusMysHeaders(context, query = "", body = "") {
 }
 
 async function findProfileDevice(e, mysApi) {
+  const match = await findProfileForMysApi(e, mysApi)
+  return match?.profile?.device || null
+}
+
+async function refreshCookieAndRetry({
+  e,
+  args,
+  reject,
+  accountService,
+} = {}) {
+  const { mysApi, type, data = {} } = args || {}
+  if (!mysApi || !type || typeof mysApi.getData !== "function") return reject?.()
+
+  const match = await findProfileForMysApi(e, mysApi)
+  if (!match) return reject?.()
+
+  try {
+    const service = accountService || new AccountService()
+    const profile = await service.refresh(match.qq, match.profileId)
+    const cookie = profile?.account?.cookie
+    if (!cookie) return reject?.()
+    mysApi.cookie = cookie
+    if (mysApi.apiTool) mysApi.apiTool.cookie = cookie
+    await registerRefreshedProfile(match.qq, profile)
+    globalThis.logger?.mark?.(`[Lotus-Plugin] CK expired, refreshed profile ${match.profileId} and retry ${type}`)
+    return await mysApi.getData(type, data)
+  } catch (error) {
+    globalThis.logger?.warn?.(`[Lotus-Plugin] refresh expired CK failed: ${error.message}`)
+    return reject?.()
+  }
+}
+
+async function registerRefreshedProfile(qq, profile) {
+  try {
+    const mod = await import("../../services/genshinBridge/profile.js")
+    if (typeof mod.registerProfileWithGenshin === "function") {
+      await mod.registerProfileWithGenshin({ qq, profile })
+    }
+  } catch (error) {
+    globalThis.logger?.debug?.(`[Lotus-Plugin] register refreshed CK to genshin bridge failed: ${error.message}`)
+  }
+}
+
+async function findProfileForMysApi(e, mysApi) {
   const qq = e?.user_id
   if (!qq) return null
   const cookie = typeof mysApi.cookie === "string" ? parseCookieString(mysApi.cookie) : mysApi.cookie || {}
@@ -229,7 +295,11 @@ async function findProfileDevice(e, mysApi) {
     if (!profile) continue
     const account = profile.account || {}
     if ([account.ltuid, account.stuid].map(String).includes(ltuid)) {
-      return profile.device || null
+      return {
+        qq: String(qq),
+        profileId,
+        profile,
+      }
     }
   }
   return null

@@ -1,7 +1,7 @@
 const BasePlugin = globalThis.plugin
 
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
-import { isUserVisibleCaptchaEvent } from "../core/captcha/events.js"
+import { replyCaptchaEvent } from "../core/captcha/notify.js"
 import {
   loadProfile,
   parseProfileIdFromMessage,
@@ -127,7 +127,7 @@ export class LotusCheckin extends BasePlugin {
         profile,
         installRequirements: false,
         onCaptchaEvent: async event => {
-          if (isUserVisibleCaptchaEvent(event) && event?.message) await replyText(this, event.message)
+          await replyCaptchaEvent(this, event)
         },
       })
       await replyImage(this, outcome.image, outcome.ok
