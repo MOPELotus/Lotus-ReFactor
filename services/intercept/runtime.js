@@ -1,6 +1,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import YAML from "yaml"
+import { isCookieRefreshableResponse } from "../../core/captcha/mysHandler.js"
 
 import {
   LEGACY_CAPTCHA_HANDLER_NAMESPACES,
@@ -21,6 +23,7 @@ export async function installLotusRuntimeInterception() {
     ensureYunzaiConflictDisableConfig(),
     patchRuntimeDisableConfig(),
     patchPluginsLoader(),
+    patchGenshinMysInfoCookieRefresh(),
   ])
 
   return {
@@ -157,6 +160,36 @@ async function patchPluginsLoader() {
   return { ok: true }
 }
 
+async function patchGenshinMysInfoCookieRefresh() {
+  const MysInfo = await importRuntimeDefault("genshin", "model", "mys", "mysInfo.js")
+  if (!MysInfo?.prototype?.checkCode || MysInfo.prototype.__lotusCookieRefreshPatch) {
+    return { ok: true, skipped: true }
+  }
+
+  const originalCheckCode = MysInfo.prototype.checkCode
+  MysInfo.prototype.checkCode = async function lotusCheckCode(res, type, mysApi = {}, data = {}, isTask = false) {
+    if (isCookieRefreshableResponse(res)) {
+      const handler = this.e?.runtime?.handler || {}
+      if (handler.has?.("mys.req.err")) {
+        const handled = await handler.call("mys.req.err", this.e, {
+          mysApi,
+          type,
+          res,
+          data,
+          mysInfo: this,
+        })
+        if (handled) {
+          res = handled
+        }
+      }
+    }
+    return originalCheckCode.call(this, res, type, mysApi, data, isTask)
+  }
+  MysInfo.prototype.__lotusCookieRefreshPatch = true
+  logDebug("genshin MysInfo cookie refresh patch installed")
+  return { ok: true }
+}
+
 function patchLoaderMethod(loader, name) {
   if (typeof loader[name] !== "function") return
   const original = loader[name].bind(loader)
@@ -199,6 +232,16 @@ export function isLotusEntry(entry) {
 async function importYunzaiDefault(relativePath) {
   try {
     const module = await import(new URL(relativePath, import.meta.url))
+    return module.default || module
+  } catch {
+    return null
+  }
+}
+
+async function importRuntimeDefault(...segments) {
+  try {
+    const modulePath = path.join(process.cwd(), "plugins", ...segments)
+    const module = await import(pathToFileURL(modulePath).href)
     return module.default || module
   } catch {
     return null
