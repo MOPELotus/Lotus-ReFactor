@@ -107,6 +107,7 @@ export class CaptchaService {
             type: "captcha:fail",
             provider: result.provider,
             reason: result.reason,
+            manualLink: findManualLink(attempts),
             attempts,
           })
           return {
@@ -121,12 +122,14 @@ export class CaptchaService {
       const failed = {
         ...captchaFail(null, "all_providers_failed", {
           retryable: true,
+          manualLink: findManualLink(attempts),
         }),
         attempts,
       }
       await emitCaptchaEvent(context, {
         type: "captcha:fail",
         reason: failed.reason,
+        manualLink: findManualLink(attempts),
         attempts,
       })
       return failed
@@ -216,4 +219,15 @@ function mask(value = "") {
   const text = String(value || "")
   if (text.length <= 8) return text ? "***" : ""
   return `${text.slice(0, 4)}***${text.slice(-4)}`
+}
+
+function findManualLink(attempts = []) {
+  for (let index = attempts.length - 1; index >= 0; index -= 1) {
+    const attempt = attempts[index]
+    if (attempt?.manualLink) return attempt.manualLink
+    if (attempt?.link) return attempt.link
+    const rawLink = attempt?.raw?.data?.link || attempt?.raw?.link
+    if (rawLink) return rawLink
+  }
+  return ""
 }

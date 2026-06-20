@@ -6,6 +6,7 @@ import { loadGlobalConfig } from "../../core/config/global.js"
 import { PermissionService } from "../../core/permissions/service.js"
 import { verifyTotp } from "../../core/security/totp.js"
 import { resolveData } from "../../core/path.js"
+import { formatLocalIso } from "../../core/time.js"
 import { loadRemoteOtpSecret } from "./otp.js"
 
 const SHELL_ARGS = Object.freeze({
@@ -183,7 +184,7 @@ export async function appendRemoteAudit(entry) {
   const file = resolveData("audit", "remote.jsonl")
   await fs.mkdir(path.dirname(file), { recursive: true })
   await fs.appendFile(file, JSON.stringify({
-    time: new Date().toISOString(),
+    time: formatLocalIso(),
     ...entry,
   }) + "\n", "utf8")
 }

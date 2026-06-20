@@ -3,6 +3,7 @@ import {
   loadProfile,
   saveProfile,
 } from "../config/profile.js"
+import { formatLocalIso } from "../time.js"
 
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -24,7 +25,7 @@ export class DeviceService {
       fp: device.device_fp,
       android_version: device.android_version || profile.device?.android_version || "",
       raw: device.raw,
-      updated_at: new Date().toISOString(),
+      updated_at: formatLocalIso(),
     }
 
     await saveProfile(profile)

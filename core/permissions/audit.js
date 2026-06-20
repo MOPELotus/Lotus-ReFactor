@@ -1,11 +1,12 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { resolveData } from "../path.js"
+import { formatLocalIso } from "../time.js"
 
 export async function writePermissionAudit(entry = {}) {
   const file = resolveData("audit", "permissions.jsonl")
   const payload = {
-    time: new Date().toISOString(),
+    time: formatLocalIso(),
     actor: String(entry.actor || ""),
     group: entry.group ? String(entry.group) : "",
     command: entry.command || null,

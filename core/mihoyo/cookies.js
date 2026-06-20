@@ -30,10 +30,10 @@ export function parseStokenCookie(stoken = "") {
 export function parseAccountCookie(cookie = "") {
   const data = parseCookieString(cookie)
   return {
-    ltuid: data.ltuid || data.account_id || "",
+    ltuid: data.ltuid || data.ltuid_v2 || data.account_id || data.account_id_v2 || "",
     ltoken: data.ltoken || data.ltoken_v2 || "",
     cookie_token: data.cookie_token || data.cookie_token_v2 || "",
-    account_id: data.account_id || data.ltuid || "",
+    account_id: data.account_id || data.account_id_v2 || data.ltuid || data.ltuid_v2 || "",
   }
 }
 

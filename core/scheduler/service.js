@@ -3,6 +3,7 @@ import path from "node:path"
 import { loadGlobalConfig } from "../config/global.js"
 import { listAllProfiles } from "../config/profile.js"
 import { resolveData } from "../path.js"
+import { formatLocalIso } from "../time.js"
 
 export class SchedulerService {
   constructor(options = {}) {
@@ -140,7 +141,7 @@ export class SchedulerService {
       date,
       mode: scheduler.mode,
       window: scheduler.random,
-      generatedAt: new Date().toISOString(),
+      generatedAt: formatLocalIso(),
       entries,
     }
   }
@@ -208,7 +209,7 @@ function createLateEntry(profile, scheduler, lateCount, now) {
   return {
     ...createEntry(profile, formatMinute(minute), "late_random"),
     late: true,
-    lateRegisteredAt: now.toISOString(),
+    lateRegisteredAt: formatLocalIso(now),
   }
 }
 

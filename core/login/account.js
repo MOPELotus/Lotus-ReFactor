@@ -15,6 +15,7 @@ import {
   normalizeGameRolesFromApi,
   pickCurrentUid,
 } from "../mihoyo/roles.js"
+import { formatLocalIso } from "../time.js"
 
 export class AccountService {
   constructor(options = {}) {
@@ -59,7 +60,7 @@ export class AccountService {
       ltoken: account.ltoken,
       cookieToken,
     })
-    profile.account.updated_at = new Date().toISOString()
+    profile.account.updated_at = formatLocalIso()
     await this.trySyncGameRoles(profile)
     await saveProfile(profile)
     return profile
@@ -132,7 +133,7 @@ export class AccountService {
     const gameRoles = normalizeGameRolesFromApi(res?.data?.list)
     profile.account.game_roles = gameRoles
     profile.account.current_uid = pickCurrentUid(gameRoles, profile.account.current_uid)
-    profile.account.roles_updated_at = new Date().toISOString()
+    profile.account.roles_updated_at = formatLocalIso()
     delete profile.account.role_sync_error
     return profile
   }
@@ -159,7 +160,7 @@ export function applyLoginResult(profile, result) {
       ltoken,
       mid: stoken.mid,
     }),
-    updated_at: new Date().toISOString(),
+    updated_at: formatLocalIso(),
   }
 
   if (result.game_roles) {

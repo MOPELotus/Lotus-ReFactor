@@ -3,6 +3,8 @@ import path from "node:path"
 import { spawn } from "node:child_process"
 import { loadGlobalConfig } from "../../core/config/global.js"
 import { resolveData } from "../../core/path.js"
+import { formatLocalDateTime } from "../../core/time.js"
+import { decodeProcessChunk, withUtf8ProcessEnv } from "../python/env.js"
 import { normalizeTestNineConfig, TestNineEnvService } from "./env.js"
 
 let running = null
@@ -44,32 +46,33 @@ export class TestNineServerService {
 
     const logFile = resolveData("test_nine", "server.log")
     await fs.mkdir(path.dirname(logFile), { recursive: true })
+    await fs.writeFile(logFile, `[start] ${formatLocalDateTime()}\n`, "utf8")
     const child = this.spawn(env.python.command, ["main.py"], {
       cwd: env.submoduleRoot,
-      env: {
+      env: withUtf8ProcessEnv({
         ...process.env,
         LOG_LEVEL: options.logLevel || process.env.LOG_LEVEL || "INFO",
-      },
+      }),
       windowsHide: true,
     })
     const state = {
       child,
       pid: child.pid,
-      startedAt: new Date().toISOString(),
+      startedAt: formatLocalDateTime(),
       logFile,
       submoduleRoot: env.submoduleRoot,
       endpoint: config.endpoint,
       lastOutput: "",
     }
     running = state
-    child.stdout?.on("data", chunk => appendServerLog(state, chunk.toString()))
-    child.stderr?.on("data", chunk => appendServerLog(state, chunk.toString()))
+    child.stdout?.on("data", chunk => appendServerLog(state, decodeProcessChunk(chunk)))
+    child.stderr?.on("data", chunk => appendServerLog(state, decodeProcessChunk(chunk)))
     child.on("error", error => {
       state.lastError = error.message
       appendServerLog(state, `[error] ${error.message}\n`)
     })
     child.on("close", code => {
-      state.closedAt = new Date().toISOString()
+      state.closedAt = formatLocalDateTime()
       state.code = code
       appendServerLog(state, `[close] code=${code}\n`)
       if (running === state) running = null

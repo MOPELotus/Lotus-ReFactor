@@ -4,6 +4,7 @@ import {
   LOTUS_CAPTCHA_HANDLER_NAMESPACE,
   LOTUS_INTERCEPT_PRIORITY,
 } from "../core/intercept/priority.js"
+import { isUserVisibleCaptchaEvent } from "../core/captcha/events.js"
 import { solveMysRequestCaptcha } from "../core/captcha/mysHandler.js"
 import { installLotusCaptchaHandlerOverride } from "../services/intercept/runtime.js"
 import { replyText } from "../core/transport/reply.js"
@@ -37,7 +38,7 @@ export class LotusCaptchaHandler extends BasePlugin {
         args,
         reject,
         onCaptchaEvent: async event => {
-          if (event?.message) await replyText({ e }, event.message)
+          if (isUserVisibleCaptchaEvent(event) && event?.message) await replyText({ e }, event.message)
         },
       })
     } catch (error) {

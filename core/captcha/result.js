@@ -21,6 +21,8 @@ export function captchaFail(provider, reason, options = {}) {
     skipped: options.skipped ?? false,
     code: options.code,
     challengeRefresh: options.challengeRefresh ?? false,
+    manualLink: options.manualLink || options.link || "",
+    resultUrl: options.resultUrl || "",
     costMs: options.costMs || 0,
     raw: options.raw,
   }

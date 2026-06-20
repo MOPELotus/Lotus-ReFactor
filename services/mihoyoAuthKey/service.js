@@ -1,5 +1,6 @@
 import { GAME_BIZ, MIHOYO } from "../../core/mihoyo/constants.js"
 import { getDs } from "../../core/mihoyo/ds.js"
+import { inferServerFromUid } from "../../core/mihoyo/regions.js"
 
 export class AuthKeyService {
   constructor(options = {}) {
@@ -103,30 +104,5 @@ export function buildGachaLogUrl({ authkey, game = "gs", region } = {}) {
 }
 
 export function getServer(uid, game = "gs") {
-  const text = String(uid)
-  if (game === "zzz") {
-    if (text.length < 10) return "prod_gf_cn"
-    const prefix = text.slice(0, -8)
-    if (prefix === "10") return "prod_gf_us"
-    if (prefix === "15") return "prod_gf_eu"
-    if (prefix === "13") return "prod_gf_jp"
-    if (prefix === "17") return "prod_gf_sg"
-    return "prod_gf_cn"
-  }
-  if (game === "sr") {
-    const prefix = text.slice(0, -8)
-    if (prefix === "5") return "prod_qd_cn"
-    if (prefix === "6") return "prod_official_usa"
-    if (prefix === "7") return "prod_official_euro"
-    if (prefix === "8" || prefix === "18") return "prod_official_asia"
-    if (prefix === "9") return "prod_official_cht"
-    return "prod_gf_cn"
-  }
-  const prefix = text.slice(0, -8)
-  if (prefix === "5") return "cn_qd01"
-  if (prefix === "6") return "os_usa"
-  if (prefix === "7") return "os_euro"
-  if (prefix === "8" || prefix === "18") return "os_asia"
-  if (prefix === "9") return "os_cht"
-  return "cn_gf01"
+  return inferServerFromUid(uid, game)
 }

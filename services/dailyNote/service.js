@@ -5,6 +5,7 @@ import {
   loadProfile,
 } from "../../core/config/profile.js"
 import { deviceHeaders } from "../../core/devices/service.js"
+import { resolveServer } from "../../core/mihoyo/regions.js"
 
 const GAME_NAMES = Object.freeze({
   gs: "原神",
@@ -72,11 +73,18 @@ export class DailyNoteService {
     const profileId = profile.profile?.id || 1
     try {
       const MysApi = this.MysApi || await loadGenshinMysApi()
+      const server = resolveServer({
+        server: role.region,
+        uid,
+        game,
+      })
       const api = new MysApi(uid, profile.account.cookie, {
         game,
+        server,
         device: profile.device?.id || "",
         log: false,
       })
+      applyServerToMysApi(api, server)
       const res = await api.getData("dailyNote", {
         headers: deviceHeaders(profile.device),
       })
@@ -297,4 +305,10 @@ function formatSeconds(seconds) {
 async function loadGenshinMysApi() {
   const file = path.join(process.cwd(), "plugins", "genshin", "model", "mys", "MysApi.js")
   return (await import(pathToFileURL(file).href)).default
+}
+
+function applyServerToMysApi(api, server) {
+  if (!api || !server) return
+  api.server = server
+  if (api.apiTool) api.apiTool.server = server
 }

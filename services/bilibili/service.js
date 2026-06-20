@@ -5,6 +5,7 @@ import path from "node:path"
 import QRCode from "qrcode"
 import YAML from "yaml"
 import { resolveData, rootPath } from "../../core/path.js"
+import { formatLocalIso } from "../../core/time.js"
 
 const NAV_API = "https://api.bilibili.com/x/web-interface/nav"
 const QR_GENERATE_API = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
@@ -399,8 +400,8 @@ export class BilibiliService {
     const ttl = Number(config.cache_ttl_seconds || 0)
     cache[key] = {
       files,
-      saved_at: this.now().toISOString(),
-      expires_at: ttl > 0 ? new Date(this.now().getTime() + ttl * 1000).toISOString() : "",
+      saved_at: formatLocalIso(this.now()),
+      expires_at: ttl > 0 ? formatLocalIso(new Date(this.now().getTime() + ttl * 1000)) : "",
     }
     await this.writeCache(cache)
   }
@@ -450,7 +451,7 @@ export class BilibiliService {
         if (!cookie) throw new Error("B站登录成功但未提取到 cookie")
         const account = {
           cookie,
-          saved_at: this.now().toISOString(),
+          saved_at: formatLocalIso(this.now()),
           source: "qrcode",
         }
         await this.saveAccount(account)
@@ -481,7 +482,7 @@ export class BilibiliService {
     await fs.mkdir(path.dirname(this.accountFile), { recursive: true })
     await fs.writeFile(this.accountFile, YAML.stringify({
       cookie: normalizeBiliCookie(account.cookie),
-      saved_at: account.saved_at || this.now().toISOString(),
+      saved_at: account.saved_at || formatLocalIso(this.now()),
       source: account.source || "manual",
     }), "utf8")
     return this.accountFile

@@ -8,6 +8,7 @@ import fsSync from "node:fs"
 import { loadGlobalConfig } from "../../core/config/global.js"
 import { resolveData, rootPath } from "../../core/path.js"
 import { runProcess } from "../python/env.js"
+import { formatLocalIso } from "../../core/time.js"
 
 const DEFAULT_MODEL_FILES = [
   "PP-HGNetV2-B4.onnx",
@@ -221,7 +222,7 @@ export class TestNineEnvService {
     const current = fingerprint || await this.buildFingerprint()
     const data = {
       ...current,
-      updated_at: new Date().toISOString(),
+      updated_at: formatLocalIso(),
     }
     await fs.writeFile(path.join(venvPath, "lotus-test-nine-fingerprint.json"), JSON.stringify(data, null, 2), "utf8")
     return data

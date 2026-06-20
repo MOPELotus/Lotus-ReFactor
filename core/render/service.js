@@ -1,6 +1,7 @@
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { resourcesPath } from "../path.js"
+import { formatLocalDateTime } from "../time.js"
 import { createRenderBackgroundProvider } from "./background.js"
 import { renderWithSkia } from "./skia.js"
 
@@ -19,7 +20,7 @@ export async function renderTemplate(templateName, data = {}, options = {}) {
   const bg = data.bg || firstBackground(data.backgrounds) || (backgroundProvider ? await backgroundProvider() : "")
   const payload = {
     pluginName: "荷花插件",
-    generatedAt: formatTime(new Date()),
+    generatedAt: formatLocalDateTime(),
     ...data,
     bg,
     backgrounds: Array.isArray(data.backgrounds) && data.backgrounds.length
@@ -59,12 +60,4 @@ function sanitizeSaveId(value) {
 
 function toFileUrl(file) {
   return pathToFileURL(file).href
-}
-
-function formatTime(date) {
-  const pad = (value) => String(value).padStart(2, "0")
-  return [
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
-    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
-  ].join(" ")
 }

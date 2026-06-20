@@ -9,6 +9,8 @@ import types
 import uuid
 from pathlib import Path
 
+MIHOYO_BBS_VERSION = "2.102.1"
+
 
 class LotusJsonLogHandler(logging.Handler):
     def __init__(self, event_file: str, context: dict):
@@ -99,6 +101,20 @@ def install_captcha_bridge(captcha_dir: str, context: dict, timeout: int):
     sys.modules["captcha"] = module
 
 
+def patch_bbstools_version(version: str):
+    if not version:
+        return
+    import setting
+
+    setting.mihoyobbs_version = version
+    setting.headers["x-rpc-app_version"] = version
+    user_agent = setting.headers.get("User-Agent", "")
+    marker = "miHoYoBBS/"
+    if marker in user_agent:
+        user_agent = user_agent.split(marker, 1)[0].rstrip()
+    setting.headers["User-Agent"] = f"{user_agent} miHoYoBBS/{version}".strip()
+
+
 def run(args):
     module_dir = Path(args.module_dir).resolve()
     config_file = Path(args.config).resolve()
@@ -116,6 +132,7 @@ def run(args):
     install_captcha_bridge(args.captcha_dir, context, args.captcha_timeout)
 
     import config
+    patch_bbstools_version(args.mihoyobbs_version)
     import main
     from error import CookieError, StokenError
 
@@ -170,6 +187,7 @@ def parse_args():
     parser.add_argument("--result-file", default="")
     parser.add_argument("--captcha-dir", default="")
     parser.add_argument("--captcha-timeout", type=int, default=240)
+    parser.add_argument("--mihoyobbs-version", default=MIHOYO_BBS_VERSION)
     parser.add_argument("--task-id", default="")
     parser.add_argument("--user-id", default="")
     parser.add_argument("--profile-id", default="")

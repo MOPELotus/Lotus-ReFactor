@@ -1,4 +1,5 @@
 import { registerProfileWithGenshin } from "../genshinBridge/profile.js"
+import { resolveServer } from "../../core/mihoyo/regions.js"
 import { createIsolatedEvent, getRoleUid, importRuntimeModule, pickRole } from "./common.js"
 
 export class MiaoPanelBridge {
@@ -17,12 +18,19 @@ export class MiaoPanelBridge {
     if (!uid) {
       throw new Error(`profile ${profileId} 没有同步${game === "sr" ? "星铁" : "原神"} UID`)
     }
+    const server = resolveServer({
+      server: role.region,
+      uid,
+      game,
+    })
 
     await this.registerProfile({ qq: String(e.user_id), profile })
     const ProfileList = await this.loadProfileList()
     const { event, messages, forwarded } = createIsolatedEvent(e, {
       msg: `${game === "sr" ? "#星铁" : "#原神"}更新面板${uid}`,
       uid,
+      server,
+      region: server,
       game,
       isSr: game === "sr",
       mysSelfUid: true,
@@ -46,4 +54,3 @@ async function loadProfileList() {
   const mod = await importRuntimeModule("miao-plugin", "apps", "profile", "ProfileList.js")
   return mod.default
 }
-

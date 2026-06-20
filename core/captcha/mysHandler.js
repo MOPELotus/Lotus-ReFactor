@@ -1,6 +1,15 @@
 import { listProfileIds, loadProfile } from "../config/profile.js"
 import { deviceHeaders } from "../devices/service.js"
 import { parseCookieString } from "../mihoyo/cookies.js"
+import { getDs2 } from "../mihoyo/ds.js"
+import { MIHOYO } from "../mihoyo/constants.js"
+import {
+  inferServerFromUid,
+  isCnServer,
+  isUnknownServer,
+  resolveServer,
+  sameServerSide,
+} from "../mihoyo/regions.js"
 import { solveCaptcha } from "./service.js"
 
 const CAPTCHA_RETCODES = new Set([1034, 10035, 10041])
@@ -70,8 +79,8 @@ export async function createMysCaptchaContext(e, mysApi, retcode) {
   const game = e?.game || mysApi.game || "gs"
   const appKey = game === "zzz" ? "game_record_zzz" : game === "sr" ? "hkrpg_game_record" : ""
   const challengeGame = game === "zzz" ? "8" : game === "sr" ? "6" : "2"
-  const server = mysApi.server || ""
-  const isCn = /cn_|_cn/.test(server)
+  const server = resolveMysApiServer(e, mysApi, game)
+  const isCn = isCnServer(server)
   const device = await findProfileDevice(e, mysApi)
   const extraHeaders = {
     "x-rpc-challenge_game": challengeGame,
@@ -139,7 +148,7 @@ export async function verifyCaptchaChallenge(context, solved, fetchImpl = global
 
 async function requestMysJson(context, fetchImpl, request) {
   if (typeof fetchImpl !== "function") throw new Error("fetch is unavailable")
-  const headers = buildMysHeaders(context.mysApi, request.query, request.body)
+  const headers = buildMysHeaders(context, request.query, request.body)
   const response = await fetchImpl(request.url, {
     method: request.method || (request.body ? "POST" : "GET"),
     headers: {
@@ -159,15 +168,13 @@ async function requestMysJson(context, fetchImpl, request) {
   return data
 }
 
-function buildMysHeaders(mysApi, query = "", body = "") {
-  if (typeof mysApi?.getHeaders === "function") {
+function buildMysHeaders(context, query = "", body = "") {
+  const mysApi = context.mysApi
+  if (shouldTrustMysHeaders(context) && typeof mysApi?.getHeaders === "function") {
     if (mysApi.getHeaders.length >= 3) return mysApi.getHeaders("", query, body)
     return mysApi.getHeaders(query, body)
   }
-  return {
-    "User-Agent": "Mozilla/5.0 miHoYoBBS/2.73.1",
-    Referer: "https://act.mihoyo.com/",
-  }
+  return buildLotusMysHeaders(context, query, body)
 }
 
 function apiHost(context) {
@@ -178,11 +185,42 @@ function recordHost(context) {
   return context.isCn ? "https://api-takumi-record.mihoyo.com/" : "https://bbs-api-os.hoyolab.com/"
 }
 
+function resolveMysApiServer(e, mysApi, game) {
+  const explicit = mysApi?.server || e?.server || e?.region || e?.mysServer || ""
+  return resolveServer({
+    server: explicit,
+    uid: mysApi?.uid || e?.uid,
+    game,
+    fallback: inferServerFromUid(mysApi?.uid || e?.uid || "", game),
+  })
+}
+
+function shouldTrustMysHeaders(context) {
+  const server = context.mysApi?.server || ""
+  if (isUnknownServer(server)) return false
+  return sameServerSide(context.server, server)
+}
+
+function buildLotusMysHeaders(context, query = "", body = "") {
+  const cn = context.isCn
+  return {
+    "x-rpc-app_version": MIHOYO.appVersion,
+    "x-rpc-client_type": cn ? "5" : "2",
+    "User-Agent": cn
+      ? `Mozilla/5.0 (Linux; Android 12; Lotus) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.73 Mobile Safari/537.36 miHoYoBBS/${MIHOYO.appVersion}`
+      : `Mozilla/5.0 (Linux; Android 11; Lotus) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/124.0.6367.179 Mobile Safari/537.36 miHoYoBBSOversea/${MIHOYO.appVersion}`,
+    Referer: cn ? "https://webstatic.mihoyo.com/" : "https://act.hoyolab.com/",
+    DS: getDs2(query, body, cn
+      ? "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs"
+      : "okr4obncj8bw5a65hbnn5oo6ixjc3l9w"),
+  }
+}
+
 async function findProfileDevice(e, mysApi) {
   const qq = e?.user_id
   if (!qq) return null
   const cookie = typeof mysApi.cookie === "string" ? parseCookieString(mysApi.cookie) : mysApi.cookie || {}
-  const ltuid = String(cookie.ltuid || cookie.account_id || "")
+  const ltuid = String(cookie.ltuid || cookie.ltuid_v2 || cookie.account_id || cookie.account_id_v2 || "")
   if (!ltuid) return null
 
   const profileIds = await listProfileIds(String(qq))

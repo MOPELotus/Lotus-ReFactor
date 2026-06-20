@@ -1,10 +1,16 @@
 export async function emitCaptchaEvent(context = {}, event = {}) {
+  logCaptchaEvent(event)
   if (typeof context.onCaptchaEvent === "function") {
     await context.onCaptchaEvent({
       ...event,
       message: event.message || formatCaptchaMessage(event),
+      visible: isUserVisibleCaptchaEvent(event),
     })
   }
+}
+
+export function isUserVisibleCaptchaEvent(event = {}) {
+  return ["captcha:start", "captcha:success", "captcha:fail"].includes(event.type)
 }
 
 export function formatCaptchaMessage(event = {}) {
@@ -34,7 +40,7 @@ export function formatCaptchaMessage(event = {}) {
     case "captcha:manual-link":
       return `[荷花插件]全部自动方案失败，请点击链接手动过码：${event.link}`
     case "captcha:success":
-      return `[荷花插件]验证码已通过，使用方案：${providerLabel}。`
+      return "[荷花插件]验证码已通过。"
     case "captcha:fail":
       return event.manualLink
         ? `[荷花插件]全部方案失败，无法通过验证码，请点击链接手动过码：${event.manualLink}`
@@ -42,6 +48,21 @@ export function formatCaptchaMessage(event = {}) {
     default:
       return ""
   }
+}
+
+function logCaptchaEvent(event = {}) {
+  if (!event?.type) return
+  const parts = [
+    event.type,
+    event.provider ? `provider=${event.provider}` : "",
+    event.nextProvider ? `next=${event.nextProvider}` : "",
+    event.reason ? `reason=${event.reason}` : "",
+    event.retryable !== undefined ? `retryable=${event.retryable}` : "",
+    event.fatal !== undefined ? `fatal=${event.fatal}` : "",
+    event.costMs ? `costMs=${event.costMs}` : "",
+    event.manualLink ? "manualLink=yes" : "",
+  ].filter(Boolean)
+  globalThis.logger?.mark?.(`[Lotus-Plugin] captcha ${parts.join(" ")}`)
 }
 
 function providerName(provider) {

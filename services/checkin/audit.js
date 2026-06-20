@@ -1,12 +1,13 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { resolveData } from "../../core/path.js"
+import { formatLocalIso } from "../../core/time.js"
 
 const CHECKIN_AUDIT_FILE = resolveData("audit", "checkin.jsonl")
 
 export async function appendCheckinAudit(entry = {}) {
   const payload = {
-    time: new Date().toISOString(),
+    time: formatLocalIso(),
     qq: String(entry.qq || entry.profile?.user?.qq || ""),
     profileId: Number(entry.profileId || entry.profile?.profile?.id || 1),
     ok: Boolean(entry.ok),

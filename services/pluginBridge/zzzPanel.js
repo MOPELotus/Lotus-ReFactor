@@ -1,4 +1,5 @@
 import { registerProfileWithGenshin } from "../genshinBridge/profile.js"
+import { resolveServer } from "../../core/mihoyo/regions.js"
 import { createIsolatedEvent, getRoleUid, importRuntimeModule, pickRole } from "./common.js"
 
 export class ZzzPanelBridge {
@@ -13,12 +14,19 @@ export class ZzzPanelBridge {
     if (!uid) {
       throw new Error(`profile ${profileId} 没有同步绝区零 UID`)
     }
+    const server = resolveServer({
+      server: role.region,
+      uid,
+      game: "zzz",
+    })
 
     await this.registerProfile({ qq: String(e.user_id), profile })
 
     const { event, messages, forwarded } = createIsolatedEvent(e, {
       msg: "%更新面板",
       uid,
+      server,
+      region: server,
       game: "zzz",
       isZZZ: true,
       mysSelfUid: true,

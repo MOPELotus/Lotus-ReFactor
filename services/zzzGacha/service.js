@@ -5,6 +5,7 @@ import {
   AuthKeyService,
   getServer,
 } from "../mihoyoAuthKey/service.js"
+import { isCnServer } from "../../core/mihoyo/regions.js"
 
 export const ZZZ_GACHA_POOLS = Object.freeze({
   "音擎频段": ["3001"],
@@ -214,7 +215,7 @@ export function getZzzBaseType(gachaType) {
 }
 
 export function getZzzGameBiz(region = "prod_gf_cn") {
-  return region === "prod_gf_cn" ? "nap_cn" : "nap_global"
+  return isCnServer(region) ? "nap_cn" : "nap_global"
 }
 
 function normalizeLog(log = {}) {

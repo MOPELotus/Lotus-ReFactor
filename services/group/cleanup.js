@@ -7,6 +7,7 @@ import {
   saveProfile,
 } from "../../core/config/profile.js"
 import { resolveData } from "../../core/path.js"
+import { formatLocalFileTimestamp, formatLocalIso } from "../../core/time.js"
 
 export async function cleanupMemberLeave({
   userId,
@@ -75,7 +76,7 @@ export async function cleanupMemberLeave({
   }
 
   await appendGroupCleanupAudit({
-    time: now().toISOString(),
+    time: formatLocalIso(now()),
     reason,
     userId: qq,
     groupId: groupId ? String(groupId) : "",
@@ -197,7 +198,7 @@ function normalizeMemberEntries(source = []) {
 
 async function archiveProfileFile(qq, profileId, now) {
   const source = profileFilePath(qq, profileId)
-  const stamp = now().toISOString().replace(/[:.]/g, "-")
+  const stamp = formatLocalFileTimestamp(now())
   const target = path.join(resolveData("users-archive", stamp), path.basename(source))
   await fs.mkdir(path.dirname(target), { recursive: true })
   await fs.rename(source, target)

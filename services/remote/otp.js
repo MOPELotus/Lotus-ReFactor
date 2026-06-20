@@ -4,6 +4,7 @@ import QRCode from "qrcode"
 import YAML from "yaml"
 import { resolveData } from "../../core/path.js"
 import { buildTotpUri, generateBase32Secret } from "../../core/security/totp.js"
+import { formatLocalIso } from "../../core/time.js"
 
 const OTP_FILE = resolveData("remote", "otp.yaml")
 
@@ -39,7 +40,7 @@ export async function createRemoteOtpSetup({ userId = "master", issuer = "荷花
     issuer,
     account: `remote-${userId || "master"}`,
     secret: generateBase32Secret(20),
-    created_at: new Date().toISOString(),
+    created_at: formatLocalIso(),
   }
   await fs.mkdir(path.dirname(OTP_FILE), { recursive: true })
   await fs.writeFile(OTP_FILE, YAML.stringify(config), "utf8")

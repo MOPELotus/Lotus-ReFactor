@@ -7,6 +7,7 @@ import {
   rootPath,
 } from "../../core/path.js"
 import { loadGlobalConfig } from "../../core/config/global.js"
+import { formatLocalIso } from "../../core/time.js"
 
 export class PythonEnvService {
   constructor(options = {}) {
@@ -117,7 +118,7 @@ export class PythonEnvService {
     const current = fingerprint || await this.buildFingerprint()
     const data = {
       ...current,
-      updated_at: new Date().toISOString(),
+      updated_at: formatLocalIso(),
     }
     const file = path.join(venvPath, "lotus-fingerprint.json")
     await fs.writeFile(file, JSON.stringify(data, null, 2), "utf8")
@@ -177,16 +178,16 @@ export function runProcess(spawnImpl, command, args = [], options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawnImpl(command, args, {
       cwd: options.cwd || rootPath,
-      env: options.env || process.env,
+      env: withUtf8ProcessEnv(options.env || process.env),
       windowsHide: true,
     })
     let stdout = ""
     let stderr = ""
     child.stdout?.on("data", chunk => {
-      stdout += chunk.toString()
+      stdout += decodeProcessChunk(chunk)
     })
     child.stderr?.on("data", chunk => {
-      stderr += chunk.toString()
+      stderr += decodeProcessChunk(chunk)
     })
     child.on("error", reject)
     child.on("close", code => {
@@ -201,6 +202,22 @@ export function runProcess(spawnImpl, command, args = [], options = {}) {
       reject(error)
     })
   })
+}
+
+export function withUtf8ProcessEnv(env = process.env) {
+  return {
+    ...env,
+    PYTHONUTF8: "1",
+    PYTHONIOENCODING: "utf-8",
+    PYTHONUNBUFFERED: "1",
+    PYTHONLEGACYWINDOWSSTDIO: "0",
+  }
+}
+
+export function decodeProcessChunk(chunk) {
+  if (chunk == null) return ""
+  if (typeof chunk === "string") return chunk
+  return new TextDecoder("utf-8", { fatal: false }).decode(chunk)
 }
 
 function resolveMaybeData(value) {

@@ -1,7 +1,9 @@
 import { loadGlobalConfig } from "../../core/config/global.js"
+import { isUserVisibleCaptchaEvent } from "../../core/captcha/events.js"
 import { loadProfile } from "../../core/config/profile.js"
 import { renderTemplate } from "../../core/render/service.js"
 import { SchedulerService, dateString, nextDateString } from "../../core/scheduler/service.js"
+import { formatLocalIso } from "../../core/time.js"
 import { notifyProfile } from "../../core/transport/notify.js"
 import { ProfileSigninService, renderSigninFailure } from "./profileSignin.js"
 
@@ -32,12 +34,12 @@ export class ScheduledSigninService {
     const results = []
 
     for (const entry of dueEntries) {
-      entry.runningAt = new Date().toISOString()
+      entry.runningAt = formatLocalIso()
       await this.scheduler.savePlan(plan)
 
       const outcome = await this.runEntry(entry, options)
       entry.done = true
-      entry.doneAt = new Date().toISOString()
+      entry.doneAt = formatLocalIso()
       entry.ok = outcome.ok
       entry.stage = outcome.stage
       entry.message = outcome.message || outcome.error?.message || ""
@@ -148,7 +150,7 @@ export class ScheduledSigninService {
         refresh: true,
         installRequirements: false,
         onCaptchaEvent: async event => {
-          if (event?.message && profile) {
+          if (isUserVisibleCaptchaEvent(event) && event?.message && profile) {
             await this.notify(profile, event.message, {
               bot: options.bot || this.bot,
             }).catch(error => {

@@ -84,6 +84,8 @@ export const gtManualProvider = {
 
       return captchaFail(this.name, "manual_timeout", {
         retryable: true,
+        manualLink: link,
+        resultUrl,
         costMs: Date.now() - started,
       })
     } catch (error) {
@@ -100,12 +102,6 @@ async function notifyManualLink(link, context) {
     await context.notifyManualLink(link, {
       provider: "gtmanual",
     })
-    return
-  }
-
-  const reply = context.e?.reply || context.reply
-  if (typeof reply === "function") {
-    await reply.call(context.e || context, `请复制地址并用手机浏览器打开完成验证\n${link}`)
   }
 }
 

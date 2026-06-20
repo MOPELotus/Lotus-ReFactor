@@ -7,7 +7,7 @@ import {
   rootPath,
 } from "../../core/path.js"
 import { solveCaptcha } from "../../core/captcha/service.js"
-import { PythonEnvService } from "../python/env.js"
+import { decodeProcessChunk, PythonEnvService, withUtf8ProcessEnv } from "../python/env.js"
 import { buildBbsToolsConfig } from "./config.js"
 
 export class MihoyoBbsToolsRunner {
@@ -48,6 +48,8 @@ export class MihoyoBbsToolsRunner {
         resultFile,
         "--captcha-dir",
         captchaDir,
+        "--mihoyobbs-version",
+        options.mihoyobbsVersion || "2.102.1",
         "--task-id",
         taskId,
         "--user-id",
@@ -80,7 +82,7 @@ export class MihoyoBbsToolsRunner {
     return new Promise((resolve, reject) => {
       const child = this.spawn(command, args, {
         cwd: rootPath,
-        env: process.env,
+        env: withUtf8ProcessEnv(process.env),
         windowsHide: true,
       })
       const stopCaptcha = watchCaptchaRequests(options.captchaDir, {
@@ -90,7 +92,7 @@ export class MihoyoBbsToolsRunner {
       })
       let stderr = ""
       child.stderr?.on("data", chunk => {
-        stderr += chunk.toString()
+        stderr += decodeProcessChunk(chunk)
       })
       child.on("error", reject)
       child.on("close", code => {

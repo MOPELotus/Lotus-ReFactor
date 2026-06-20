@@ -1,5 +1,5 @@
 export const MIHOYO = Object.freeze({
-  appVersion: "2.70.1",
+  appVersion: "2.102.1",
   passApi: "https://passport-api.mihoyo.com",
   webApi: "https://api-takumi.mihoyo.com",
   passSalt: "JwYDpKvLj6MrMqqYU6jTKF17KNO2PXoS",

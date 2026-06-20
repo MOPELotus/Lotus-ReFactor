@@ -3,6 +3,7 @@ const BasePlugin = globalThis.plugin
 import { loadGlobalConfig } from "../core/config/global.js"
 import { PermissionService } from "../core/permissions/service.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
+import { formatLocalDateTime } from "../core/time.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { buildPartnerItems, NeteasePartnerService } from "../services/neteasePartner/service.js"
 
@@ -161,7 +162,7 @@ export class LotusNeteasePartner extends BasePlugin {
       title,
       subtitle: report.trigger || "网易云音乐合伙人",
       badge,
-      message: `生成时间：${report.time || new Date().toISOString()}`,
+      message: `生成时间：${report.time || formatLocalDateTime()}`,
       userId: this.e.user_id,
       items: buildPartnerItems(report),
     }, {

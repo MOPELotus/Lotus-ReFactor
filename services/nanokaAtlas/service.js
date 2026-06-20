@@ -160,9 +160,14 @@ const PERSONAL_CHALLENGE_TERMS = new Set([
   "虚构叙事",
   "异相",
   "异相仲裁",
+  "防卫",
   "防卫战",
+  "式舆",
+  "式舆防卫",
   "式舆防卫战",
+  "危局",
   "危局强袭战",
+  "强袭",
   "强袭战",
 ])
 
@@ -608,6 +613,7 @@ function normalizeShortcutRouteName(value = "") {
   if (text.endsWith("面板")) return ""
   if (text.endsWith("图鉴")) return ""
   if (looksLikeNonAtlasCommand(text)) return ""
+  if (PERSONAL_CHALLENGE_TERMS.has(normalizeShortcutText(text))) return ""
   if (GENERIC_ATLAS_SHORTCUT_TERMS.has(normalizeShortcutText(text))) return ""
   return text
 }
@@ -747,7 +753,7 @@ export function parseAtlasShortcutMessage(message = "") {
   const explicitSuffix = text !== originalText
   if (!text) return { ok: false, reason: "empty_query" }
   if (isPanelShortcutQuery(originalText)) return { ok: false, reason: "panel_query" }
-  if (!explicitSuffix && isPersonalChallengeQuery(raw)) return { ok: false, reason: "personal_challenge" }
+  if (!explicitSuffix && isPersonalChallengeQuery(text)) return { ok: false, reason: "personal_challenge" }
 
   const challenge = resolveChallengeQuery(text)
   if (challenge) {
