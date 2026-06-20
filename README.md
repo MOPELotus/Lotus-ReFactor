@@ -55,3 +55,7 @@
 - [guoba-yunzai/guoba-plugin](https://github.com/guoba-yunzai/guoba-plugin)
 
 敏感数据只允许写入 `data/` 或用户本地配置，不要提交 cookie、stoken、mid、打码平台 key、OTP secret 或远程 spawn 输出。
+
+## 交流与反馈
+
+使用中遇到问题，欢迎加入荷花的小群 `702211431` 反馈。

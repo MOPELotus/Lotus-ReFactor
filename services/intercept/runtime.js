@@ -1,5 +1,10 @@
+import fs from "node:fs/promises"
+import path from "node:path"
+import YAML from "yaml"
+
 import {
   LEGACY_CAPTCHA_HANDLER_NAMESPACES,
+  LOTUS_CONFIG_DISABLED_PLUGIN_NAMES,
   LOTUS_CAPTCHA_HANDLER_NAMESPACE,
   LOTUS_INTERCEPT_PRIORITY,
   LOTUS_RUNTIME_DISABLED_PLUGIN_NAMES,
@@ -13,6 +18,7 @@ export async function installLotusRuntimeInterception() {
   runtimeInstalled = true
 
   const results = await Promise.allSettled([
+    ensureYunzaiConflictDisableConfig(),
     patchRuntimeDisableConfig(),
     patchPluginsLoader(),
   ])
@@ -57,11 +63,66 @@ export async function installLotusCaptchaHandlerOverride(handlerModule = null) {
   return { ok: true }
 }
 
+export async function ensureYunzaiConflictDisableConfig(options = {}) {
+  const file = options.file || path.join(process.cwd(), "config", "config", "group.yaml")
+  const disabledNames = options.disabledNames || LOTUS_CONFIG_DISABLED_PLUGIN_NAMES
+
+  try {
+    let config = {}
+    try {
+      config = YAML.parse(await fs.readFile(file, "utf8")) || {}
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error
+    }
+
+    if (!isPlainObject(config)) config = {}
+    if (!isPlainObject(config.default)) config.default = {}
+
+    const currentDisable = Array.isArray(config.default.disable)
+      ? config.default.disable
+      : config.default.disable
+        ? [config.default.disable]
+        : []
+
+    const nextDisable = unique([
+      ...currentDisable,
+      ...disabledNames,
+    ])
+    const added = nextDisable.filter(name => !currentDisable.includes(name))
+    const changed = added.length > 0 || !Array.isArray(config.default.disable)
+
+    if (changed) {
+      config.default.disable = nextDisable
+      await fs.mkdir(path.dirname(file), { recursive: true })
+      await fs.writeFile(file, YAML.stringify(config), "utf8")
+      clearYunzaiCfgCache(options.cfg)
+      logInfo(`已写入冲突功能禁用配置：${added.join("、") || "格式修正"}`)
+    }
+
+    return {
+      ok: true,
+      file,
+      changed,
+      added,
+      disabled: nextDisable,
+    }
+  } catch (error) {
+    logWarn(`写入冲突功能禁用配置失败：${error?.message || error}`)
+    return {
+      ok: false,
+      file,
+      reason: error?.message || String(error),
+    }
+  }
+}
+
 async function patchRuntimeDisableConfig() {
   const cfg = await importYunzaiDefault("../../../../lib/config/config.js")
   if (!cfg?.getGroup || cfg.__lotusDisablePatch) {
     return { ok: true, skipped: true }
   }
+
+  await ensureYunzaiConflictDisableConfig({ cfg })
 
   const originalGetGroup = cfg.getGroup.bind(cfg)
   cfg.getGroup = (...args) => {
@@ -116,12 +177,6 @@ function scheduleEnforce(loader) {
 export function enforceLotusInterception(loader) {
   if (!Array.isArray(loader?.priority)) return { ok: false, reason: "loader priority unavailable" }
 
-  let pruned = 0
-  for (const entry of loader.priority) {
-    if (!entry || isLotusEntry(entry)) continue
-    pruned += pruneConflictRules(entry)
-  }
-
   loader.priority = loader.priority
     .map((entry, index) => ({ entry, index }))
     .sort((a, b) => {
@@ -133,76 +188,7 @@ export function enforceLotusInterception(loader) {
     })
     .map(item => item.entry)
 
-  return { ok: true, pruned }
-}
-
-export function pruneConflictRules(entry) {
-  const rules = entry?.plugin?.rule
-  if (!Array.isArray(rules) || !rules.length) return 0
-
-  const before = rules.length
-  entry.plugin.rule = rules.filter(rule => !isConflictRule(entry, rule))
-  return before - entry.plugin.rule.length
-}
-
-export function isConflictRule(entry, rule) {
-  const name = String(entry?.name || "")
-  const key = String(entry?.key || "")
-  const reg = String(rule?.reg || "")
-  const fnc = String(rule?.fnc || "")
-
-  if (name === "米哈游登录") return true
-  if (name === "R插件工具和学习类" && fnc === "bili") return true
-  if (name === "R插件工具和学习类" && /bilibili|b23|bili2233|BV/i.test(reg)) return true
-
-  if (name === "xiaoyao-cvs-plugin" && /xiaoyao-cvs-plugin/i.test(key)) {
-    return false
-  }
-
-  if (isMiaoWikiEntry(name, key)) {
-    return fnc === "wiki"
-      || /(?:图鉴|资料|天赋|技能|行迹|命座|命之座|星魂|照片|写真|图片|图像)/.test(reg)
-  }
-
-  if (isMiaoCharacterEntry(name, key)) {
-    return fnc === "character"
-  }
-
-  if (isZzzAtlasEntry(name, key)) {
-    if (fnc === "atlas" || fnc === "wiki") return true
-    if (/(?:图鉴|资料|影画|天赋|音擎|驱动盘|邦布)/.test(reg)) return true
-    return !/(?:面板|panel)/i.test(`${reg} ${fnc}`)
-  }
-
-  return false
-}
-
-function isMiaoWikiEntry(name, key) {
-  return name.includes("喵喵:角色资料")
-    || name.includes("喵喵角色资料")
-    || name.includes("miao-plugin:wiki")
-    || key.includes("miao-plugin/apps/wiki")
-    || key.includes("miao-plugin\\apps\\wiki")
-}
-
-function isMiaoCharacterEntry(name, key) {
-  return name.includes("喵喵角色卡片")
-    || name.includes("喵喵:角色查询")
-    || name.includes("喵喵角色查询")
-    || name.includes("miao-plugin:character")
-    || key.includes("miao-plugin/apps/character")
-    || key.includes("miao-plugin\\apps\\character")
-}
-
-function isZzzAtlasEntry(name, key) {
-  return name.includes("ZZZ-Plugin 图鉴")
-    || name.includes("ZZZ-Plugin Atlas")
-    || key.includes("ZZZ-Plugin/apps/atlas")
-    || key.includes("ZZZ-Plugin\\apps\\atlas")
-    || key.includes("ZZZ-Plugin/dist/apps/wiki")
-    || key.includes("ZZZ-Plugin\\dist\\apps\\wiki")
-    || key.includes("ZZZ-Plugin/apps/wiki")
-    || key.includes("ZZZ-Plugin\\apps\\wiki")
+  return { ok: true, pruned: 0 }
 }
 
 export function isLotusEntry(entry) {
@@ -229,6 +215,26 @@ function unique(values) {
   return [...new Set(values.filter(value => value !== undefined && value !== null && value !== ""))]
 }
 
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function clearYunzaiCfgCache(cfg) {
+  if (cfg?.config && typeof cfg.config === "object") {
+    delete cfg.config["config.group"]
+  }
+}
+
 function logDebug(message) {
   globalThis.logger?.debug?.(`[Lotus-Plugin] ${message}`)
+}
+
+function logInfo(message) {
+  globalThis.logger?.mark?.(`[Lotus-Plugin] ${message}`)
+    || globalThis.logger?.info?.(`[Lotus-Plugin] ${message}`)
+}
+
+function logWarn(message) {
+  globalThis.logger?.warn?.(`[Lotus-Plugin] ${message}`)
+    || globalThis.logger?.error?.(`[Lotus-Plugin] ${message}`)
 }

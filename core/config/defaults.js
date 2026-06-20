@@ -29,7 +29,11 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     providers: ["test_nine", "ttocr", "gtmanual"],
     refresh: {
       enable_on_challenge_used: true,
-      max_attempts: 1,
+      max_attempts: 12,
+    },
+    retry: {
+      provider_attempts: 3,
+      chain_attempts: 2,
     },
     test_nine: {
       enable: true,

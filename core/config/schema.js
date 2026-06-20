@@ -219,6 +219,18 @@ function validateCaptchaConfig(captcha = {}, errors) {
       errors.push("captcha.refresh.max_attempts must be a non-negative integer")
     }
   }
+  if (typeof captcha.retry !== "undefined") {
+    if (!isObject(captcha.retry)) {
+      errors.push("captcha.retry must be an object")
+    } else {
+      if (!isPositiveInteger(captcha.retry.provider_attempts)) {
+        errors.push("captcha.retry.provider_attempts must be a positive integer")
+      }
+      if (!isPositiveInteger(captcha.retry.chain_attempts)) {
+        errors.push("captcha.retry.chain_attempts must be a positive integer")
+      }
+    }
+  }
 
   validateProvider(captcha.test_nine, "captcha.test_nine", errors, [
     "endpoint",

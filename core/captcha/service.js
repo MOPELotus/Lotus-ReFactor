@@ -36,17 +36,23 @@ export class CaptchaService {
 
     const attempts = []
     const order = this.providerOrder()
+    const providerAttempts = this.providerAttemptLimit(context)
+    const chainAttempts = this.chainAttemptLimit(context)
     let refreshAttempts = 0
-    const maxRefreshAttempts = this.maxChallengeRefreshAttempts(context)
+    let challengeUsed = false
+    let lastFailure = null
+    const maxRefreshAttempts = this.maxChallengeRefreshAttempts(context, {
+      order,
+      providerAttempts,
+      chainAttempts,
+    })
 
     await emitCaptchaEvent(context, {
       type: "captcha:start",
       providers: order,
     })
 
-    while (true) {
-      let refreshedThisRound = false
-
+    for (let chainAttempt = 1; chainAttempt <= chainAttempts; chainAttempt += 1) {
       for (let providerIndex = 0; providerIndex < order.length; providerIndex += 1) {
         const providerName = order[providerIndex]
         const provider = PROVIDERS[providerName]
@@ -63,77 +69,108 @@ export class CaptchaService {
         }
 
         const providerConfig = this.providerConfig(providerName, provider.name)
-        await emitCaptchaEvent(context, {
-          type: "captcha:provider-start",
-          provider: provider.name,
-        })
-        const result = await provider.solve(challenge, providerConfig, context)
-        attempts.push(result)
+        const attemptLimit = this.providerAttemptLimit(context, provider.name)
+        for (let providerAttempt = 1; providerAttempt <= attemptLimit; providerAttempt += 1) {
+          if (challengeUsed) {
+            if (refreshAttempts >= maxRefreshAttempts) {
+              lastFailure = captchaFail("challenge_refresh", "refresh_limit_exceeded", {
+                fatal: false,
+                retryable: false,
+              })
+              attempts.push(lastFailure)
+              break
+            }
+            const refreshed = await this.refreshChallenge(challenge, {
+              provider: provider.name,
+              reason: providerAttempt > 1
+                ? "provider_retry"
+                : chainAttempt > 1
+                  ? "chain_retry"
+                  : "provider_switch",
+            }, attempts, context)
+            if (refreshed) {
+              challenge = refreshed
+              refreshAttempts += 1
+            } else if (typeof context.refreshChallenge === "function") {
+              lastFailure = captchaFail("challenge_refresh", "refresh_failed", {
+                fatal: false,
+                retryable: false,
+              })
+              attempts.push(lastFailure)
+              break
+            }
+          }
 
-        if (result.ok) {
+          challengeUsed = true
           await emitCaptchaEvent(context, {
-            type: "captcha:success",
-            provider: result.provider,
-            costMs: result.costMs,
+            type: "captcha:provider-start",
+            provider: provider.name,
+            attempt: providerAttempt,
+            chainAttempt,
           })
-          return {
-            ...result,
-            attempts,
+          const result = await provider.solve(challenge, providerConfig, context)
+          attempts.push(result)
+
+          if (result.ok) {
+            await emitCaptchaEvent(context, {
+              type: "captcha:success",
+              provider: result.provider,
+              costMs: result.costMs,
+            })
+            return {
+              ...result,
+              attempts,
+            }
           }
-        }
 
-        await emitCaptchaEvent(context, {
-          type: result.skipped ? "captcha:provider-skip" : "captcha:provider-fail",
-          provider: result.provider || provider.name,
-          reason: result.reason,
-          retryable: result.retryable,
-          fatal: result.fatal,
-          challengeRefresh: result.challengeRefresh,
-          nextProvider,
-        })
-
-        if (result.challengeRefresh && refreshAttempts < maxRefreshAttempts) {
-          const refreshed = await this.refreshChallenge(challenge, result, attempts, context)
-          if (refreshed) {
-            challenge = refreshed
-            refreshAttempts += 1
-            refreshedThisRound = true
-            break
-          }
-        }
-
-        if (result.fatal || result.retryable === false) {
+          lastFailure = result
           await emitCaptchaEvent(context, {
-            type: "captcha:fail",
-            provider: result.provider,
+            type: result.skipped ? "captcha:provider-skip" : "captcha:provider-fail",
+            provider: result.provider || provider.name,
             reason: result.reason,
-            manualLink: findManualLink(attempts),
-            attempts,
+            retryable: result.retryable,
+            fatal: result.fatal,
+            challengeRefresh: result.challengeRefresh,
+            attempt: providerAttempt,
+            chainAttempt,
+            nextProvider: providerAttempt < attemptLimit ? provider.name : nextProvider,
           })
-          return {
-            ...result,
-            attempts,
+
+          if (result.fatal) {
+            await emitCaptchaEvent(context, {
+              type: "captcha:fail",
+              provider: result.provider,
+              reason: result.reason,
+              manualLink: findManualLink(attempts),
+              attempts,
+            })
+            return {
+              ...result,
+              attempts,
+            }
           }
+
+          if (result.skipped) break
+          if (result.retryable === false && !result.challengeRefresh) break
         }
       }
-
-      if (refreshedThisRound) continue
-
-      const failed = {
-        ...captchaFail(null, "all_providers_failed", {
-          retryable: true,
-          manualLink: findManualLink(attempts),
-        }),
-        attempts,
-      }
-      await emitCaptchaEvent(context, {
-        type: "captcha:fail",
-        reason: failed.reason,
-        manualLink: findManualLink(attempts),
-        attempts,
-      })
-      return failed
     }
+
+    const failed = {
+      ...captchaFail(lastFailure?.provider || null, lastFailure?.reason || "all_providers_failed", {
+        retryable: true,
+        manualLink: findManualLink(attempts),
+      }),
+      attempts,
+    }
+    await emitCaptchaEvent(context, {
+      type: "captcha:fail",
+      provider: failed.provider,
+      reason: failed.reason,
+      manualLink: findManualLink(attempts),
+      attempts,
+    })
+    return failed
   }
 
   providerOrder() {
@@ -148,12 +185,18 @@ export class CaptchaService {
     }
   }
 
-  maxChallengeRefreshAttempts(context = {}) {
+  maxChallengeRefreshAttempts(context = {}, retryPlan = {}) {
     if (typeof context.maxChallengeRefreshAttempts === "number") {
       return Math.max(0, context.maxChallengeRefreshAttempts)
     }
     if (this.config.refresh?.enable_on_challenge_used === false) return 0
-    return Math.max(0, Number(this.config.refresh?.max_attempts ?? 1))
+    const derived = Math.max(
+      0,
+      Number(retryPlan.order?.length || this.providerOrder().length || 1)
+        * Number(retryPlan.providerAttempts || this.providerAttemptLimit(context) || 1)
+        * Number(retryPlan.chainAttempts || this.chainAttemptLimit(context) || 1),
+    )
+    return Math.max(0, Number(this.config.refresh?.max_attempts ?? derived), derived)
   }
 
   async refreshChallenge(challenge, result, attempts, context) {
@@ -188,6 +231,29 @@ export class CaptchaService {
       }))
       return null
     }
+  }
+
+  providerAttemptLimit(context = {}, providerName = "") {
+    if (providerName === "gtmanual") return 1
+    if (typeof context.providerAttempts === "number") {
+      return Math.max(1, Math.floor(context.providerAttempts))
+    }
+    const configured = this.config.retry?.provider_attempts
+    if (Number.isFinite(configured)) return Math.max(1, Math.floor(configured))
+    const retries = this.config.retry?.provider_retries
+    if (Number.isFinite(retries)) return Math.max(1, Math.floor(retries) + 1)
+    return 3
+  }
+
+  chainAttemptLimit(context = {}) {
+    if (typeof context.chainAttempts === "number") {
+      return Math.max(1, Math.floor(context.chainAttempts))
+    }
+    const configured = this.config.retry?.chain_attempts
+    if (Number.isFinite(configured)) return Math.max(1, Math.floor(configured))
+    const retries = this.config.retry?.chain_retries
+    if (Number.isFinite(retries)) return Math.max(1, Math.floor(retries) + 1)
+    return 2
   }
 }
 

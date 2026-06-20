@@ -24,6 +24,8 @@ const ARRAY_FIELDS = new Set([
 const NUMBER_FIELDS = new Set([
   "render.background_timeout_ms",
   "captcha.refresh.max_attempts",
+  "captcha.retry.provider_attempts",
+  "captcha.retry.chain_attempts",
   "captcha.test_nine.timeout_ms",
   "captcha.ttocr.poll_interval_ms",
   "captcha.ttocr.timeout_ms",
@@ -108,6 +110,8 @@ const GUOBA_SCHEMAS = [
   textArea("captcha.providers", "尝试顺序", "每行一个：test_nine、ttocr、gtmanual、vision_ai。"),
   sw("captcha.refresh.enable_on_challenge_used", "刷新失效 challenge", "遇到 challenge 已使用时重新请求。"),
   number("captcha.refresh.max_attempts", "最大刷新次数", "避免无限重试。"),
+  number("captcha.retry.provider_attempts", "单方案尝试次数", "每个自动过码方案最多尝试几次。"),
+  number("captcha.retry.chain_attempts", "链路重试轮数", "整条验证码链最多重跑几轮。"),
   sw("captcha.test_nine.enable", "启用 test_nine", "本地模型过码。"),
   sw("captcha.test_nine.auto_start", "启动 test_nine 服务", "插件加载后自动启动本地服务。"),
   input("captcha.test_nine.endpoint", "test_nine 接口", "默认本机 pass_uni。"),

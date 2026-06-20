@@ -16,7 +16,9 @@ export async function requestJson(url, options = {}, context = {}) {
     try {
       data = text ? JSON.parse(text) : null
     } catch {
-      throw new Error(`invalid json response from ${url}`)
+      const error = new Error(`invalid json response from ${url}: ${text.slice(0, 300)}`)
+      error.rawText = text
+      throw error
     }
 
     if (!response.ok) {

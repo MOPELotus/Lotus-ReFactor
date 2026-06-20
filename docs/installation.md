@@ -34,4 +34,4 @@ git submodule update --init --recursive
 - device-plugin 的全局设备注入逻辑。
 - 小花火、rconsole 等插件里的 B站解析入口。
 
-荷花插件不会直接修改这些插件的文件，而是在运行时注册更高优先级入口或跳过冲突 handler。
+荷花插件不会直接修改这些插件的文件。插件启动时会补齐 Yunzai/TRSS 的 `config/config/group.yaml` 禁用项，并注册更高优先级入口；验证码 handler 会替换旧的全局 handler。

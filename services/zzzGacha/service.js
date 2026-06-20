@@ -1,5 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import crypto from "node:crypto"
 import { resolveData, rootPath } from "../../core/path.js"
 import {
   AuthKeyService,
@@ -25,10 +26,12 @@ export class ZzzGachaService {
     this.authKeyService = options.authKeyService || new AuthKeyService({ fetch: this.fetch })
     this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)))
     this.storageDir = options.storageDir || resolveData("zzzGachaJson")
+    this.authCacheFile = options.authCacheFile || resolveData("zzzGachaAuthkey", "cache.json")
     this.zzzPluginDir = options.zzzPluginDir || ""
     this.mirrorZzzPlugin = options.mirrorZzzPlugin !== false
     this.pageDelayMs = Number(options.pageDelayMs ?? 1000)
     this.maxPages = Number(options.maxPages ?? 50)
+    this.authkeyTtlMs = Number(options.authkeyTtlMs ?? 24 * 60 * 60 * 1000)
   }
 
   async updateByProfile({ qq, profile, profileId = 1 } = {}) {
@@ -39,20 +42,47 @@ export class ZzzGachaService {
 
     const region = role?.region || getServer(uid, "zzz")
     const gameBiz = getZzzGameBiz(region)
-    const auth = await this.authKeyService.getAuthKey({
+    const auth = await this.getCachedAuthKey({
+      qq,
       profile,
+      profileId,
       game: "zzz",
       uid,
       region,
+      gameBiz,
       authAppId: "webview_gacha",
     })
-    const result = await this.updateByAuthkey({
-      qq,
-      uid,
-      authkey: auth.authkey,
-      region,
-      gameBiz,
-    })
+    let result
+    try {
+      result = await this.updateByAuthkey({
+        qq,
+        uid,
+        authkey: auth.authkey,
+        region,
+        gameBiz,
+      })
+    } catch (error) {
+      if (!isInvalidAuthkeyError(error)) throw error
+      await this.clearCachedAuthKey({ qq, profile, profileId, uid, region, gameBiz })
+      const freshAuth = await this.getCachedAuthKey({
+        qq,
+        profile,
+        profileId,
+        game: "zzz",
+        uid,
+        region,
+        gameBiz,
+        authAppId: "webview_gacha",
+        force: true,
+      })
+      result = await this.updateByAuthkey({
+        qq,
+        uid,
+        authkey: freshAuth.authkey,
+        region,
+        gameBiz,
+      })
+    }
     return {
       ...result,
       uid,
@@ -138,9 +168,69 @@ export class ZzzGachaService {
     })
     const res = await this.requestJson(url)
     if (Number(res?.retcode ?? 0) !== 0) {
-      throw new Error(res?.message || `绝区零抽卡接口错误 ${res?.retcode}`)
+      const error = new Error(res?.message || `绝区零抽卡接口错误 ${res?.retcode}`)
+      error.retcode = res?.retcode
+      error.response = res
+      throw error
     }
     return res?.data || null
+  }
+
+  async getCachedAuthKey({ qq, profile, profileId = 1, game, uid, region, gameBiz, authAppId, force = false } = {}) {
+    const key = authCacheKey({ qq, profile, profileId, uid, region, gameBiz, authAppId })
+    const now = Date.now()
+    const cache = await this.loadAuthCache()
+    const cached = cache[key]
+    if (!force && cached?.authkey && Number(cached.expiresAt || 0) > now) {
+      return {
+        authkey: cached.authkey,
+        cached: true,
+        expiresAt: cached.expiresAt,
+      }
+    }
+
+    const auth = await this.authKeyService.getAuthKey({
+      profile,
+      game,
+      uid,
+      region,
+      authAppId,
+    })
+    cache[key] = {
+      authkey: auth.authkey,
+      createdAt: now,
+      expiresAt: now + this.authkeyTtlMs,
+    }
+    await this.saveAuthCache(cache)
+    return {
+      ...auth,
+      cached: false,
+      expiresAt: cache[key].expiresAt,
+    }
+  }
+
+  async clearCachedAuthKey({ qq, profile, profileId = 1, uid, region, gameBiz, authAppId = "webview_gacha" } = {}) {
+    const key = authCacheKey({ qq, profile, profileId, uid, region, gameBiz, authAppId })
+    const cache = await this.loadAuthCache()
+    if (!cache[key]) return false
+    delete cache[key]
+    await this.saveAuthCache(cache)
+    return true
+  }
+
+  async loadAuthCache() {
+    try {
+      const json = JSON.parse(await fs.readFile(this.authCacheFile, "utf8"))
+      return json && typeof json === "object" && !Array.isArray(json) ? json : {}
+    } catch (error) {
+      if (error?.code === "ENOENT") return {}
+      throw error
+    }
+  }
+
+  async saveAuthCache(cache) {
+    await fs.mkdir(path.dirname(this.authCacheFile), { recursive: true })
+    await fs.writeFile(this.authCacheFile, JSON.stringify(cache, null, 2), "utf8")
   }
 
   async loadLog(qq, uid) {
@@ -303,4 +393,33 @@ function pickRole(profile, game) {
 
 function getRoleUid(role) {
   return role ? String(role.uid || role.game_uid || role || "") : ""
+}
+
+function authCacheKey({ qq, profile, profileId, uid, region, gameBiz, authAppId } = {}) {
+  const accountKey = profile?.account?.ltuid
+    || profile?.account?.stuid
+    || profile?.account?.account_id
+    || profile?.account?.mid
+    || profile?.account?.cookie
+    || profile?.account?.stoken_cookie
+    || ""
+  return [
+    String(qq || profile?.qq || ""),
+    String(profileId || 1),
+    String(uid || ""),
+    String(region || ""),
+    String(gameBiz || ""),
+    String(authAppId || "webview_gacha"),
+    shortHash(`${accountKey}|${profile?.account?.stoken_cookie || ""}`),
+  ].join(":")
+}
+
+function shortHash(value = "") {
+  return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 16)
+}
+
+function isInvalidAuthkeyError(error) {
+  const code = Number(error?.retcode)
+  if ([-100, -101, -110, -1001, -10001, 10001, -120].includes(code)) return true
+  return /auth\s*key|authkey|登录|失效|过期|invalid|expired/i.test(String(error?.message || ""))
 }
