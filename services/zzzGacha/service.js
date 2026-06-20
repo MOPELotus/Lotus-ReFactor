@@ -234,12 +234,9 @@ export class ZzzGachaService {
   }
 
   async loadLog(qq, uid) {
-    try {
-      return JSON.parse(await fs.readFile(this.logFile(qq, uid), "utf8"))
-    } catch (error) {
-      if (error?.code === "ENOENT") return {}
-      throw error
-    }
+    const lotusLog = await readJsonFile(this.logFile(qq, uid))
+    const pluginLog = await this.loadZzzPluginLog(uid)
+    return mergeLogs(lotusLog, pluginLog)
   }
 
   async saveLog(qq, uid, data) {
@@ -256,13 +253,22 @@ export class ZzzGachaService {
 
   async saveZzzPluginLog(uid, data) {
     if (!this.mirrorZzzPlugin) return ""
-    const pluginDir = await this.resolveZzzPluginDir()
-    if (!pluginDir) return ""
-
-    const file = path.join(pluginDir, "data", "gacha", `${uid}.json`)
+    const file = await this.zzzPluginLogFile(uid)
+    if (!file) return ""
     await fs.mkdir(path.dirname(file), { recursive: true })
     await fs.writeFile(file, JSON.stringify(data, null, 2), "utf8")
     return file
+  }
+
+  async loadZzzPluginLog(uid) {
+    const file = await this.zzzPluginLogFile(uid)
+    if (!file) return {}
+    return readJsonFile(file)
+  }
+
+  async zzzPluginLogFile(uid) {
+    const pluginDir = await this.resolveZzzPluginDir()
+    return pluginDir ? path.join(pluginDir, "data", "gacha", `${uid}.json`) : ""
   }
 
   async resolveZzzPluginDir() {
@@ -341,7 +347,9 @@ export function getZzzGameBiz(region = "prod_gf_cn") {
 function normalizeLog(log = {}) {
   const result = {}
   for (const poolName of Object.keys(ZZZ_GACHA_POOLS)) {
-    result[poolName] = Array.isArray(log[poolName]) ? log[poolName] : []
+    result[poolName] = Array.isArray(log?.[poolName])
+      ? dedupeGachaItems(log[poolName].map(item => normalizeGachaItem(item, item?.uid)))
+      : []
   }
   return result
 }
@@ -350,7 +358,7 @@ function normalizeGachaItem(item = {}, uid) {
   return {
     uid: String(item.uid || uid),
     gacha_id: String(item.gacha_id || "0"),
-    gacha_type: String(item.gacha_type || item.real_gacha_type || ""),
+    gacha_type: normalizeStoredGachaType(item),
     item_id: String(item.item_id || ""),
     count: String(item.count || "1"),
     time: String(item.time || ""),
@@ -367,6 +375,18 @@ function sameGachaItem(a, b) {
   return Boolean(a && b && String(a.uid) === String(b.uid) && String(a.id) === String(b.id))
 }
 
+function mergeLogs(...logs) {
+  const result = {}
+  for (const poolName of Object.keys(ZZZ_GACHA_POOLS)) {
+    const items = []
+    for (const log of logs) {
+      if (Array.isArray(log?.[poolName])) items.push(...log[poolName])
+    }
+    result[poolName] = dedupeGachaItems(items.map(item => normalizeGachaItem(item, item?.uid)))
+  }
+  return result
+}
+
 function dedupeGachaItems(items = []) {
   const seen = new Set()
   const result = []
@@ -376,7 +396,44 @@ function dedupeGachaItems(items = []) {
     seen.add(key)
     result.push(item)
   }
-  return result
+  return result.sort(compareGachaItemDesc)
+}
+
+function normalizeStoredGachaType(item = {}) {
+  const real = String(item.real_gacha_type || "")
+  if (real) return real
+
+  const raw = String(item.gacha_type || "")
+  if (["3001", "13001", "2001", "12001", "1001", "5001"].includes(raw)) {
+    return getZzzBaseType(raw)
+  }
+  return raw
+}
+
+function compareGachaItemDesc(a, b) {
+  const idCompare = compareBigIntDesc(a?.id, b?.id)
+  if (idCompare) return idCompare
+  return String(b?.time || "").localeCompare(String(a?.time || ""))
+}
+
+function compareBigIntDesc(a, b) {
+  try {
+    const left = BigInt(String(a || "0"))
+    const right = BigInt(String(b || "0"))
+    return right > left ? 1 : right < left ? -1 : 0
+  } catch {
+    return String(b || "").localeCompare(String(a || ""))
+  }
+}
+
+async function readJsonFile(file) {
+  if (!file) return {}
+  try {
+    return JSON.parse(await fs.readFile(file, "utf8"))
+  } catch (error) {
+    if (error?.code === "ENOENT") return {}
+    throw error
+  }
 }
 
 function pickRole(profile, game) {
