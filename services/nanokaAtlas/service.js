@@ -71,6 +71,7 @@ const CHINESE_NUMERAL = ["零", "一", "二", "三", "四", "五", "六", "七",
 
 const CHALLENGE_PAGE_NAMES = new Set([
   "深境螺旋",
+  "地脉异常",
   "幻想真境剧诗挑战",
   "混沌回忆",
   "混沌回忆版本",
@@ -99,6 +100,12 @@ const CHALLENGE_SCHEDULES = Object.freeze({
     anchorId: 26,
     anchorStart: "2026-06-01T04:00:00+08:00",
     periodDays: 31,
+  },
+  genshinHardChallenge: {
+    type: "cycle",
+    anchorId: 5269009,
+    anchorStart: "2026-05-27T10:00:00+08:00",
+    periodDays: 42,
   },
   zzzShiyu: {
     type: "cycle",
@@ -150,6 +157,10 @@ const PERSONAL_CHALLENGE_TERMS = new Set([
   "深境螺旋",
   "幻想",
   "幻想真境剧诗",
+  "剧诗",
+  "幽境",
+  "危战",
+  "幽境危战",
   "混沌",
   "混沌回忆",
   "忘却",
@@ -308,6 +319,7 @@ const PAGE_PRIORITY = Object.freeze({
   光锥: 220,
   音擎: 220,
   深境螺旋: 210,
+  地脉异常: 210,
   幻想真境剧诗挑战: 210,
   混沌回忆: 210,
   混沌回忆版本: 210,
@@ -723,6 +735,7 @@ export function buildAtlasRenderData(searchResult) {
 function atlasBadgeLabel(page = "") {
   return ({
     幻想真境剧诗挑战: "幻想真境剧诗",
+    地脉异常: "幽境危战",
     虚构叙事版本: "虚构叙事",
     异相仲裁版本: "异相仲裁",
     混沌回忆版本: "混沌回忆",
@@ -1838,7 +1851,7 @@ function extractChallengeRooms(detail) {
     }
   }
 
-  for (const level of detail?.level || []) {
+  for (const level of toArray(detail?.level)) {
     const sides = collectChallengeLevelNameSides(level).slice(0, 3)
     const challenge = toArray(level.challenge).map(item => cleanText(item.name, item.param)).filter(Boolean).slice(0, 3).join(" / ")
     const sideText = sides.length
@@ -1867,7 +1880,7 @@ function collectChallengeLevelNameSides(level) {
   push("上半", level.event_id_list1 || level.boss_monster_config1 || level.boss_monster_id1 || level.npc_monster_id_list1)
   push("下半", level.event_id_list2 || level.boss_monster_config2 || level.boss_monster_id2 || level.npc_monster_id_list2)
   push("第三路", level.event_id_list3 || level.boss_monster_config3 || level.boss_monster_id3 || level.npc_monster_id_list3)
-  push(level.pre_id ? "星启模式" : "敌人", level.event_id_list || level.boss_monster_config || level.boss_monster_id || level.npc_monster_id_list)
+  push(level.pre_id ? "星启模式" : "敌人", level.event_id_list || level.boss_monster_config || level.boss_monster_id || level.npc_monster_id_list || level.level_config)
   return sides
 }
 
@@ -1898,7 +1911,7 @@ function extractChallengeGuides(detail) {
   collect(detail.text_guide_list)
   collect(detail.difficulty_guide_list)
   collect(detail.phase_list)
-  for (const level of detail.level || []) {
+  for (const level of toArray(detail.level)) {
     collect(level.boss_monster_config1)
     collect(level.boss_monster_config2)
   }
@@ -2710,7 +2723,7 @@ function extractChallengeRoomCards(item, detail, images) {
       })
     }
   }
-  for (const level of detail?.level || []) {
+  for (const level of toArray(detail?.level)) {
     const sides = collectChallengeLevelCardSides(level, images, item)
     cards.push({
       title: challengeLevelTitle(level, detail.level),
@@ -2755,7 +2768,7 @@ function collectChallengeLevelCardSides(level, images, item) {
   push("上半", level.event_id_list1 || level.boss_monster_config1 || level.boss_monster_id1 || level.npc_monster_id_list1)
   push("下半", level.event_id_list2 || level.boss_monster_config2 || level.boss_monster_id2 || level.npc_monster_id_list2)
   push("第三路", level.event_id_list3 || level.boss_monster_config3 || level.boss_monster_id3 || level.npc_monster_id_list3)
-  push(level.pre_id ? "星启模式" : "敌人", level.event_id_list || level.boss_monster_config || level.boss_monster_id || level.npc_monster_id_list)
+  push(level.pre_id ? "星启模式" : "敌人", level.event_id_list || level.boss_monster_config || level.boss_monster_id || level.npc_monster_id_list || level.level_config)
   return sides
 }
 
@@ -3319,7 +3332,7 @@ function extractChallengeQuery(query, now) {
   if (extractedDate) {
     text = extractedDate.text
   }
-  const match = text.match(/^(当期|本期|上期|下期)(深渊|深境螺旋|幻想|幻想真境剧诗|混沌|混沌回忆|忘却|忘却之庭|末日|末日幻影|虚构|虚构叙事|异相|异相仲裁|防卫战|式舆防卫战|危局|危局强袭战|强袭战)$/)
+  const match = text.match(/^(当期|本期|上期|下期)(深渊|深境螺旋|幻想|幻想真境剧诗|剧诗|幽境|危战|幽境危战|混沌|混沌回忆|忘却|忘却之庭|末日|末日幻影|虚构|虚构叙事|异相|异相仲裁|防卫|防卫战|式舆|式舆防卫|式舆防卫战|危局|危局强袭战|强袭|强袭战)$/)
   if (!match) return null
   return {
     period: match[1],
@@ -3486,6 +3499,7 @@ function collectMonsterNames(value, state = { names: [] }) {
     "boss_monster_config3",
     "boss_monster_config",
     "boss_config",
+    "level_config",
     "pre_level",
     "boss_level",
     "tag_list",
@@ -3974,6 +3988,27 @@ const CHALLENGE_TARGETS = Object.freeze({
     pages: ["幻想真境剧诗挑战"],
     schedule: CHALLENGE_SCHEDULES.genshinTheater,
   },
+  幽境: {
+    label: "幽境危战",
+    search: "幽境危战",
+    game: "原神",
+    pages: ["地脉异常"],
+    schedule: CHALLENGE_SCHEDULES.genshinHardChallenge,
+  },
+  危战: {
+    label: "幽境危战",
+    search: "幽境危战",
+    game: "原神",
+    pages: ["地脉异常"],
+    schedule: CHALLENGE_SCHEDULES.genshinHardChallenge,
+  },
+  幽境危战: {
+    label: "幽境危战",
+    search: "幽境危战",
+    game: "原神",
+    pages: ["地脉异常"],
+    schedule: CHALLENGE_SCHEDULES.genshinHardChallenge,
+  },
   混沌: {
     label: "混沌回忆",
     search: "混沌回忆",
@@ -4051,6 +4086,27 @@ const CHALLENGE_TARGETS = Object.freeze({
     pages: ["式舆防卫战"],
     schedule: CHALLENGE_SCHEDULES.zzzShiyu,
   },
+  防卫: {
+    label: "式舆防卫战",
+    search: "式舆防卫战",
+    game: "绝区零",
+    pages: ["式舆防卫战"],
+    schedule: CHALLENGE_SCHEDULES.zzzShiyu,
+  },
+  式舆: {
+    label: "式舆防卫战",
+    search: "式舆防卫战",
+    game: "绝区零",
+    pages: ["式舆防卫战"],
+    schedule: CHALLENGE_SCHEDULES.zzzShiyu,
+  },
+  式舆防卫: {
+    label: "式舆防卫战",
+    search: "式舆防卫战",
+    game: "绝区零",
+    pages: ["式舆防卫战"],
+    schedule: CHALLENGE_SCHEDULES.zzzShiyu,
+  },
   式舆防卫战: {
     label: "式舆防卫战",
     search: "式舆防卫战",
@@ -4066,6 +4122,13 @@ const CHALLENGE_TARGETS = Object.freeze({
     schedule: CHALLENGE_SCHEDULES.zzzAssault,
   },
   危局强袭战: {
+    label: "危局强袭战",
+    search: "危局强袭战",
+    game: "绝区零",
+    pages: ["危局强袭战"],
+    schedule: CHALLENGE_SCHEDULES.zzzAssault,
+  },
+  强袭: {
     label: "危局强袭战",
     search: "危局强袭战",
     game: "绝区零",
