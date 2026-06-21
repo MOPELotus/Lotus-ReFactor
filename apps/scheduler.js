@@ -21,26 +21,11 @@ export class LotusScheduler extends BasePlugin {
       event: "message",
       priority: 20,
       rule: [
-        {
-          reg: "^#生成签到计划$",
-          fnc: "generatePlan",
-        },
-        {
-          reg: "^#我的签到时间$",
-          fnc: "myPlan",
-        },
-        {
-          reg: "^#执行到期签到$",
-          fnc: "runDueCommand",
-        },
-        {
-          reg: "^#签到(随机|固定)模式(\\s+\\d{1,2}:\\d{2})?$",
-          fnc: "updateSchedulerSettings",
-        },
-        {
-          reg: "^#签到计划生成\\s+\\d{1,2}:\\d{2}$",
-          fnc: "updateSchedulerSettings",
-        },
+        { reg: "^#生成签到计划$", fnc: "generatePlan" },
+        { reg: "^#我的签到时间$", fnc: "myPlan" },
+        { reg: "^#执行到期签到$", fnc: "runDueCommand" },
+        { reg: "^#签到(随机|固定)模式(\\s+\\d{1,2}:\\d{2})?$", fnc: "updateSchedulerSettings" },
+        { reg: "^#签到计划生成\\s+\\d{1,2}:\\d{2}$", fnc: "updateSchedulerSettings" },
       ],
     })
     this.task = [
@@ -102,7 +87,6 @@ export class LotusScheduler extends BasePlugin {
       await replyText(this, "[荷花插件]只有 bot 主人可以生成全局签到计划。")
       return true
     }
-
     const date = nextDateString()
     const generated = await new ScheduledSigninService({
       scheduler: new SchedulerService({ config: globalConfig.scheduler }),
@@ -151,11 +135,12 @@ export class LotusScheduler extends BasePlugin {
 
   async generateTomorrowPlanTask() {
     const globalConfig = await loadGlobalConfig()
-    if (globalConfig.scheduler?.enable === false) return {
-      ok: true,
-      disabled: true,
+    if (globalConfig.scheduler?.enable === false) {
+      return {
+        ok: true,
+        disabled: true,
+      }
     }
-
     const generated = await new ScheduledSigninService({
       scheduler: new SchedulerService({ config: globalConfig.scheduler }),
     }).ensureTomorrowPlanAndNotify({
@@ -168,9 +153,7 @@ export class LotusScheduler extends BasePlugin {
 
   scheduleStartupCatchUp(globalConfig) {
     setTimeout(() => {
-      this.catchUpTomorrowPlanTask({
-        trigger: "启动补偿",
-      }).catch(error => {
+      this.catchUpTomorrowPlanTask({ trigger: "启动补偿" }).catch(error => {
         logger?.error?.(`[Lotus-Plugin] schedule catch-up failed: ${error.stack || error.message}`)
       })
     }, 60 * 1000).unref?.()
@@ -179,11 +162,12 @@ export class LotusScheduler extends BasePlugin {
 
   async catchUpTomorrowPlanTask(options = {}) {
     const globalConfig = await loadGlobalConfig()
-    if (globalConfig.scheduler?.enable === false) return {
-      ok: true,
-      disabled: true,
+    if (globalConfig.scheduler?.enable === false) {
+      return {
+        ok: true,
+        disabled: true,
+      }
     }
-
     const now = options.now || new Date()
     const generateMinute = cronToMinuteOfDay(globalConfig.scheduler?.plan_generate_cron || "0 0 0 * * ? *")
     if (!Number.isFinite(generateMinute)) {
@@ -193,16 +177,14 @@ export class LotusScheduler extends BasePlugin {
         reason: "invalid_plan_generate_cron",
       }
     }
-
     const currentMinute = now.getHours() * 60 + now.getMinutes()
-    if (currentMinute < generateMinute) {
+    if (currentMinute <= generateMinute) {
       return {
         ok: true,
         skipped: true,
         reason: "before_generate_time",
       }
     }
-
     const scheduler = new SchedulerService({ config: globalConfig.scheduler })
     const date = nextDateString(now)
     const existing = await scheduler.getPlan(date)
@@ -214,11 +196,8 @@ export class LotusScheduler extends BasePlugin {
         date,
       }
     }
-
     logger?.mark?.(`[Lotus-Plugin] schedule catch-up creating tomorrow plan: ${date}`)
-    return this.generateTomorrowPlanTask({
-      trigger: options.trigger || "补偿检查",
-    })
+    return this.generateTomorrowPlanTask({ trigger: options.trigger || "补偿检查" })
   }
 
   async runDueCommand() {
@@ -229,16 +208,13 @@ export class LotusScheduler extends BasePlugin {
       await replyText(this, "[荷花插件]只有 bot 主人可以执行到期签到。")
       return true
     }
-
     await replyText(this, "[荷花插件]正在检查并执行到期签到任务。")
     const result = await this.runDueCheckins({ notify: true })
     const image = await renderStatusCard({
       title: "到期签到",
       subtitle: result.date,
       badge: String(result.count),
-      message: result.count
-        ? "已执行所有到期且未完成的签到任务，结果会分别通知对应用户。"
-        : "当前没有到期且未完成的签到任务。",
+      message: result.count ? "已执行所有到期且未完成的签到任务，结果会分别通知对应用户。" : "当前没有到期且未完成的签到任务。",
       userId: this.e.user_id,
       items: result.results.slice(0, 8).map(({ entry, outcome }) => ({
         label: `QQ ${entry.qq} · P${entry.profileId}`,
@@ -259,13 +235,11 @@ export class LotusScheduler extends BasePlugin {
       await replyText(this, "[荷花插件]只有 bot 主人可以修改全局签到调度。")
       return true
     }
-
     const command = parseSchedulerSettingsCommand(this.e.msg)
     if (!command.ok) {
       await replyText(this, `[荷花插件]调度指令无法识别：${command.reason}`)
       return true
     }
-
     const next = applySchedulerSettings(globalConfig, command)
     await saveGlobalConfig(next)
     const image = await renderStatusCard({
@@ -298,7 +272,6 @@ export class LotusScheduler extends BasePlugin {
         disabled: true,
       }
     }
-
     const result = await new ScheduledSigninService({
       scheduler: new SchedulerService({ config: globalConfig.scheduler }),
     }).runDue(options)
@@ -312,7 +285,6 @@ export class LotusScheduler extends BasePlugin {
 async function addMissingProfilesToPlan(userId, date, scheduler, globalConfig) {
   const profileIds = await listProfileIds(userId)
   if (!profileIds.length) return []
-
   const service = new ScheduledSigninService({ scheduler })
   const results = []
   for (const profileId of profileIds) {
@@ -345,14 +317,11 @@ async function renderSchedulePlan(plan, meta) {
       value: `${ok}/${meta.notifications.length}`,
     })
   }
-
   return renderStatusCard({
     title: meta.title,
     subtitle: meta.subtitle,
     badge: `${plan.entries.length}`,
-    message: plan.mode === "random"
-      ? "随机模式已按时间窗口均匀分布，重启会复用已生成计划。"
-      : "固定模式计划已生成，允许用户级随机的 profile 会单独分布。",
+    message: plan.mode === "random" ? "随机模式已按时间窗口均匀分布，重启会复用已生成计划。" : "固定模式计划已生成，允许用户级随机的 profile 会单独分布。",
     userId: meta.userId,
     items,
   }, {
