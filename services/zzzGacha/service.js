@@ -8,6 +8,10 @@ import {
 } from "../mihoyoAuthKey/service.js"
 import { isCnServer } from "../../core/mihoyo/regions.js"
 import { formatLocalFileTimestamp } from "../../core/time.js"
+import { MIHOYO } from "../../core/mihoyo/constants.js"
+import { getDs2 } from "../../core/mihoyo/ds.js"
+import { AccountService } from "../../core/login/account.js"
+import { isCookieRefreshableResponse } from "../../core/captcha/mysHandler.js"
 
 export const ZZZ_GACHA_POOLS = Object.freeze({
   "音擎频段": ["3001"],
@@ -18,19 +22,50 @@ export const ZZZ_GACHA_POOLS = Object.freeze({
   "邦布频段": ["5001"],
 })
 
+export const ZZZ_CK_GACHA_POOLS = Object.freeze({
+  "音擎频段": ["GACHA_TYPE_WEAPON_UP"],
+  "音擎回响": ["GACHA_TYPE_WEAPON_RETURN"],
+  "独家频段": ["GACHA_TYPE_CHARACTER_UP"],
+  "独家重映": ["GACHA_TYPE_CHARACTER_RETURN"],
+  "常驻频段": ["GACHA_TYPE_PERMANENT"],
+  "邦布频段": ["GACHA_TYPE_BANGBOO"],
+})
+
 const CN_API = "https://public-operation-common.mihoyo.com/common/gacha_record/api/getGachaLog"
 const OS_API = "https://public-operation-common-sg.hoyoverse.com/common/gacha_record/api/getGachaLog"
+const CN_CK_API = "https://api-takumi-record.mihoyo.com/event/game_record_zzz/api/zzz/gacha_record"
+const OS_CK_API = "https://sg-public-api.hoyolab.com/event/game_record_zzz/api/zzz/gacha_record"
+const ZZZ_DS_SALT_CN = "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs"
+const ZZZ_DS_SALT_OS = "okr4obncj8bw5a65hbnn5oo6ixjc3l9w"
+const CK_ITEM_TYPE = Object.freeze({
+  ITEM_TYPE_WEAPON: "音擎",
+  ITEM_TYPE_AVATAR: "代理人",
+  ITEM_TYPE_BANGBOO: "邦布",
+})
+const CK_RARITY = Object.freeze({
+  B: "2",
+  A: "3",
+  S: "4",
+})
+
+let zzzGachaRequestQueue = Promise.resolve()
+let zzzGachaLastRequestAt = 0
+let zzzGachaBlockedUntil = 0
 
 export class ZzzGachaService {
   constructor(options = {}) {
     this.fetch = options.fetch || globalThis.fetch
     this.authKeyService = options.authKeyService || new AuthKeyService({ fetch: this.fetch })
+    this.accountService = options.accountService || new AccountService({ fetch: this.fetch })
     this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)))
     this.storageDir = options.storageDir || resolveData("zzzGachaJson")
     this.authCacheFile = options.authCacheFile || resolveData("zzzGachaAuthkey", "cache.json")
     this.zzzPluginDir = options.zzzPluginDir || ""
     this.mirrorZzzPlugin = options.mirrorZzzPlugin !== false
-    this.pageDelayMs = Number(options.pageDelayMs ?? 1000)
+    this.pageDelayMs = Number(options.pageDelayMs ?? 0)
+    this.requestDelayMs = Number(options.requestDelayMs ?? 1200)
+    this.rateLimitRetries = Number(options.rateLimitRetries ?? 2)
+    this.rateLimitBackoffMs = Number(options.rateLimitBackoffMs ?? 15_000)
     this.maxPages = Number(options.maxPages ?? 50)
     this.authkeyTtlMs = Number(options.authkeyTtlMs ?? 24 * 60 * 60 * 1000)
   }
@@ -39,10 +74,63 @@ export class ZzzGachaService {
     const role = pickRole(profile, "zzz")
     const uid = getRoleUid(role)
     if (!uid) throw new Error(`profile ${profileId} 没有同步绝区零 UID`)
-    if (!profile?.account?.stoken_cookie) throw new Error(`profile ${profileId} 缺少 stoken，无法获取 authkey`)
 
     const region = role?.region || getServer(uid, "zzz")
     const gameBiz = getZzzGameBiz(region)
+    let ckError = null
+    if (profile?.account?.cookie) {
+      try {
+        const result = await this.updateByCookie({
+          qq,
+          uid,
+          cookie: profile.account.cookie,
+          device: profile.device,
+          region,
+          gameBiz,
+        })
+        return {
+          ...result,
+          uid,
+          profileId,
+          region,
+          gameBiz,
+          source: "cookie",
+        }
+      } catch (error) {
+        ckError = error
+        if (isRateLimitedError(error)) throw error
+        if (isCookieRefreshableResponse(error?.response) && profile?.account?.stoken) {
+          const refreshed = await this.accountService.refresh(qq, profileId)
+          try {
+            const result = await this.updateByCookie({
+              qq,
+              uid,
+              cookie: refreshed.account?.cookie,
+              device: refreshed.device,
+              region,
+              gameBiz,
+            })
+            return {
+              ...result,
+              uid,
+              profileId,
+              region,
+              gameBiz,
+              source: "cookie",
+              refreshedCookie: true,
+            }
+          } catch (retryError) {
+            ckError = retryError
+            if (isRateLimitedError(retryError)) throw retryError
+          }
+        }
+        if (!profile?.account?.stoken_cookie) throw ckError
+        logger?.warn?.(`[Lotus-Plugin] zzz ck gacha update failed, fallback to authkey: ${ckError.message}`)
+      }
+    }
+
+    if (!profile?.account?.stoken_cookie) throw new Error(`profile ${profileId} 缺少 cookie/stoken，无法更新绝区零抽卡记录`)
+
     const auth = await this.getCachedAuthKey({
       qq,
       profile,
@@ -90,6 +178,71 @@ export class ZzzGachaService {
       profileId,
       region,
       gameBiz,
+    }
+  }
+
+  async updateByCookie({ qq, uid, cookie, device = {}, region = "prod_gf_cn", gameBiz = "nap_cn" } = {}) {
+    if (!qq) throw new Error("qq is required")
+    if (!uid) throw new Error("zzz uid is required")
+    if (!cookie) throw new Error("zzz cookie is required")
+
+    const previous = await this.loadLog(qq, uid)
+    const next = normalizeLog(previous)
+    const count = {}
+
+    for (const [poolName, types] of Object.entries(ZZZ_CK_GACHA_POOLS)) {
+      next[poolName] ||= []
+      const lastSaved = next[poolName][0] || null
+      const newData = []
+      count[poolName] = 0
+
+      for (const type of types) {
+        let endId = "0"
+        let page = 1
+        while (page <= this.maxPages) {
+          const data = await this.fetchCkGachaPage({
+            cookie,
+            device,
+            type,
+            endId,
+            uid,
+            region,
+            gameBiz,
+          })
+          const list = Array.isArray(data?.gacha_item_list) ? data.gacha_item_list : []
+          if (!list.length) break
+
+          let reachedSaved = false
+          for (const item of list.map(item => normalizeCkGachaItem(item, uid))) {
+            if (sameGachaItem(lastSaved, item)) {
+              reachedSaved = true
+              break
+            }
+            newData.push(item)
+            count[poolName] += 1
+          }
+          if (reachedSaved) break
+
+          endId = list.at(-1)?.id || endId
+          page += 1
+          if (this.pageDelayMs > 0) await this.sleep(this.pageDelayMs)
+        }
+      }
+
+      next[poolName] = dedupeGachaItems([...newData, ...next[poolName]])
+    }
+
+    await this.saveLog(qq, uid, next)
+    return {
+      ok: true,
+      uid: String(uid),
+      data: next,
+      count,
+      pools: Object.keys(next).map(name => ({
+        name,
+        total: next[name]?.length || 0,
+        added: count[name] || 0,
+      })),
     }
   }
 
@@ -167,13 +320,25 @@ export class ZzzGachaService {
       region,
       gameBiz,
     })
-    const res = await this.requestJson(url)
-    if (Number(res?.retcode ?? 0) !== 0) {
-      const error = new Error(res?.message || `绝区零抽卡接口错误 ${res?.retcode}`)
-      error.retcode = res?.retcode
-      error.response = res
-      throw error
-    }
+    const res = await this.requestMihoyoJson(url, {}, { prefix: "绝区零抽卡接口" })
+    return res?.data || null
+  }
+
+  async fetchCkGachaPage({ cookie, device, type, endId = "0", uid, region, gameBiz }) {
+    const { url, query } = buildZzzCkGachaRecordUrl({
+      uid,
+      region,
+      gameBiz,
+      gachaType: type,
+      endId,
+    })
+    const headers = buildZzzCkHeaders({
+      cookie,
+      device,
+      query,
+      region,
+    })
+    const res = await this.requestMihoyoJson(url, { headers }, { prefix: "绝区零 CK 抽卡接口" })
     return res?.data || null
   }
 
@@ -305,17 +470,40 @@ export class ZzzGachaService {
     return ""
   }
 
-  async requestJson(url) {
+  async requestJson(url, options = {}) {
     if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
     const response = await this.fetch(url, {
+      ...options,
       headers: {
         "Content-Type": "application/json",
+        ...(options.headers || {}),
       },
     })
     const text = await response.text()
     const data = text ? JSON.parse(text) : null
     if (!response.ok) throw new Error(`绝区零抽卡请求失败 HTTP ${response.status}`)
     return data
+  }
+
+  async requestMihoyoJson(url, options = {}, { prefix = "米游社接口" } = {}) {
+    let lastError = null
+    for (let attempt = 0; attempt <= this.rateLimitRetries; attempt += 1) {
+      try {
+        const res = await scheduleZzzGachaRequest(
+          () => this.requestJson(url, options),
+          { minIntervalMs: this.requestDelayMs, sleep: this.sleep },
+        )
+        if (Number(res?.retcode ?? 0) !== 0) throw mihoyoResponseError(res, prefix)
+        return res
+      } catch (error) {
+        lastError = error
+        if (!isRateLimitedError(error) || attempt >= this.rateLimitRetries) throw error
+        const backoff = this.rateLimitBackoffMs * (attempt + 1)
+        markZzzGachaRateLimit(backoff)
+        logger?.warn?.(`[Lotus-Plugin] zzz gacha rate limited, retry in ${backoff}ms: ${error.message}`)
+      }
+    }
+    throw lastError
   }
 }
 
@@ -350,6 +538,27 @@ export function buildZzzGachaLogUrl({
     end_id: endId,
   })
   return `${gameBiz === "nap_global" ? OS_API : CN_API}?${params}`
+}
+
+export function buildZzzCkGachaRecordUrl({
+  uid,
+  region = "prod_gf_cn",
+  gameBiz,
+  gachaType = "GACHA_TYPE_CHARACTER_UP",
+  endId = "0",
+} = {}) {
+  const query = new URLSearchParams({
+    lang: "zh-cn",
+    uid: String(uid || ""),
+    region,
+    gacha_type: gachaType,
+    end_id: String(endId || "0"),
+  }).toString()
+  const api = getZzzGameBiz(region) === "nap_global" || gameBiz === "nap_global" ? OS_CK_API : CN_CK_API
+  return {
+    url: `${api}?${query}`,
+    query,
+  }
 }
 
 export function getZzzBaseType(gachaType) {
@@ -389,6 +598,25 @@ function normalizeGachaItem(item = {}, uid) {
   }
 }
 
+function normalizeCkGachaItem(item = {}, uid) {
+  const date = item.date && typeof item.date === "object" ? item.date : null
+  return {
+    uid: String(uid || item.uid || ""),
+    gacha_id: "0",
+    // ZZZ-Plugin 的 CK 直刷存档固定写 2；去重已按 uid/id 做格式兼容。
+    gacha_type: "2",
+    item_id: String(item.item_id || ""),
+    count: "1",
+    time: date ? formatCkDate(date) : String(item.time || ""),
+    name: String(item.item_name || item.name || ""),
+    lang: "zh-cn",
+    item_type: CK_ITEM_TYPE[item.item_type] || String(item.item_type || ""),
+    rank_type: CK_RARITY[item.rarity] || String(item.rank_type || item.rarity || ""),
+    id: String(item.id || ""),
+    square_icon: item.square_icon || "",
+  }
+}
+
 function sameGachaItem(a, b) {
   return Boolean(a && b && String(a.uid) === String(b.uid) && String(a.id) === String(b.id))
 }
@@ -409,7 +637,7 @@ function dedupeGachaItems(items = []) {
   const seen = new Set()
   const result = []
   for (const item of items) {
-    const key = `${item.uid}:${item.id}:${item.gacha_type}`
+    const key = `${item.uid}:${item.id}`
     if (!item.id || seen.has(key)) continue
     seen.add(key)
     result.push(item)
@@ -476,6 +704,85 @@ async function backupExistingLogFile(file, { uid, source } = {}) {
 
 function safeFilePart(value = "") {
   return String(value).replace(/[^\w.-]+/g, "_").slice(0, 64) || "log"
+}
+
+function formatCkDate(date = {}) {
+  return [
+    String(date.year || "").padStart(4, "0"),
+    String(date.month || "").padStart(2, "0"),
+    String(date.day || "").padStart(2, "0"),
+  ].join("-") + " " + [
+    String(date.hour || 0).padStart(2, "0"),
+    String(date.minute || 0).padStart(2, "0"),
+    String(date.second || 0).padStart(2, "0"),
+  ].join(":")
+}
+
+function buildZzzCkHeaders({ cookie, device = {}, query = "", region = "prod_gf_cn" } = {}) {
+  const cn = isCnServer(region)
+  const sysVersion = String(device?.android_version || device?.raw?.androidVersion || device?.raw?.osVersion || "12")
+  const model = String(device?.model || device?.raw?.deviceModel || "Lotus")
+  const brand = String(device?.raw?.deviceFingerprint || "").split("/")[0] || device?.raw?.deviceBrand || "Android"
+  const display = String(device?.raw?.deviceFingerprint || "").split("/")[3] || model
+  const appName = cn ? "miHoYoBBS" : "miHoYoBBSOversea"
+  const referer = cn ? "https://act.mihoyo.com/" : "https://act.hoyolab.com/"
+  const origin = cn ? "https://act.mihoyo.com" : "https://act.hoyolab.com"
+
+  return {
+    "x-rpc-app_version": MIHOYO.appVersion,
+    "User-Agent": `Mozilla/5.0 (Linux; Android ${sysVersion}; ${model} Build/${display}; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/111.0.5563.116 Mobile Safari/537.36 ${appName}/${MIHOYO.appVersion}`,
+    "x-rpc-sys_version": sysVersion,
+    "x-rpc-client_type": "2",
+    "x-rpc-channel": "mihoyo",
+    "x-rpc-device_fp": device?.fp || "38d7ee0e96649",
+    "x-rpc-device_id": device?.id || fallbackDeviceId(cookie),
+    "x-rpc-device_name": `${brand} ${model}`,
+    "x-rpc-device_model": model,
+    "x-rpc-csm_source": "myself",
+    Referer: referer,
+    Origin: origin,
+    Cookie: cookie,
+    DS: getDs2(query, "", cn ? ZZZ_DS_SALT_CN : ZZZ_DS_SALT_OS),
+  }
+}
+
+function fallbackDeviceId(seed = "") {
+  return crypto.createHash("md5").update(String(seed || "lotus-zzz")).digest("hex")
+}
+
+async function scheduleZzzGachaRequest(fn, { minIntervalMs = 0, sleep } = {}) {
+  const run = zzzGachaRequestQueue.catch(() => null).then(async () => {
+    const waitUntil = Math.max(
+      zzzGachaLastRequestAt + Math.max(0, Number(minIntervalMs) || 0),
+      zzzGachaBlockedUntil,
+    )
+    const waitMs = waitUntil - Date.now()
+    if (waitMs > 0) await sleep(waitMs)
+    try {
+      return await fn()
+    } finally {
+      zzzGachaLastRequestAt = Date.now()
+    }
+  })
+  zzzGachaRequestQueue = run.catch(() => null)
+  return run
+}
+
+function markZzzGachaRateLimit(ms = 0) {
+  zzzGachaBlockedUntil = Math.max(zzzGachaBlockedUntil, Date.now() + Math.max(0, Number(ms) || 0))
+}
+
+function mihoyoResponseError(res = {}, prefix = "米游社接口") {
+  const error = new Error(res?.message || `${prefix}错误 ${res?.retcode}`)
+  error.retcode = res?.retcode
+  error.response = res
+  return error
+}
+
+function isRateLimitedError(error) {
+  return /visit too frequently|too frequent|rate limit|请求过于频繁|访问过于频繁|频繁/i.test(
+    String(error?.message || error?.response?.message || ""),
+  )
 }
 
 function pickRole(profile, game) {
