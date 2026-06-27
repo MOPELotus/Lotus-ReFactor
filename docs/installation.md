@@ -22,24 +22,24 @@ pnpm v10 会默认拦截依赖的构建脚本。`skia-canvas` 是图片渲染需
 Ignored build scripts: skia-canvas
 ```
 
-请在 Yunzai 根目录执行：
+最简单的修法：进入 Yunzai 根目录，也就是包含 Yunzai 自己 `package.json`、并且安装后生成根 `node_modules` 的目录，执行：
 
 ```bash
+cd /path/to/Yunzai
 pnpm approve-builds
 pnpm rebuild skia-canvas
 ```
 
-如果 Lotus-Plugin 是 Yunzai workspace 里的子项目，必须把允许构建配置放在 Yunzai 根 `package.json`，子项目里的 `pnpm.onlyBuiltDependencies` 不会生效：
+`pnpm approve-builds` 会让你选择允许执行构建脚本的包。选中 `skia-canvas`，确认后再执行 `pnpm rebuild skia-canvas`。
 
-```json
-{
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "skia-canvas"
-    ]
-  }
-}
+如果需要手写配置，不要写到 `plugins/Lotus-Plugin/package.json`。你的日志里出现 `Scope: all 18 workspace projects`，说明 pnpm 以 Yunzai 为 workspace 根目录，插件只是其中一个子项目；允许构建配置要写在 Yunzai 根目录的 `pnpm-workspace.yaml`：
+
+```yaml
+onlyBuiltDependencies:
+  - skia-canvas
 ```
+
+保存后回到 Yunzai 根目录重新执行 `pnpm install` 或 `pnpm rebuild skia-canvas`。
 
 插件首次加载时会自动生成 `config/global.yaml`。如果已经安装锅巴插件，可以直接在锅巴面板里修改荷花插件的全局配置。
 

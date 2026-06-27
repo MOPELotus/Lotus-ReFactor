@@ -50,7 +50,7 @@ async function loadSkiaRenderer() {
         throw new Error([
           "skia-canvas 原生模块未安装或未编译，图片渲染不可用。",
           "pnpm v10 工作区用户请在 Yunzai 根目录执行 pnpm approve-builds，选择 skia-canvas 后再执行 pnpm rebuild skia-canvas。",
-          "也可以在 Yunzai 根 package.json 配置 pnpm.onlyBuiltDependencies: [\"skia-canvas\"] 后重新安装。",
+          "也可以在 Yunzai 根 pnpm-workspace.yaml 配置 onlyBuiltDependencies: [\"skia-canvas\"] 后重新安装。",
           `原始错误：${error.message}`,
         ].join(" "))
       }
