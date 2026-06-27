@@ -306,6 +306,9 @@ function validateToolsConfig(tools = {}, errors) {
     if (!isString(tools[field])) errors.push(`tools.${field} must be a string`)
   }
   if (!isPositiveInteger(tools.timeout_ms)) errors.push("tools.timeout_ms must be a positive integer")
+  if ("download_retries" in tools && !isPositiveInteger(tools.download_retries)) {
+    errors.push("tools.download_retries must be a positive integer")
+  }
   for (const name of ["bbdown", "ffmpeg", "aria2"]) {
     validateToolConfig(tools[name], `tools.${name}`, errors)
   }

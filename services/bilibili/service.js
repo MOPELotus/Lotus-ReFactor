@@ -276,10 +276,8 @@ export class BilibiliService {
   async runBBDown(url, cwd, { page = null, config = {} } = {}) {
     const bbdownPath = await resolveCommandPath("BBDown", config.tools_path)
     if (!bbdownPath) throw new Error("未找到 BBDown，请检查环境变量或 bilibili.download.tools_path")
-    const args = [url, "--work-dir", cwd]
-    if (config.use_aria2) args.push("--use-aria2c")
-    if (page) args.push("-p", String(page))
-    if (config.resolution) args.push("--dfn-priority", String(config.resolution))
+    const toolPathDirs = collectToolPathDirs(bbdownPath, config.tools_path)
+    const args = await buildBBDownArgs(url, cwd, { page, config })
 
     const sessdata = await this.getSessDataForDownload(config)
     if (sessdata) args.push("-c", `SESSDATA=${sessdata}`)
@@ -288,6 +286,7 @@ export class BilibiliService {
     return runSpawn(bbdownPath, args, {
       cwd,
       timeoutMs: Number(config.timeout_ms || 600000),
+      pathDirs: toolPathDirs,
     })
   }
 
@@ -311,6 +310,7 @@ export class BilibiliService {
     const download = normalizeDownloadConfig(config)
     const bbdownPath = await resolveCommandPath("BBDown", download.tools_path)
     if (!bbdownPath) throw new Error("未找到 BBDown，请检查环境变量或 bilibili.download.tools_path")
+    const toolPathDirs = collectToolPathDirs(bbdownPath, download.tools_path)
 
     const workDir = resolveData("bilibili")
     const qrPath = path.join(workDir, "qrcode.png")
@@ -327,6 +327,7 @@ export class BilibiliService {
     return new Promise((resolve, reject) => {
       const child = spawn(bbdownPath, ["login"], {
         cwd: workDir,
+        env: buildToolProcessEnv(toolPathDirs),
         windowsHide: true,
       })
       let stdout = ""
@@ -675,6 +676,32 @@ export function normalizeDownloadConfig(config = {}) {
   }
 }
 
+export function buildToolProcessEnv(pathDirs = [], baseEnv = process.env) {
+  const env = { ...baseEnv }
+  const pathKey = Object.prototype.hasOwnProperty.call(env, "Path") ? "Path" : "PATH"
+  const existingPath = env[pathKey] || ""
+  const dirs = [...new Set(pathDirs
+    .map(dir => String(dir || "").trim())
+    .filter(Boolean)
+    .map(dir => path.resolve(dir)))]
+  env[pathKey] = [...dirs, existingPath].filter(Boolean).join(path.delimiter)
+  return env
+}
+
+export async function buildBBDownArgs(url, cwd, { page = null, config = {} } = {}) {
+  const args = [url, "--work-dir", cwd]
+  const ffmpegPath = await resolveCommandPath("ffmpeg", config.tools_path)
+  if (ffmpegPath) args.push("--ffmpeg-path", ffmpegPath)
+  if (config.use_aria2) {
+    args.push("--use-aria2c")
+    const aria2Path = await resolveCommandPath("aria2c", config.tools_path)
+    if (aria2Path) args.push("--aria2c-path", aria2Path)
+  }
+  if (page) args.push("-p", String(page))
+  if (config.resolution) args.push("--dfn-priority", String(config.resolution))
+  return args
+}
+
 export async function resolveCommandPath(command, toolsPath = "") {
   const exe = process.platform === "win32" && !/\.exe$/i.test(command) ? `${command}.exe` : command
   if (toolsPath) {
@@ -805,6 +832,13 @@ function resolveToolsPath(value = "") {
   return path.resolve(rootPath, text)
 }
 
+function collectToolPathDirs(bbdownPath = "", toolsPath = "") {
+  const dirs = []
+  if (bbdownPath) dirs.push(path.dirname(bbdownPath))
+  if (toolsPath) dirs.push(resolveToolsPath(toolsPath))
+  return dirs
+}
+
 async function moveFilesToOutput(files, outputDir) {
   const result = []
   for (const file of files) {
@@ -852,6 +886,7 @@ function runSpawn(command, args = [], options = {}) {
     const spawnImpl = options.spawnImpl || spawn
     const child = spawnImpl(command, args, {
       cwd: options.cwd,
+      env: options.pathDirs ? buildToolProcessEnv(options.pathDirs, options.env || process.env) : options.env,
       windowsHide: true,
     })
     let stdout = ""

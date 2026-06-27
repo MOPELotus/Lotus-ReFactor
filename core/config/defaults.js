@@ -92,6 +92,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     bin_dir: "data/tools/bin",
     github_api: "https://api.github.com",
     timeout_ms: 300000,
+    download_retries: 3,
     bbdown: {
       enable: true,
       repo: "nilaoda/BBDown",

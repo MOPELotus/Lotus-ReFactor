@@ -8,6 +8,7 @@ import { loadGlobalConfig } from "../../core/config/global.js"
 import { resolveData, rootPath } from "../../core/path.js"
 
 const TOOL_NAMES = ["bbdown", "ffmpeg", "aria2"]
+const DEFAULT_INSTALL_ATTEMPTS = 3
 
 export class ToolInstallerService {
   constructor(options = {}) {
@@ -103,31 +104,47 @@ export class ToolInstallerService {
     const extractDir = path.join(toolsDir, name)
     await fs.mkdir(archiveDir, { recursive: true })
     await fs.mkdir(binDir, { recursive: true })
-    await fs.rm(extractDir, { recursive: true, force: true })
-    await fs.mkdir(extractDir, { recursive: true })
 
     const archive = path.join(archiveDir, safeFileName(asset.name))
-    await emitProgress(onProgress, `工具链：下载 ${asset.name}`)
-    await this.downloadAsset(asset.browser_download_url || asset.url, archive)
-    await emitProgress(onProgress, `工具链：解压 ${asset.name}`)
-    await extractArchive(this.spawn, archive, extractDir, {
-      timeoutMs: normalized.timeout_ms,
-    })
+    const attempts = Math.max(1, Number(normalized.download_retries || DEFAULT_INSTALL_ATTEMPTS))
+    let lastError = null
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        await fs.rm(extractDir, { recursive: true, force: true })
+        await fs.mkdir(extractDir, { recursive: true })
+        await fs.rm(archive, { force: true }).catch(() => null)
 
-    const executable = await findExtractedExecutable(extractDir, tool.command)
-    if (!executable) throw new Error(`${tool.command} executable not found in ${asset.name}`)
+        await emitProgress(onProgress, `工具链：下载 ${asset.name}${attempt > 1 ? `（重试 ${attempt}/${attempts}）` : ""}`)
+        await this.downloadAsset(asset.browser_download_url || asset.url, archive)
+        await emitProgress(onProgress, `工具链：解压 ${asset.name}`)
+        await extractArchive(this.spawn, archive, extractDir, {
+          timeoutMs: normalized.timeout_ms,
+        })
 
-    const target = await copyToolPayload(name, executable, binDir, tool.command, this.platform)
-    await emitProgress(onProgress, `工具链：${name} 安装完成`)
+        const executable = await findExtractedExecutable(extractDir, tool.command)
+        if (!executable) throw new Error(`${tool.command} executable not found in ${asset.name}`)
 
-    return {
-      name,
-      ok: true,
-      status: "installed",
-      repo: tool.repo,
-      asset: asset.name,
-      path: target,
+        const target = await copyToolPayload(name, executable, binDir, tool.command, this.platform)
+        await emitProgress(onProgress, `工具链：${name} 安装完成`)
+
+        return {
+          name,
+          ok: true,
+          status: "installed",
+          repo: tool.repo,
+          asset: asset.name,
+          path: target,
+          attempts: attempt,
+        }
+      } catch (error) {
+        lastError = error
+        await cleanupBrokenInstallArtifacts(archive, extractDir)
+        if (attempt < attempts) {
+          await emitProgress(onProgress, `工具链：${name} 安装包异常，已清理并准备重下：${error.message}`)
+        }
+      }
     }
+    throw new Error(`${lastError?.message || `${tool.command} install failed`}；已自动重试 ${attempts} 次`)
   }
 
   async fetchLatestRelease(repo, api = "https://api.github.com") {
@@ -143,6 +160,7 @@ export class ToolInstallerService {
   }
 
   async downloadAsset(url, target) {
+    const temp = `${target}.part-${process.pid}-${Date.now()}`
     const response = await this.fetch(url, {
       headers: {
         "User-Agent": "Lotus-Plugin tool installer",
@@ -150,12 +168,19 @@ export class ToolInstallerService {
     })
     if (!response.ok) throw new Error(`download failed: HTTP ${response.status}`)
     await fs.mkdir(path.dirname(target), { recursive: true })
-    if (response.body && typeof response.body.getReader === "function") {
-      await pipeline(Readable.fromWeb(response.body), fsSync.createWriteStream(target))
+    try {
+      if (response.body && typeof response.body.getReader === "function") {
+        await pipeline(Readable.fromWeb(response.body), fsSync.createWriteStream(temp))
+      } else {
+        await fs.writeFile(temp, Buffer.from(await response.arrayBuffer()))
+      }
+      await fs.rm(target, { force: true }).catch(() => null)
+      await fs.rename(temp, target)
       return target
+    } catch (error) {
+      await fs.rm(temp, { force: true }).catch(() => null)
+      throw error
     }
-    await fs.writeFile(target, Buffer.from(await response.arrayBuffer()))
-    return target
   }
 }
 
@@ -166,6 +191,7 @@ export function normalizeToolsConfig(config = {}) {
     bin_dir: config.bin_dir || "data/tools/bin",
     github_api: config.github_api || "https://api.github.com",
     timeout_ms: Number(config.timeout_ms || 300000),
+    download_retries: Math.max(1, Number(config.download_retries || DEFAULT_INSTALL_ATTEMPTS)),
     bbdown: {
       enable: config.bbdown?.enable !== false,
       repo: config.bbdown?.repo || "nilaoda/BBDown",
@@ -388,6 +414,20 @@ async function copyToolPayload(name, executable, binDir, command, platform = pro
     if (platform !== "win32") await fs.chmod(dest, 0o755).catch(() => null)
   }
   return target
+}
+
+async function cleanupBrokenInstallArtifacts(archive, extractDir) {
+  await fs.rm(archive, { force: true }).catch(() => null)
+  await fs.rm(extractDir, { recursive: true, force: true }).catch(() => null)
+  const archiveDir = path.dirname(archive)
+  const archiveName = path.basename(archive)
+  const entries = await fs.readdir(archiveDir).catch(error => {
+    if (error?.code === "ENOENT") return []
+    throw error
+  })
+  await Promise.all(entries
+    .filter(name => name.startsWith(`${archiveName}.part-`))
+    .map(name => fs.rm(path.join(archiveDir, name), { force: true })))
 }
 
 function shouldCopyFfmpegPayloadFile(name, platform = process.platform) {
