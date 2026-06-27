@@ -768,6 +768,7 @@ export function parseAtlasShortcutMessage(message = "") {
   if (isPanelShortcutQuery(originalText)) return { ok: false, reason: "panel_query" }
   if (isRankingShortcutQuery(originalText)) return { ok: false, reason: "ranking_query" }
   if (isExtremeBuildShortcutQuery(originalText)) return { ok: false, reason: "extreme_build_query" }
+  if (isProfilePersonalShortcutQuery(originalText)) return { ok: false, reason: "profile_personal_query" }
   if (!explicitSuffix && isPersonalChallengeQuery(text)) return { ok: false, reason: "personal_challenge" }
 
   const challenge = resolveChallengeQuery(text)
@@ -826,8 +827,7 @@ export function isPersonalChallengeQuery(query = "") {
 
 function isPanelShortcutQuery(text = "") {
   const normalized = normalizeShortcutText(text)
-  return normalized.endsWith("面板")
-    || normalized.endsWith("面版")
+  return /(?:面板|面版)(?:[1-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-5])?$/.test(normalized)
     || /(?:面板|面版)[\s\S]*[换变改]/.test(normalized)
 }
 
@@ -839,6 +839,11 @@ function isRankingShortcutQuery(text = "") {
 function isExtremeBuildShortcutQuery(text = "") {
   const normalized = normalizeShortcutText(text)
   return /^(?:最强|极限)[\s\S]{1,}$/.test(normalized)
+}
+
+function isProfilePersonalShortcutQuery(text = "") {
+  const normalized = normalizeShortcutText(text)
+  return /(?:练度统计|天赋统计|技能统计|角色查询|查询角色|角色列表|面板角色|角色面板|深渊|深境|深境螺旋|幻想|幻境|剧诗|幻想真境剧诗|幽境|危战|幽境危战|混沌|混沌回忆|忘却|忘却之庭|虚构|虚构叙事|末日|末日幻影|异相|异相仲裁|防卫|防卫战|式舆|危局|强袭|临界|推演|爬塔|月报|菲林|邦布券|收入|探索|探索度|个人信息|卡片|card)\s*(?:[1-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-5])$/.test(normalized)
 }
 
 function stripShortcutAtlasSuffix(text = "") {
@@ -2034,13 +2039,15 @@ function buildItemView(item, list, detail, images) {
 
   if (base.kind === "challenge") {
     const theaterOverview = extractGenshinTheaterOverview(item, list, detail, images)
+    const hardChallengeOverview = theaterOverview ? null : extractGenshinHardChallengeOverview(item, list, detail, images)
     return {
       ...base,
       period: item.period || "",
       environment: extractChallengeEnvironment(detail, list, images),
       optionalBuffs: extractChallengeOptionalBuffs(detail, images),
       theaterOverview,
-      rooms: theaterOverview ? [] : extractChallengeRoomCards(item, detail, images),
+      hardChallengeOverview,
+      rooms: theaterOverview || hardChallengeOverview ? [] : extractChallengeRoomCards(item, detail, images),
       guides: extractChallengeGuides(detail),
     }
   }
@@ -2681,6 +2688,51 @@ function theaterVersionLabel(version) {
 function theaterMonthLabel(date) {
   if (!date) return ""
   return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}`
+}
+
+function extractGenshinHardChallengeOverview(item, list, detail, images) {
+  if (item.game !== "原神" || !["地脉异常", "幽境危战"].includes(item.page)) return null
+  const rooms = extractChallengeRoomCards(item, detail, images)
+  if (!rooms.length) return null
+  let selected = rooms.filter(isHardChallengeLevelFiveOrSix)
+  if (!selected.length && rooms.length >= 2) selected = rooms.slice(-2)
+  selected = selected.slice(0, 2)
+  if (!selected.length) return null
+
+  const date = extractDateRange({ content: { list, detail } })
+  return {
+    version: theaterVersionLabel(item.version),
+    period: [formatLooseDate(date.start), formatLooseDate(date.end)].filter(Boolean).join(" - "),
+    title: `${theaterVersionLabel(item.version)} 幽境危战 N5/6`.trim(),
+    levels: selected.map((room, index) => ({
+      ...room,
+      title: normalizeHardChallengeTitle(room.title, index),
+      monsters: flattenHardChallengeMonsters(room),
+    })),
+  }
+}
+
+function isHardChallengeLevelFiveOrSix(room = {}) {
+  const text = `${room.title || ""} ${room.subtitle || ""}`
+  return /(^|[^\d])N?[56]($|[^\d])|难度[56]|第[五六]/i.test(text)
+}
+
+function normalizeHardChallengeTitle(title = "", index = 0) {
+  if (/N?[56]/i.test(title)) return title
+  return `${title || "关卡"} · N${index + 5}`
+}
+
+function flattenHardChallengeMonsters(room = {}) {
+  const monsters = []
+  for (const side of room.sides || []) {
+    for (const monster of side.monsters || []) {
+      monsters.push({
+        ...monster,
+        side: side.label || "",
+      })
+    }
+  }
+  return dedupeMiniCards(monsters).slice(0, 6)
 }
 
 function extractChallengeRoomCards(item, detail, images) {

@@ -3,16 +3,20 @@ const BasePlugin = globalThis.plugin
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import {
   isMissingProfileError,
+  listAllProfiles,
   loadProfile,
   parseProfileIdFromMessage,
   profileLoginRequiredMessage,
   PROFILE_ID_SUFFIX_PATTERN,
 } from "../core/config/profile.js"
+import { loadGlobalConfig } from "../core/config/global.js"
 import { renderStatusCard } from "../core/render/service.js"
 import { AccountService } from "../core/login/account.js"
+import { PermissionService } from "../core/permissions/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { MiaoPanelBridge } from "../services/pluginBridge/miaoPanel.js"
 import { ZzzPanelBridge } from "../services/pluginBridge/zzzPanel.js"
+import { getRoleUid, importRuntimeModule, pickRole } from "../services/pluginBridge/common.js"
 
 export class LotusPanelUpdate extends BasePlugin {
   constructor() {
@@ -41,6 +45,10 @@ export class LotusPanelUpdate extends BasePlugin {
         {
           reg: `^[%％](更新面板|面板更新|全部面板更新|更新全部面板)${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "zzzPanel",
+        },
+        {
+          reg: "^#(?:修复|重建|重刷|清理)(?:原铁|原神星铁|原神和星铁|面板|面板缓存|面板数据|排名数据|个人查询缓存)(?:\\s+间隔\\d{1,3})?$",
+          fnc: "repairMiaoPanelData",
         },
       ],
     })
@@ -101,6 +109,92 @@ export class LotusPanelUpdate extends BasePlugin {
 
     return true
   }
+
+  async repairMiaoPanelData() {
+    const userId = String(this.e.user_id)
+    const globalConfig = await loadGlobalConfig()
+    if (!new PermissionService({ permissions: globalConfig.permissions }).isMaster(this.e)) {
+      await replyText(this, "[荷花插件]只有 bot 主人可以批量修复原神/星铁面板数据。")
+      return true
+    }
+
+    const intervalMs = parseRepairInterval(this.e.msg)
+    await replyText(this, `[荷花插件]开始清理原神/星铁面板缓存并重建，更新间隔 ${Math.round(intervalMs / 1000)} 秒。`)
+    const result = await rebuildAllMiaoPanels({ intervalMs, e: this.e })
+    const okCount = result.updates.filter(item => item.ok).length
+    const image = await renderStatusCard({
+      title: "面板缓存修复",
+      subtitle: "原神 / 星铁 profile 数据",
+      badge: `${okCount}/${result.updates.length}`,
+      message: `已清理 ${result.deleted.length} 个 UID 的 miao 面板数据与排名索引，并按 profile 重新更新。`,
+      userId,
+      items: result.updates.slice(0, 14).map(item => ({
+        label: `QQ ${item.qq} · P${item.profileId} · ${gameLabel(item.game)}`,
+        value: item.ok ? `更新成功 · UID ${item.uid}` : `失败：${item.error}`.slice(0, 70),
+      })),
+    }, {
+      saveId: `lotus-miao-panel-repair-${userId}`,
+    })
+    await replyImage(this, image, "[荷花插件]原神/星铁面板缓存修复完成。")
+    return true
+  }
+}
+
+async function rebuildAllMiaoPanels({ intervalMs = 8000, e } = {}) {
+  const profiles = await listAllProfiles()
+  const Player = await loadMiaoPlayer().catch(error => {
+    throw new Error(`miao Player 不可用：${error.message}`)
+  })
+  const deleted = []
+  const seen = new Set()
+  for (const profile of profiles) {
+    for (const game of ["gs", "sr"]) {
+      const uid = getRoleUid(pickRole(profile, game))
+      if (!uid) continue
+      const key = `${game}:${uid}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      Player.delByUid?.(uid, game)
+      deleted.push({ uid, game })
+    }
+  }
+
+  const updates = []
+  const bridge = new MiaoPanelBridge()
+  const jobs = []
+  for (const profile of profiles) {
+    for (const game of ["gs", "sr"]) {
+      const uid = getRoleUid(pickRole(profile, game))
+      if (!uid) continue
+      jobs.push({ profile, game, uid })
+    }
+  }
+
+  for (const [index, job] of jobs.entries()) {
+    const qq = String(job.profile.user?.qq || "")
+    const profileId = job.profile.profile?.id || 1
+    try {
+      const refreshed = await refreshProfileBeforePanel(qq, profileId, job.profile)
+      await bridge.updatePanel({
+        e: { ...e, user_id: qq },
+        profile: refreshed,
+        profileId,
+        game: job.game,
+        forwardReplies: false,
+      })
+      updates.push({ qq, profileId, game: job.game, uid: job.uid, ok: true })
+    } catch (error) {
+      updates.push({ qq, profileId, game: job.game, uid: job.uid, ok: false, error: error.message })
+    }
+    if (index < jobs.length - 1 && intervalMs > 0) await sleep(intervalMs)
+  }
+
+  return { deleted, updates }
+}
+
+async function loadMiaoPlayer() {
+  const mod = await importRuntimeModule("miao-plugin", "models", "Player.js")
+  return mod.default
 }
 
 async function refreshProfileBeforePanel(userId, profileId, profile) {
@@ -129,4 +223,14 @@ function pickMessage(messages = []) {
     .filter(message => message && message !== "[图片]" && message !== "[按钮]")
     .join("\n")
     .slice(0, 180)
+}
+
+function parseRepairInterval(message = "") {
+  const match = String(message || "").match(/间隔(\d{1,3})/)
+  const seconds = match ? Number(match[1]) : 8
+  return Math.min(60, Math.max(0, seconds)) * 1000
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }

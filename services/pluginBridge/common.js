@@ -1,5 +1,9 @@
 import path from "node:path"
 import { pathToFileURL } from "node:url"
+import { normalizeProfileId } from "../../core/config/profile.js"
+
+export const GAME_UID_PATTERN = "[1-9]\\d{7,9}"
+export const GAME_UID_REGEXP = new RegExp(`^${GAME_UID_PATTERN}$`)
 
 export function pickRole(profile, game) {
   const currentUid = profile?.account?.current_uid?.[game]
@@ -17,6 +21,27 @@ export function pickRole(profile, game) {
 
 export function getRoleUid(role) {
   return role ? String(role.uid || role.game_uid || role || "") : ""
+}
+
+export function splitProfileSuffix(message = "") {
+  const text = String(message || "").trim()
+  const match = text.match(/^(.*?)([1-9]\d{0,2})$/)
+  if (!match) return { hasProfileSuffix: false, message: text, profileId: 1 }
+
+  const body = match[1]
+  const raw = match[2]
+  if (!body || /\d$/.test(body)) return { hasProfileSuffix: false, message: text, profileId: 1 }
+
+  try {
+    const profileId = normalizeProfileId(raw)
+    return {
+      hasProfileSuffix: true,
+      message: body.trimEnd(),
+      profileId,
+    }
+  } catch {
+    return { hasProfileSuffix: false, message: text, profileId: 1 }
+  }
 }
 
 export function createIsolatedEvent(baseEvent, patch = {}) {
@@ -64,4 +89,3 @@ export async function importRuntimeModule(pluginName, ...segments) {
   const file = path.join(process.cwd(), "plugins", pluginName, ...segments)
   return import(pathToFileURL(file).href)
 }
-

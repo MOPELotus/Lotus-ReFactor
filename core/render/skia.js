@@ -109,6 +109,7 @@ class SkiaRenderer {
     if (this.templateName === "checkin-result") return this.buildCheckinResult()
     if (this.templateName === "schedule-notice") return this.buildScheduleNotice()
     if (this.templateName === "bilibili-info") return this.buildBilibiliInfo()
+    if (this.templateName === "starrail-challenge") return this.buildStarRailChallenge()
     if (this.templateName === "atlas-result") return this.buildAtlasResult()
     if (this.templateName === "atlas-challenge") return this.buildAtlasChallenge()
     if (this.templateName === "atlas-item") return this.buildAtlasItem()
@@ -302,6 +303,207 @@ class SkiaRenderer {
     this.footer()
   }
 
+  buildStarRailChallenge() {
+    this.hero({
+      title: this.data.title || "星铁挑战战绩",
+      subtitle: this.data.subtitle || "",
+      badge: this.data.badge || "SR",
+      message: this.data.message || "",
+      width: this.innerWidth(),
+      heroHeight: 188,
+    })
+    this.gridItems(this.data.summary || [], 2)
+    for (const result of this.data.results || []) {
+      this.starRailChallengeCard(result)
+    }
+    this.footer("数据来源 米游社 / HoYoLAB")
+  }
+
+  starRailChallengeCard(result = {}) {
+    this.sectionTitle(result.label || "挑战")
+    const info = [
+      { label: "周期", value: result.period || "-" },
+      { label: "星数", value: result.extraStars ? `${result.stars || 0}+${result.extraStars}` : String(result.stars ?? "-") },
+      { label: "最深", value: String(result.maxFloor || "-") },
+      { label: "战斗", value: String(result.battleNum || "-") },
+    ]
+    this.gridItems(info, 4)
+
+    if (result.peak?.length) {
+      for (const record of result.peak) this.starRailPeakRecord(record)
+      return
+    }
+
+    const floors = (result.floors || []).slice(-6)
+    for (const floor of floors) this.starRailFloorCard(floor)
+    if ((result.floors || []).length > floors.length) {
+      const omitted = (result.floors || []).length - floors.length
+      const y = this.y
+      this.card(this.padding, y, this.innerWidth(), 54, ctx => {
+        this.text(ctx, `已省略较早 ${omitted} 层，仅展示最近 ${floors.length} 层。`, this.padding + 18, y + 16, {
+          width: this.innerWidth() - 36,
+          size: 16,
+          weight: 760,
+          color: COLOR.sub,
+          align: "center",
+        })
+      }, { fill: "rgba(255,255,255,0.72)", radius: 16 })
+      this.y += 66
+    }
+  }
+
+  starRailFloorCard(floor = {}) {
+    const nodes = floor.nodes || []
+    const nodeHeights = nodes.map(node => this.starRailNodeHeight(node, this.innerWidth() - 36))
+    const h = Math.max(118, 72 + nodeHeights.reduce((sum, height) => sum + height + 10, 0))
+    const x = this.padding
+    const y = this.y
+    this.card(x, y, this.innerWidth(), h, async ctx => {
+      const meta = [
+        floor.round ? `轮次 ${floor.round}` : "",
+        floor.score ? `总分 ${floor.score}` : "",
+        floor.stars !== "" && floor.stars !== undefined ? `星数 ${floor.stars}` : "",
+      ].filter(Boolean).join(" · ")
+      this.text(ctx, floor.title || "关卡", x + 18, y + 16, { width: this.innerWidth() - 36, size: 22, weight: 950, color: "#004466" })
+      this.text(ctx, meta, x + 18, y + 44, { width: this.innerWidth() - 36, size: 14, weight: 780, color: COLOR.sub })
+      let yy = y + 72
+      for (const node of nodes) {
+        yy += await this.starRailNode(ctx, node, x + 18, yy, this.innerWidth() - 36)
+        yy += 10
+      }
+    }, { fill: "rgba(255,255,255,0.88)", radius: 18 })
+    this.y += h + 12
+  }
+
+  starRailNodeHeight(node = {}, width = this.innerWidth()) {
+    const avatarCount = Math.max(1, node.avatars?.length || 0)
+    const rows = Math.ceil(avatarCount / Math.max(1, Math.floor((width - 148) / 58)))
+    const buffHeight = node.buff ? this.measureParagraph(node.buff, width - 20, 12, 17) + 8 : 0
+    return Math.max(72, rows * 68 + buffHeight)
+  }
+
+  async starRailNode(ctx, node = {}, x, y, width) {
+    const h = this.starRailNodeHeight(node, width)
+    this.roundRect(ctx, x, y, width, h, 14, "rgba(102,204,255,0.12)")
+    const meta = [
+      node.score ? `积分 ${node.score}` : "",
+      node.round ? `轮 ${node.round}` : "",
+      node.time || "",
+      node.defeated === true ? "首领已击败" : node.defeated === false ? "首领未击败" : "",
+    ].filter(Boolean).join(" · ")
+    this.text(ctx, node.label || "节点", x + 12, y + 12, { width: 118, size: 16, weight: 920, color: "#004466" })
+    this.text(ctx, meta, x + 12, y + 38, { width: 120, size: 12, lineHeight: 16, weight: 720, color: COLOR.sub, maxLines: 2 })
+    let xx = x + 142
+    let yy = y + 10
+    const maxX = x + width - 54
+    for (const avatar of node.avatars || []) {
+      await this.starRailAvatar(ctx, avatar, xx, yy, 50)
+      xx += 58
+      if (xx > maxX) {
+        xx = x + 142
+        yy += 68
+      }
+    }
+    if (node.buff) {
+      this.text(ctx, node.buff, x + 12, y + h - this.measureParagraph(node.buff, width - 24, 12, 17) - 8, {
+        width: width - 24,
+        size: 12,
+        lineHeight: 17,
+        weight: 650,
+        color: COLOR.sub,
+        maxLines: 2,
+      })
+    }
+    return h
+  }
+
+  async starRailPeakRecord(record = {}) {
+    const cards = [
+      record.boss ? {
+        title: `${record.boss.title || "王棋关卡"}${record.boss.hard ? " · 绝境" : ""}`,
+        icon: record.boss.icon,
+        stars: record.boss.stars,
+        round: record.boss.round,
+        time: record.boss.time,
+        cleared: record.boss.cleared,
+        avatars: record.boss.avatars,
+      } : null,
+      ...(record.mobs || []).map(mob => ({
+        title: mob.title,
+        icon: mob.icon,
+        stars: mob.stars,
+        round: mob.round,
+        time: mob.time,
+        cleared: mob.cleared,
+        fast: mob.fast,
+        avatars: mob.avatars,
+      })),
+    ].filter(Boolean)
+    const h = 122 + cards.reduce((sum, card) => sum + this.starRailPeakEntryHeight(card), 0)
+    const x = this.padding
+    const y = this.y
+    this.card(x, y, this.innerWidth(), h, async ctx => {
+      this.text(ctx, record.title || "异相仲裁", x + 18, y + 16, { width: this.innerWidth() - 36, size: 22, weight: 950, color: "#004466", align: "center" })
+      const meta = [
+        record.period,
+        record.bossStars !== "" ? `王棋 ${record.bossStars} 星` : "",
+        record.mobStars !== "" ? `骑士 ${record.mobStars} 星` : "",
+        record.battleNum !== "" ? `战斗 ${record.battleNum}` : "",
+      ].filter(Boolean).join(" · ")
+      this.text(ctx, meta, x + 18, y + 48, { width: this.innerWidth() - 36, size: 14, weight: 780, color: COLOR.sub, align: "center" })
+      let yy = y + 80
+      for (const card of cards) {
+        yy += await this.starRailPeakEntry(ctx, card, x + 18, yy, this.innerWidth() - 36)
+        yy += 10
+      }
+    }, { fill: "rgba(255,255,255,0.9)", radius: 18 })
+    this.y += h + 12
+  }
+
+  starRailPeakEntryHeight(card = {}) {
+    const rows = Math.ceil(Math.max(1, card.avatars?.length || 0) / 6)
+    return Math.max(98, 30 + rows * 68)
+  }
+
+  async starRailPeakEntry(ctx, card = {}, x, y, width) {
+    const h = this.starRailPeakEntryHeight(card)
+    this.roundRect(ctx, x, y, width, h, 14, "rgba(102,204,255,0.12)")
+    const icon = await this.loadImage(card.icon)
+    if (icon) this.drawImageContain(ctx, icon, x + 10, y + 12, 70, 70)
+    else this.iconPlaceholder(ctx, x + 10, y + 12, 70, 70, "敌")
+    const meta = [
+      card.fast ? "快速通关" : card.cleared ? "已通关" : "未通关",
+      card.stars !== "" && card.stars !== undefined ? `${card.stars} 星` : "",
+      card.round ? `轮 ${card.round}` : "",
+      card.time || "",
+    ].filter(Boolean).join(" · ")
+    this.text(ctx, card.title || "关卡", x + 92, y + 12, { width: width - 110, size: 16, weight: 920, color: "#004466" })
+    this.text(ctx, meta, x + 92, y + 36, { width: width - 110, size: 12, weight: 750, color: COLOR.sub })
+    let xx = x + 92
+    let yy = y + 58
+    for (const avatar of card.avatars || []) {
+      await this.starRailAvatar(ctx, avatar, xx, yy, 46)
+      xx += 54
+      if (xx > x + width - 50) {
+        xx = x + 92
+        yy += 64
+      }
+    }
+    return h
+  }
+
+  async starRailAvatar(ctx, avatar = {}, x, y, size = 50) {
+    const img = await this.loadImage(avatar.icon)
+    const fill = Number(avatar.rarity) >= 5 ? "rgba(255,196,77,0.28)" : "rgba(167,127,255,0.22)"
+    this.roundRect(ctx, x, y, size, size, 12, fill)
+    if (img) this.drawImageContain(ctx, img, x + 3, y + 3, size - 6, size - 6)
+    else this.text(ctx, avatar.name || "?", x, y + size / 2 - 11, { width: size, size: 18, weight: 900, color: COLOR.blue, align: "center", maxLines: 1 })
+    if (avatar.rank !== "" && avatar.rank !== undefined) {
+      this.roundRect(ctx, x + size - 22, y + size - 18, 22, 18, 9, "rgba(0,0,0,0.46)")
+      this.text(ctx, `${avatar.rank}`, x + size - 22, y + size - 15, { width: 22, size: 10, weight: 900, color: "#fff", align: "center" })
+    }
+  }
+
   mediaCover(image) {
     const y = this.y
     const width = this.innerWidth()
@@ -412,6 +614,11 @@ class SkiaRenderer {
     })
     if (view.theaterOverview) {
       this.drawTheaterOverview(view.theaterOverview)
+      this.footer("数据来源 Nanoka Atlas")
+      return
+    }
+    if (view.hardChallengeOverview) {
+      this.drawHardChallengeOverview(view.hardChallengeOverview)
       this.footer("数据来源 Nanoka Atlas")
       return
     }
@@ -684,6 +891,60 @@ class SkiaRenderer {
       }
     })
     this.y += h + 12
+  }
+
+  drawHardChallengeOverview(overview) {
+    const meta = [overview.period].filter(Boolean)
+    this.sectionTitle(overview.title || "幽境危战 N5/6")
+    if (meta.length) {
+      const y = this.y
+      this.card(this.padding, y, this.innerWidth(), 58, ctx => {
+        this.text(ctx, meta.join(" · "), this.padding + 18, y + 17, { width: this.innerWidth() - 36, size: 18, weight: 850, color: COLOR.ink, align: "center" })
+      }, { fill: "rgba(255,255,255,0.78)", radius: 16 })
+      this.y += 70
+    }
+    for (const level of overview.levels || []) this.hardChallengeLevelCard(level)
+  }
+
+  hardChallengeLevelCard(level) {
+    const monsters = level.monsters?.length
+      ? level.monsters
+      : (level.sides || []).flatMap(side => side.monsters || [])
+    const columns = Math.min(3, Math.max(1, monsters.length || 1))
+    const gap = 14
+    const width = (this.innerWidth() - gap * (columns - 1)) / columns
+    const desc = [level.subtitle, ...(level.goals || []), level.desc].filter(Boolean).join(" / ")
+    const descH = desc ? this.measureParagraph(desc, this.innerWidth() - 36, 14, 21) + 8 : 0
+    const monsterRows = Math.ceil((monsters.length || 1) / columns)
+    const h = Math.max(250, 76 + descH + monsterRows * 196)
+    const x = this.padding
+    const y = this.y
+    this.card(x, y, this.innerWidth(), h, async ctx => {
+      this.text(ctx, level.title || "关卡", x + 18, y + 16, { width: this.innerWidth() - 36, size: 25, weight: 950, color: "#004466", align: "center" })
+      let yy = y + 52
+      if (desc) {
+        yy += this.text(ctx, desc, x + 18, yy, { width: this.innerWidth() - 36, size: 14, lineHeight: 21, weight: 650, color: COLOR.sub, align: "center", maxLines: 3 })
+      }
+      yy += 14
+      for (const [index, monster] of monsters.entries()) {
+        const col = index % columns
+        const row = Math.floor(index / columns)
+        const mx = x + col * (width + gap)
+        const my = yy + row * 196
+        await this.hardChallengeMonsterColumn(ctx, monster, mx, my, width)
+      }
+    }, { fill: "rgba(255,255,255,0.9)", radius: 18 })
+    this.y += h + 14
+  }
+
+  async hardChallengeMonsterColumn(ctx, monster, x, y, width) {
+    const icon = await this.loadImage(monster.icon)
+    if (icon) this.drawImageContain(ctx, icon, x + (width - 88) / 2, y, 88, 88)
+    else this.iconPlaceholder(ctx, x + (width - 88) / 2, y, 88, 88, "敌")
+    const title = [monster.side, monster.name].filter(Boolean).join(" · ")
+    this.text(ctx, title, x + 8, y + 98, { width: width - 16, size: 15, lineHeight: 20, weight: 900, color: COLOR.ink, align: "center", maxLines: 2 })
+    const meta = [monster.hp, monster.weakness, monster.level].filter(Boolean).join(" / ")
+    this.text(ctx, meta, x + 8, y + 142, { width: width - 16, size: 13, lineHeight: 18, weight: 850, color: COLOR.blue, align: "center", maxLines: 2 })
   }
 
   drawTheaterOverview(overview) {

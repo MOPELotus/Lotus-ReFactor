@@ -9,40 +9,14 @@ export class MiaoPanelBridge {
   }
 
   async updatePanel({ e, profile, profileId = 1, game = "gs", forwardReplies = true } = {}) {
-    if (!["gs", "sr"].includes(game)) {
-      throw new Error("miao 面板只支持原神和星铁")
-    }
-
-    const role = pickRole(profile, game)
-    const uid = getRoleUid(role)
-    if (!uid) {
-      throw new Error(`profile ${profileId} 没有同步${game === "sr" ? "星铁" : "原神"} UID`)
-    }
-    const server = resolveServer({
-      server: role.region,
-      uid,
-      game,
-    })
-
-    await this.registerProfile({ qq: String(e.user_id), profile })
     const ProfileList = await this.loadProfileList()
-    const { event, messages, forwarded } = createIsolatedEvent(e, {
-      msg: `${game === "sr" ? "#星铁" : "#原神"}更新面板${uid}`,
-      uid,
-      server,
-      region: server,
-      game,
-      isSr: game === "sr",
-      mysSelfUid: true,
-      noTips: false,
-      forwardReplies,
-    })
-    event.runtime = createProfileScopedRuntime(event.runtime, {
-      event,
+    const { event, messages, forwarded, uid } = await createMiaoProfileEvent({
+      e,
       profile,
       profileId,
-      uid,
       game,
+      forwardReplies,
+      registerProfile: this.registerProfile,
     })
 
     await ProfileList.refreshMys(event)
@@ -57,12 +31,60 @@ export class MiaoPanelBridge {
   }
 }
 
+export async function createMiaoProfileEvent({ e, profile, profileId = 1, game = "gs", msg, forwardReplies = true, registerProfile = registerProfileWithGenshin } = {}) {
+  if (!["gs", "sr"].includes(game)) {
+    throw new Error("miao 面板只支持原神和星铁")
+  }
+
+  const role = pickRole(profile, game)
+  const uid = getRoleUid(role)
+  if (!uid) {
+    throw new Error(`profile ${profileId} 没有同步${gameLabel(game)} UID`)
+  }
+  const server = resolveServer({
+    server: role.region,
+    uid,
+    game,
+  })
+
+  await registerProfile({ qq: String(e.user_id), profile })
+  const command = msg || `${game === "sr" ? "#星铁" : "#原神"}更新面板${uid}`
+  const { event, messages, forwarded } = createIsolatedEvent(e, {
+    msg: command,
+    original_msg: command,
+    uid,
+    server,
+    region: server,
+    game,
+    isSr: game === "sr",
+    mysSelfUid: true,
+    noTips: false,
+    forwardReplies,
+  })
+  event.runtime = createProfileScopedRuntime(event.runtime, {
+    event,
+    profile,
+    profileId,
+    uid,
+    game,
+  })
+
+  return {
+    event,
+    messages,
+    forwarded,
+    uid,
+    game,
+    profileId,
+  }
+}
+
 async function loadProfileList() {
   const mod = await importRuntimeModule("miao-plugin", "apps", "profile", "ProfileList.js")
   return mod.default
 }
 
-function createProfileScopedRuntime(runtime, { event, profile, profileId, uid, game } = {}) {
+export function createProfileScopedRuntime(runtime, { event, profile, profileId, uid, game } = {}) {
   if (!runtime || typeof runtime !== "object") return runtime
   const scoped = Object.create(Object.getPrototypeOf(runtime))
   Object.assign(scoped, runtime)
@@ -98,6 +120,6 @@ function assertProfileMysInfo(mysInfo, { profile, profileId, uid, game } = {}) {
   }
 }
 
-function gameLabel(game) {
+export function gameLabel(game) {
   return game === "sr" ? "星铁" : "原神"
 }

@@ -13,39 +13,19 @@ export class ZzzPanelBridge {
   }
 
   async updatePanel({ e, profile, profileId = 1, forwardReplies = true } = {}) {
-    const role = pickRole(profile, "zzz")
-    const uid = getRoleUid(role)
-    if (!uid) {
-      throw new Error(`profile ${profileId} 没有同步绝区零 UID`)
-    }
-    const server = resolveServer({
-      server: role.region,
-      uid,
-      game: "zzz",
-    })
-
-    await this.registerProfile({ qq: String(e.user_id), profile })
-    await this.syncDevice(profile)
-
-    const { event, messages, forwarded } = createIsolatedEvent(e, {
-      msg: "%更新面板",
-      uid,
-      server,
-      region: server,
-      game: "zzz",
-      isZZZ: true,
-      mysSelfUid: true,
-      noTips: false,
-      forwardReplies,
-    })
-
     const Panel = await this.loadPanelClass()
-    const panel = new Panel()
-    panel.e = event
-    panel.reply = event.reply.bind(event)
-    panel.getUID = async () => uid
-    panel.getLtuid = async () => profile.account?.ltuid || profile.account?.stuid || parseAccountCookie(profile.account?.cookie).ltuid
-    panel.getAPI = async () => this.createApiContext({ uid, profile, event })
+    const context = await createZzzProfilePluginInstance({
+      PluginClass: Panel,
+      e,
+      profile,
+      profileId,
+      command: "%更新面板",
+      forwardReplies,
+      registerProfile: this.registerProfile,
+      syncDevice: this.syncDevice,
+      loadMysApiClass: this.loadMysApiClass,
+    })
+    const { instance: panel, event, messages, forwarded, uid } = context
 
     await runZzzPanelRefresh(panel, {
       uid,
@@ -73,6 +53,147 @@ export class ZzzPanelBridge {
       uid,
       deviceFp: profile?.device?.fp || fallbackZzzDeviceFp(uid),
     }
+  }
+}
+
+export class ZzzProfileQueryBridge {
+  constructor(options = {}) {
+    this.loadPanelClass = options.loadPanelClass || loadPanelClass
+    this.loadDamageClass = options.loadDamageClass || (() => loadZzzAppClass("damage.js", "Damage"))
+    this.loadCardClass = options.loadCardClass || (() => loadZzzAppClass("card.js", "Card"))
+    this.loadAbyssClass = options.loadAbyssClass || (() => loadZzzAppClass("abyss.js", "Abyss"))
+    this.loadDeadlyClass = options.loadDeadlyClass || (() => loadZzzAppClass("deadly.js", "deadly"))
+    this.loadVoidFrontBattleClass = options.loadVoidFrontBattleClass || (() => loadZzzAppClass("voidFrontBattle.js", "VoidFrontBattle"))
+    this.loadClimbingTowerClass = options.loadClimbingTowerClass || (() => loadZzzAppClass("climbingTower.js", "ClimbingTower"))
+    this.loadMonthlyClass = options.loadMonthlyClass || (() => loadZzzAppClass("monthly.js", "monthly"))
+    this.loadHollowZeroClass = options.loadHollowZeroClass || (() => loadZzzAppClass("hollowZero.js", "HollowZero"))
+    this.loadExplorationDetailClass = options.loadExplorationDetailClass || (() => loadZzzAppClass("explorationDetail.js", "ExplorationDetail"))
+    this.loadMysApiClass = options.loadMysApiClass || loadMysApiClass
+    this.registerProfile = options.registerProfile || registerProfileWithGenshin
+    this.syncDevice = options.syncDevice || syncZzzDeviceWithRedis
+  }
+
+  async panel(options = {}) {
+    const Panel = await this.loadPanelClass()
+    return this.run({ ...options, PluginClass: Panel, method: "handleRule" })
+  }
+
+  async proficiency(options = {}) {
+    const Panel = await this.loadPanelClass()
+    return this.run({ ...options, PluginClass: Panel, method: "proficiency" })
+  }
+
+  async damage(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadDamageClass(), method: "charDamagePanel" })
+  }
+
+  async card(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadCardClass(), method: "card" })
+  }
+
+  async abyss(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadAbyssClass(), method: "abyss" })
+  }
+
+  async deadly(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadDeadlyClass(), method: "deadly" })
+  }
+
+  async voidFrontBattle(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadVoidFrontBattleClass(), method: "voidFrontBattle" })
+  }
+
+  async climbingTower(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadClimbingTowerClass(), method: "climbingTower" })
+  }
+
+  async monthly(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadMonthlyClass(), method: "monthly" })
+  }
+
+  async monthlyCollect(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadMonthlyClass(), method: "monthlyCollect" })
+  }
+
+  async hollowZero(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadHollowZeroClass(), method: "hollowZero" })
+  }
+
+  async hollowZeroS2(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadHollowZeroClass(), method: "hollowZeroS2" })
+  }
+
+  async explorationDetail(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadExplorationDetailClass(), method: "explorationDetail" })
+  }
+
+  async run({ e, profile, profileId = 1, command, forwardReplies = true, PluginClass, method } = {}) {
+    const context = await createZzzProfilePluginInstance({
+      PluginClass,
+      e,
+      profile,
+      profileId,
+      command,
+      forwardReplies,
+      registerProfile: this.registerProfile,
+      syncDevice: this.syncDevice,
+      loadMysApiClass: this.loadMysApiClass,
+    })
+    const fn = context.instance?.[method]
+    if (typeof fn !== "function") throw new Error(`ZZZ-Plugin ${method} 不可用`)
+    await fn.call(context.instance)
+    return {
+      ok: true,
+      game: "zzz",
+      uid: context.uid,
+      profileId,
+      messages: context.messages.filter(Boolean),
+      forwarded: context.forwarded,
+    }
+  }
+}
+
+export async function createZzzProfilePluginInstance({ PluginClass, e, profile, profileId = 1, command = "%面板", forwardReplies = true, registerProfile = registerProfileWithGenshin, syncDevice = syncZzzDeviceWithRedis, loadMysApiClass: loadMysApiClassImpl = loadMysApiClass } = {}) {
+  const role = pickRole(profile, "zzz")
+  const uid = getRoleUid(role)
+  if (!uid) {
+    throw new Error(`profile ${profileId} 没有同步绝区零 UID`)
+  }
+  const server = resolveServer({
+    server: role.region,
+    uid,
+    game: "zzz",
+  })
+
+  await registerProfile({ qq: String(e.user_id), profile })
+  await syncDevice(profile)
+
+  const { event, messages, forwarded } = createIsolatedEvent(e, {
+    msg: command,
+    original_msg: command,
+    uid,
+    server,
+    region: server,
+    game: "zzz",
+    isZZZ: true,
+    mysSelfUid: true,
+    noTips: false,
+    forwardReplies,
+  })
+
+  const instance = new PluginClass()
+  instance.e = event
+  instance.reply = event.reply.bind(event)
+  instance.getUID = async () => uid
+  instance.getLtuid = async () => profile.account?.ltuid || profile.account?.stuid || parseAccountCookie(profile.account?.cookie).ltuid
+  instance.getAPI = async () => createZzzApiContext({ uid, profile, event, loadMysApiClass: loadMysApiClassImpl })
+
+  return {
+    instance,
+    event,
+    messages,
+    forwarded,
+    uid,
   }
 }
 
@@ -106,6 +227,31 @@ async function loadMysApiClass() {
       throw error
     }
     return (await importRuntimeModule("ZZZ-Plugin", "lib", "mysapi.js")).default
+  }
+}
+
+async function loadZzzAppClass(fileName, exportName) {
+  try {
+    return (await importRuntimeModule("ZZZ-Plugin", "dist", "apps", fileName))[exportName]
+  } catch (error) {
+    if (!/Cannot find module|ENOENT|ERR_MODULE_NOT_FOUND/.test(String(error?.message || error))) {
+      throw error
+    }
+    return (await importRuntimeModule("ZZZ-Plugin", "apps", fileName))[exportName]
+  }
+}
+
+async function createZzzApiContext({ uid, profile, event, loadMysApiClass: loadMysApiClassImpl = loadMysApiClass } = {}) {
+  const MysZZZApi = await loadMysApiClassImpl()
+  const cookieMap = buildZzzCookieMap(profile, uid)
+  const api = new MysZZZApi(uid, cookieMap, {
+    handler: event?.runtime?.handler || {},
+    e: event,
+  })
+  return {
+    api,
+    uid,
+    deviceFp: profile?.device?.fp || fallbackZzzDeviceFp(uid),
   }
 }
 
@@ -147,7 +293,7 @@ async function runZzzPanelRefresh(panel, { uid, refreshPanelFunction } = {}) {
   return panel.reply({ type: "image", file: "zzz-panel.png" })
 }
 
-function buildZzzCookieMap(profile = {}, uid = "") {
+export function buildZzzCookieMap(profile = {}, uid = "") {
   const account = profile.account || {}
   const cookie = account.cookie || ""
   const ltuid = account.ltuid || account.stuid || parseAccountCookie(cookie).ltuid
@@ -164,7 +310,7 @@ function buildZzzCookieMap(profile = {}, uid = "") {
   }
 }
 
-async function syncZzzDeviceWithRedis(profile = {}) {
+export async function syncZzzDeviceWithRedis(profile = {}) {
   const redis = globalThis.redis
   if (!redis?.set) return
   const account = profile.account || {}

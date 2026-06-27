@@ -22,6 +22,24 @@ export const LOTUS_CONFIG_DISABLED_PLUGIN_NAMES = Object.freeze([
   // ZZZ atlas/wiki overlaps. Keep player challenge apps.
   "[ZZZ-Plugin]wiki",
 
+  // StarRail-plugin overlaps. Lotus owns SR personal queries/challenges.
+  "星铁别名设置",
+  "星铁plugin-深渊",
+  "星穹铁道",
+  "星铁plugin抽卡分析",
+  "星铁plugin-货币战争",
+  "[星铁插件]帮助",
+  "星铁plugin基本信息",
+  "星铁面板-兼容版",
+  "星铁plugin-收入",
+  "星铁plugin-体力",
+  "星铁plugin-面板",
+  "星铁plugin-模拟宇宙",
+  "星铁插件-角色信息/攻略",
+  "米游社星铁攻略",
+  "星铁更新插件",
+  "StarRail-Plugin更新日志",
+
   // xhh overlaps
   "[小花火]bili",
   "[小花火]图鉴",

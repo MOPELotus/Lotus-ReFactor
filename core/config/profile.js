@@ -6,7 +6,8 @@ import { assertValidProfile } from "./schema.js"
 
 const CURRENT_VERSION = 1
 export const MAX_PROFILE_ID = 255
-export const PROFILE_ID_SUFFIX_PATTERN = "(?:[1-9]|[1-9]\\d|1\\d\\d|2[0-4]\\d|25[0-5])?"
+export const PROFILE_ID_REQUIRED_SUFFIX_PATTERN = "(?:[1-9]|[1-9]\\d|1\\d\\d|2[0-4]\\d|25[0-5])"
+export const PROFILE_ID_SUFFIX_PATTERN = `${PROFILE_ID_REQUIRED_SUFFIX_PATTERN}?`
 
 export function normalizeProfileId(value = 1) {
   const profileId = Number(value || 1)
