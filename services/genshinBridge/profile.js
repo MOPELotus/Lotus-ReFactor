@@ -20,16 +20,18 @@ export async function registerProfileWithGenshin({ qq, profile, modules } = {}) 
     }
   }
 
+  const gameRoles = normalizeGameRoles(account.game_roles)
   mysUser.setCkData?.({
     ltuid: String(ltuid),
     ck: account.cookie,
     type: "mys",
     device: profile?.device?.id || "",
-    uids: normalizeGameRoles(account.game_roles),
+    uids: gameRoles,
   })
 
-  for (const [game, uids] of Object.entries(normalizeGameRoles(account.game_roles))) {
+  for (const [game, uids] of Object.entries(gameRoles)) {
     mysUser.addUid?.(uids, game)
+    if (uids.length) await mysUser.addQueryUid?.(uids, game)
   }
 
   await mysUser.save?.()
@@ -40,7 +42,7 @@ export async function registerProfileWithGenshin({ qq, profile, modules } = {}) 
   return {
     ok: true,
     ltuid: String(ltuid),
-    uids: normalizeGameRoles(account.game_roles),
+    uids: gameRoles,
   }
 }
 
