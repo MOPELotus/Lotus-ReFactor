@@ -766,6 +766,7 @@ export function parseAtlasShortcutMessage(message = "") {
   const explicitSuffix = text !== originalText
   if (!text) return { ok: false, reason: "empty_query" }
   if (isPanelShortcutQuery(originalText)) return { ok: false, reason: "panel_query" }
+  if (isRankingShortcutQuery(originalText)) return { ok: false, reason: "ranking_query" }
   if (!explicitSuffix && isPersonalChallengeQuery(text)) return { ok: false, reason: "personal_challenge" }
 
   const challenge = resolveChallengeQuery(text)
@@ -827,6 +828,11 @@ function isPanelShortcutQuery(text = "") {
   return normalized.endsWith("面板")
     || normalized.endsWith("面版")
     || /(?:面板|面版)[\s\S]*[换变改]/.test(normalized)
+}
+
+function isRankingShortcutQuery(text = "") {
+  const normalized = normalizeShortcutText(text)
+  return /(?:排名|排行|排行榜)$/.test(normalized)
 }
 
 function stripShortcutAtlasSuffix(text = "") {

@@ -72,18 +72,24 @@ export class ToolInstallerService {
     if (!tool) throw new Error(`unknown tool: ${name}`)
 
     const binDir = resolveMaybeData(normalized.bin_dir || "data/tools/bin")
+    const toolsDir = resolveMaybeData(normalized.dir || "data/tools")
     const existing = await findCommandExecutable(tool.command, [binDir])
     if (existing) {
-      await emitProgress(onProgress, `工具链：${name} 已存在`)
-      return {
-        name,
-        ok: true,
-        status: "ready",
-        path: existing,
+      const health = await inspectToolInstall(name, existing, binDir, toolsDir)
+      if (health.ok) {
+        await emitProgress(onProgress, `工具链：${name} 已存在`)
+        return {
+          name,
+          ok: true,
+          status: "ready",
+          path: existing,
+        }
       }
+      await emitProgress(onProgress, `工具链：${name} 需要修复：${health.reason}`)
     }
 
     if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
+    if (name === "ffmpeg") await removeSharedFfmpegArtifacts(toolsDir)
     await emitProgress(onProgress, `工具链：查询 ${tool.repo} 最新版本`)
     const release = await this.fetchLatestRelease(tool.repo, normalized.github_api)
     const asset = pickReleaseAsset(name, release.assets || [], {
@@ -93,7 +99,6 @@ export class ToolInstallerService {
     })
     if (!asset) throw new Error(`no release asset matched ${name} ${this.platform}/${this.arch}`)
 
-    const toolsDir = resolveMaybeData(normalized.dir || "data/tools")
     const archiveDir = path.join(toolsDir, "downloads")
     const extractDir = path.join(toolsDir, name)
     await fs.mkdir(archiveDir, { recursive: true })
@@ -112,9 +117,7 @@ export class ToolInstallerService {
     const executable = await findExtractedExecutable(extractDir, tool.command)
     if (!executable) throw new Error(`${tool.command} executable not found in ${asset.name}`)
 
-    const target = path.join(binDir, commandFileName(tool.command))
-    await fs.copyFile(executable, target)
-    if (this.platform !== "win32") await fs.chmod(target, 0o755).catch(() => null)
+    const target = await copyToolPayload(name, executable, binDir, tool.command, this.platform)
     await emitProgress(onProgress, `工具链：${name} 安装完成`)
 
     return {
@@ -188,7 +191,7 @@ export function pickReleaseAsset(tool, assets = [], options = {}) {
   const patterns = (options.patterns || defaultAssetPatterns(tool, options.platform, options.arch))
     .map(pattern => pattern instanceof RegExp ? pattern : new RegExp(String(pattern), "i"))
   const candidates = assets
-    .filter(asset => asset?.name && asset?.browser_download_url)
+    .filter(asset => asset?.name && asset?.browser_download_url && !isDisallowedReleaseAsset(tool, asset.name))
     .map(asset => ({
       asset,
       score: scoreReleaseAsset(asset.name, patterns),
@@ -207,13 +210,13 @@ export function defaultAssetPatterns(tool, platform = process.platform, arch = p
     if (os === "darwin") return [/BBDown.*(?:osx|mac|darwin).*\.zip$/i, /BBDown.*(?:osx|mac|darwin).*\.tar\.gz$/i]
   }
   if (tool === "ffmpeg") {
-    if (os === "windows") return [/ffmpeg.*win64.*gpl.*\.zip$/i, /ffmpeg.*windows.*64.*\.zip$/i]
+    if (os === "windows") return [/ffmpeg(?!.*shared).*win64.*gpl.*\.zip$/i, /ffmpeg(?!.*shared).*windows.*64.*\.zip$/i]
     if (os === "linux") {
       return cpu === "arm64"
-        ? [/ffmpeg.*linuxarm64.*gpl.*\.tar\.xz$/i, /ffmpeg.*linux.*arm64.*\.tar\.xz$/i]
-        : [/ffmpeg.*linux64.*gpl.*\.tar\.xz$/i, /ffmpeg.*linux.*(?:x64|amd64).*\.tar\.xz$/i]
+        ? [/ffmpeg(?!.*shared).*linuxarm64.*gpl.*\.tar\.xz$/i, /ffmpeg(?!.*shared).*linux.*arm64.*\.tar\.xz$/i]
+        : [/ffmpeg(?!.*shared).*linux64.*gpl.*\.tar\.xz$/i, /ffmpeg(?!.*shared).*linux.*(?:x64|amd64).*\.tar\.xz$/i]
     }
-    if (os === "darwin") return [/ffmpeg.*macos64.*gpl.*\.zip$/i, /ffmpeg.*(?:mac|darwin).*\.zip$/i]
+    if (os === "darwin") return [/ffmpeg(?!.*shared).*macos64.*gpl.*\.zip$/i, /ffmpeg(?!.*shared).*(?:mac|darwin).*\.zip$/i]
   }
   if (tool === "aria2") {
     if (os === "windows") return [/aria2.*win.*64.*\.zip$/i, /aria2.*windows.*\.zip$/i]
@@ -228,6 +231,10 @@ export function scoreReleaseAsset(name, patterns = []) {
     if (patterns[index].test(name)) return patterns.length - index
   }
   return -1
+}
+
+export function isDisallowedReleaseAsset(tool, name = "") {
+  return tool === "ffmpeg" && /(?:^|[-_.])shared(?:[-_.]|$)/i.test(String(name || ""))
 }
 
 export async function findCommandExecutable(command, dirs = []) {
@@ -337,6 +344,81 @@ function resolveMaybeData(value = "") {
   if (path.isAbsolute(text)) return text
   if (text.startsWith("data/") || text.startsWith("data\\")) return resolveData(text.slice(5))
   return path.resolve(rootPath, text)
+}
+
+async function inspectToolInstall(name, executable, binDir, toolsDir) {
+  if (name !== "ffmpeg") return { ok: true }
+  if (await hasSharedFfmpegMarker(toolsDir)) {
+    return {
+      ok: false,
+      reason: "检测到旧 ffmpeg shared 下载包",
+    }
+  }
+  const ffprobe = path.join(binDir, commandFileName("ffprobe"))
+  if (!await exists(ffprobe)) {
+    return {
+      ok: false,
+      reason: "缺少 ffprobe",
+    }
+  }
+  if (!await exists(executable)) {
+    return {
+      ok: false,
+      reason: "缺少 ffmpeg",
+    }
+  }
+  return { ok: true }
+}
+
+async function copyToolPayload(name, executable, binDir, command, platform = process.platform) {
+  const target = path.join(binDir, commandFileName(command))
+  if (name !== "ffmpeg") {
+    await fs.copyFile(executable, target)
+    if (platform !== "win32") await fs.chmod(target, 0o755).catch(() => null)
+    return target
+  }
+
+  const sourceDir = path.dirname(executable)
+  const entries = await fs.readdir(sourceDir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (!entry.isFile() || !shouldCopyFfmpegPayloadFile(entry.name, platform)) continue
+    const source = path.join(sourceDir, entry.name)
+    const dest = path.join(binDir, entry.name)
+    await fs.copyFile(source, dest)
+    if (platform !== "win32") await fs.chmod(dest, 0o755).catch(() => null)
+  }
+  return target
+}
+
+function shouldCopyFfmpegPayloadFile(name, platform = process.platform) {
+  const lower = String(name || "").toLowerCase()
+  if (platform === "win32") {
+    return lower.endsWith(".exe") || lower.endsWith(".dll")
+  }
+  return ["ffmpeg", "ffprobe", "ffplay"].includes(lower)
+    || lower.endsWith(".so")
+    || lower.includes(".so.")
+    || lower.endsWith(".dylib")
+}
+
+async function hasSharedFfmpegMarker(toolsDir) {
+  const archiveDir = path.join(toolsDir, "downloads")
+  const entries = await fs.readdir(archiveDir).catch(error => {
+    if (error?.code === "ENOENT") return []
+    throw error
+  })
+  return entries.some(name => /ffmpeg.*shared/i.test(name))
+}
+
+async function removeSharedFfmpegArtifacts(toolsDir) {
+  const archiveDir = path.join(toolsDir, "downloads")
+  const entries = await fs.readdir(archiveDir).catch(error => {
+    if (error?.code === "ENOENT") return []
+    throw error
+  })
+  await Promise.all(entries
+    .filter(name => /ffmpeg.*shared/i.test(name))
+    .map(name => fs.rm(path.join(archiveDir, name), { recursive: true, force: true })))
 }
 
 function safeFileName(value = "asset") {

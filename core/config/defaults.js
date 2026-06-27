@@ -155,6 +155,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     api_url: "http://127.0.0.1:3000",
     schedule: "0 5 0 * * ? *",
     auto_catch_up: false,
+    notify_master: true,
     login_timeout_ms: 300000,
     login_poll_ms: 3000,
     delay_ms_min: 8000,

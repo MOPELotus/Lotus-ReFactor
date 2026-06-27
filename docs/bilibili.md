@@ -16,6 +16,8 @@
 
 B站解析会输出图片卡片，内容包含封面、主标题、简介、UP主、视频时长、点赞、收藏、投币、播放、弹幕和评论数据。视频解析卡发送后会继续走 BBDown 下载并发送视频文件；直播解析卡发送后会继续发送独立播放器链接。
 
-B 站下载只走 BBDown。ffmpeg 和 aria2 作为工具链自动准备。
+B 站下载只走 BBDown。ffmpeg 和 aria2 作为工具链自动准备；ffmpeg 会安装完整构建，包含 `ffmpeg`、`ffprobe` 及必要运行库。启动后和每日凌晨会清理临时目录，并移除已过期或已丢失文件的下载缓存。
+
+如果所在网络 IPv6 不可用但 aria2 默认尝试 IPv6，可以在 `bilibili.download.extra_args` 里给 BBDown/aria2 追加强制 IPv4 相关参数，或临时关闭 `bilibili.download.use_aria2` 后重试。
 
 直播只发送信息卡和独立播放器链接，不做直播下载。

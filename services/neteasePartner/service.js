@@ -170,6 +170,7 @@ export class NeteasePartnerService {
         }
         await this.sleep(randomDelay(delayMin, delayMax))
         const score = weightedScore()
+        const extraScore = buildExtraScore(work.dimensions)
         const payload = {
           taskId,
           workId: songId,
@@ -179,7 +180,7 @@ export class NeteasePartnerService {
           comment: account.comment === false ? "" : comments[Math.floor(Math.random() * comments.length)],
           syncYunCircle: "true",
           syncComment: account.comment === false ? "false" : "true",
-          extraScore: "{}",
+          extraScore: JSON.stringify(extraScore),
           source: "mp-music-partner",
           csrf_token: csrf,
         }
@@ -195,7 +196,8 @@ export class NeteasePartnerService {
         })
         if (post.code === 200) {
           summary.success++
-          summary.details.push(`${songName}: ${score}分`)
+          const subScoreText = formatSubScores(extraScore)
+          summary.details.push(`${songName}: ${score}分${subScoreText ? `（分项 ${subScoreText}）` : ""}`)
         } else {
           summary.fail++
           summary.details.push(`${songName}: ${post.message || "失败"}`)
@@ -305,6 +307,16 @@ export function buildPartnerItems(report) {
   }))
 }
 
+export function buildExtraScore(dimensions = [], scorer = weightedScore) {
+  const extraScore = {}
+  for (const dimension of normalizeDimensions(dimensions)) {
+    const id = dimensionId(dimension)
+    if (!id) continue
+    extraScore[id] = scorer()
+  }
+  return extraScore
+}
+
 export function normalizeCookie(rawCookie = "") {
   const skip = new Set(["path", "expires", "max-age", "domain", "httponly", "secure", "samesite"])
   const pairs = new Map()
@@ -346,6 +358,25 @@ function weightedScore() {
   if (r < 70) return 4
   if (r < 90) return 2
   return 5
+}
+
+function normalizeDimensions(dimensions = []) {
+  if (Array.isArray(dimensions)) return dimensions
+  if (dimensions && typeof dimensions === "object") return Object.values(dimensions)
+  return []
+}
+
+function dimensionId(dimension) {
+  if (dimension === null || dimension === undefined) return ""
+  if (typeof dimension === "string" || typeof dimension === "number") return String(dimension)
+  if (typeof dimension !== "object") return ""
+  return String(dimension.id || dimension.dimensionId || dimension.key || dimension.name || "")
+}
+
+function formatSubScores(extraScore = {}) {
+  return Object.entries(extraScore)
+    .map(([key, value]) => `${key}:${value}`)
+    .join(" / ")
 }
 
 function randomDelay(min, max) {

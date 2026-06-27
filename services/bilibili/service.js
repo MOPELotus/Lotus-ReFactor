@@ -265,7 +265,12 @@ export class BilibiliService {
     })
     const files = await findMediaFiles(workDir)
     if (!files.length) throw new Error("BBDown 执行完成但没有找到视频文件")
-    return files
+    const completed = selectCompletedMediaFiles(files)
+    if (!completed.length) {
+      const names = files.map(file => path.basename(file)).slice(0, 4).join(", ")
+      throw new Error(`BBDown 只留下了分离流分片，未生成带音轨的成品文件。请检查 ffmpeg/ffprobe 是否完整安装后重试。${names ? ` 分片示例：${names}` : ""}`)
+    }
+    return completed
   }
 
   async runBBDown(url, cwd, { page = null, config = {} } = {}) {
@@ -418,6 +423,51 @@ export class BilibiliService {
   async writeCache(cache) {
     await fs.mkdir(path.dirname(this.cacheFile), { recursive: true })
     await fs.writeFile(this.cacheFile, YAML.stringify(cache), "utf8")
+  }
+
+  async cleanupDownloads(config = {}) {
+    const download = normalizeDownloadConfig(config)
+    const tmpDir = resolveData("bilibili", "tmp")
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => null)
+
+    const cache = await this.readCache()
+    const nowMs = this.now().getTime()
+    let changed = false
+    let removedFiles = 0
+    let removedEntries = 0
+    for (const [key, item] of Object.entries(cache)) {
+      const files = Array.isArray(item.files) ? item.files : []
+      const expired = Boolean(item.expires_at && Date.parse(item.expires_at) < nowMs)
+      const existing = []
+      for (const file of files) {
+        if (await exists(file)) existing.push(file)
+      }
+      if (expired) {
+        for (const file of existing) {
+          await fs.rm(file, { force: true }).catch(() => null)
+          removedFiles += 1
+        }
+        delete cache[key]
+        removedEntries += 1
+        changed = true
+        continue
+      }
+      if (existing.length !== files.length) {
+        if (existing.length) cache[key] = { ...item, files: existing }
+        else {
+          delete cache[key]
+          removedEntries += 1
+        }
+        changed = true
+      }
+    }
+    if (changed && download.cache_enable !== false) await this.writeCache(cache)
+    return {
+      ok: true,
+      tmpDir,
+      removedFiles,
+      removedEntries,
+    }
   }
 
   async createQrLogin() {
@@ -644,6 +694,17 @@ export async function resolveCommandPath(command, toolsPath = "") {
 export function selectPages(pages = [], policy = "zip") {
   const list = Array.isArray(pages) && pages.length ? pages : [{ index: 1, page: 1 }]
   return policy === "first" ? [list[0]] : list
+}
+
+export function selectCompletedMediaFiles(files = []) {
+  return files.filter(file => !looksLikeBbdownStreamPart(file))
+}
+
+export function looksLikeBbdownStreamPart(file = "") {
+  const parsed = path.parse(String(file || ""))
+  const ext = parsed.ext.toLowerCase()
+  if (!MEDIA_EXTENSIONS.has(ext)) return false
+  return /^\d{6,}\.P\d+\.\d+$/i.test(parsed.name)
 }
 
 export function downloadCacheKey(info, config = {}) {

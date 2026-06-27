@@ -24,6 +24,7 @@ export async function registerProfileWithGenshin({ qq, profile, modules } = {}) 
     ltuid: String(ltuid),
     ck: account.cookie,
     type: "mys",
+    device: profile?.device?.id || "",
     uids: normalizeGameRoles(account.game_roles),
   })
 

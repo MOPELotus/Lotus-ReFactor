@@ -426,6 +426,9 @@ function validateNeteasePartnerConfig(netease = {}, errors) {
   if (typeof netease.auto_catch_up !== "boolean") {
     errors.push("netease_partner.auto_catch_up must be boolean")
   }
+  if (typeof netease.notify_master !== "boolean") {
+    errors.push("netease_partner.notify_master must be boolean")
+  }
   if (!Array.isArray(netease.comments) || !netease.comments.every(isString)) {
     errors.push("netease_partner.comments must be an array of strings")
   }

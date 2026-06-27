@@ -4,6 +4,8 @@
 
 `Lotus-Plugin` 的重构版，目标是把旧插件拆成可维护、可测试、profile-aware 的实现。主页面只保留概览，完整使用说明请看 [文档目录](docs/README.md)。
 
+本项目为源码可见的专有软件（Source-Available Proprietary Software）。允许个人非商业原样使用；禁止二次修改发布、搬运、商用、售卖及去除署名。完整条款见 [LICENSE](LICENSE)。
+
 ## 大功能
 
 - 米游社扫码登录与 cookie/stoken 刷新，兼容 genshin/miao。

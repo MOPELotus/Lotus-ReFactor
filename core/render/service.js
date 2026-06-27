@@ -3,12 +3,13 @@ import { pathToFileURL } from "node:url"
 import { resourcesPath } from "../path.js"
 import { formatLocalDateTime } from "../time.js"
 import { createRenderBackgroundProvider } from "./background.js"
-import { renderWithSkia } from "./skia.js"
 
 const DEFAULT_RENDER_OPTIONS = Object.freeze({
   imgType: "jpeg",
   quality: 98,
 })
+
+let skiaRendererPromise = null
 
 export async function renderTemplate(templateName, data = {}, options = {}) {
   const saveId = sanitizeSaveId(options.saveId || templateName)
@@ -32,12 +33,36 @@ export async function renderTemplate(templateName, data = {}, options = {}) {
     fontPath,
   }
 
+  const { renderWithSkia } = await loadSkiaRenderer()
   return renderWithSkia(templateName, payload, {
     ...DEFAULT_RENDER_OPTIONS,
     ...options,
     saveId,
     data: payload,
   })
+}
+
+async function loadSkiaRenderer() {
+  if (!skiaRendererPromise) {
+    skiaRendererPromise = import("./skia.js").catch(error => {
+      skiaRendererPromise = null
+      if (isSkiaCanvasLoadError(error)) {
+        throw new Error([
+          "skia-canvas 原生模块未安装或未编译，图片渲染不可用。",
+          "pnpm v10 工作区用户请在 Yunzai 根目录执行 pnpm approve-builds，选择 skia-canvas 后再执行 pnpm rebuild skia-canvas。",
+          "也可以在 Yunzai 根 package.json 配置 pnpm.onlyBuiltDependencies: [\"skia-canvas\"] 后重新安装。",
+          `原始错误：${error.message}`,
+        ].join(" "))
+      }
+      throw error
+    })
+  }
+  return skiaRendererPromise
+}
+
+function isSkiaCanvasLoadError(error) {
+  const text = `${error?.message || ""}\n${error?.stack || ""}`
+  return /skia-canvas|skia\.node|Cannot find module|ERR_DLOPEN_FAILED/i.test(text)
 }
 
 function firstBackground(backgrounds) {

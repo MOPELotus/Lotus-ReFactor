@@ -4,6 +4,7 @@ import { loadGlobalConfig } from "../core/config/global.js"
 import { PermissionService } from "../core/permissions/service.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
 import { formatLocalDateTime } from "../core/time.js"
+import { notifyUser } from "../core/transport/notify.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { buildPartnerItems, NeteasePartnerService } from "../services/neteasePartner/service.js"
 
@@ -74,6 +75,9 @@ export class LotusNeteasePartner extends BasePlugin {
       { recordRun: true },
     )
     logger?.mark?.(`[Lotus-Plugin] netease partner task finished: ${report.accounts?.length || 0} account(s)`)
+    await this.notifyMasters(globalConfig, report).catch(error => {
+      logger?.warn?.(`[Lotus-Plugin] notify netease partner report failed: ${error.message}`)
+    })
     return report
   }
 
@@ -158,17 +162,42 @@ export class LotusNeteasePartner extends BasePlugin {
   }
 
   async renderReport(title, report, badge) {
-    const image = await renderStatusCard({
+    const image = await this.renderReportImage(title, report, badge, this.e.user_id)
+    await replyImage(this, image, `[荷花插件]${title}报告已生成。`)
+  }
+
+  async renderReportImage(title, report, badge, userId = "master") {
+    return renderStatusCard({
       title,
       subtitle: report.trigger || "网易云音乐合伙人",
       badge,
       message: `生成时间：${report.time || formatLocalDateTime()}`,
-      userId: this.e.user_id,
+      userId,
       items: buildPartnerItems(report),
     }, {
-      saveId: `lotus-netease-partner-${this.e.user_id || "master"}`,
+      saveId: `lotus-netease-partner-${userId || "master"}`,
     })
-    await replyImage(this, image, `[荷花插件]${title}报告已生成。`)
+  }
+
+  async notifyMasters(globalConfig, report) {
+    const config = globalConfig.netease_partner || {}
+    if (config.notify_master === false) return
+    const masters = collectMasterIds()
+    if (!masters.length) {
+      logger?.debug?.("[Lotus-Plugin] netease partner report skipped: no master configured")
+      return
+    }
+    const image = await this.renderReportImage("合伙人自动任务", report, "完成", "master")
+    for (const master of masters) {
+      const result = await notifyUser(master, image, {
+        bot: globalThis.Bot,
+        onlyKnownFriend: false,
+        at: false,
+      })
+      if (!result.ok) {
+        logger?.warn?.(`[Lotus-Plugin] netease partner report notify failed for ${master}: ${result.reason}`)
+      }
+    }
   }
 
   async renderError(title, error) {
@@ -186,4 +215,32 @@ export class LotusNeteasePartner extends BasePlugin {
     })
     await replyImage(this, image, `[荷花插件]${title}失败。`)
   }
+}
+
+function collectMasterIds() {
+  const values = []
+  const config = globalThis.Bot?.config || {}
+  appendIds(values, config.masterQQ)
+  appendIds(values, config.master)
+  appendIds(values, config.masters)
+  appendIds(values, config.master_qq)
+  appendIds(values, config.owner)
+  return [...new Set(values.map(value => String(value).trim()).filter(Boolean))]
+}
+
+function appendIds(target, value) {
+  if (Array.isArray(value)) {
+    for (const item of value) appendIds(target, item)
+    return
+  }
+  if (value instanceof Set) {
+    for (const item of value) appendIds(target, item)
+    return
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) appendIds(target, item)
+    return
+  }
+  if (value === undefined || value === null || value === "") return
+  target.push(value)
 }

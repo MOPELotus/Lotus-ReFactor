@@ -33,6 +33,23 @@ export class LotusBilibili extends BasePlugin {
         { reg: "(bilibili.com|b23.tv|bili2233.cn|live.bilibili.com|^[Bb][Vv][1-9A-Za-z]{10}$|^[Aa][Vv][0-9]+$)", fnc: "parse" },
       ],
     })
+    this.task = [
+      {
+        name: "荷花插件B站下载清理",
+        cron: "0 30 3 * * ? *",
+        fnc: this.cleanupDownloads.bind(this),
+        log: false,
+      },
+    ]
+  }
+
+  async init() {
+    const timer = setTimeout(() => {
+      this.cleanupDownloads({ trigger: "startup" }).catch(error => {
+        logger?.warn?.(`[Lotus-Plugin] Bilibili cleanup failed: ${error.message}`)
+      })
+    }, 60 * 1000)
+    if (typeof timer.unref === "function") timer.unref()
   }
 
   async parse() {
@@ -291,6 +308,17 @@ export class LotusBilibili extends BasePlugin {
       await this.renderError(options.title || "B站下载", error)
     }
     return true
+  }
+
+  async cleanupDownloads(options = {}) {
+    const globalConfig = await loadGlobalConfig()
+    const service = await createService()
+    const result = await service.cleanupDownloads({
+      ...(globalConfig.bilibili || {}),
+      ...(globalConfig.bilibili?.download || {}),
+    })
+    logger?.mark?.(`[Lotus-Plugin] Bilibili cleanup finished: ${result.removedEntries} cache entries, ${result.removedFiles} files, trigger=${options.trigger || "schedule"}`)
+    return result
   }
 
   async renderError(title, error) {

@@ -16,6 +16,31 @@ corepack enable
 pnpm install
 ```
 
+pnpm v10 会默认拦截依赖的构建脚本。`skia-canvas` 是图片渲染需要的原生依赖，如果安装时出现：
+
+```text
+Ignored build scripts: skia-canvas
+```
+
+请在 Yunzai 根目录执行：
+
+```bash
+pnpm approve-builds
+pnpm rebuild skia-canvas
+```
+
+如果 Lotus-Plugin 是 Yunzai workspace 里的子项目，必须把允许构建配置放在 Yunzai 根 `package.json`，子项目里的 `pnpm.onlyBuiltDependencies` 不会生效：
+
+```json
+{
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "skia-canvas"
+    ]
+  }
+}
+```
+
 插件首次加载时会自动生成 `config/global.yaml`。如果已经安装锅巴插件，可以直接在锅巴面板里修改荷花插件的全局配置。
 
 如果 clone 时没有拉子模块：

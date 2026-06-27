@@ -214,6 +214,7 @@ const GUOBA_SCHEMAS = [
   input("netease_partner.api_url", "网易云接口", "本地或远程 API 地址。"),
   cron("netease_partner.schedule", "执行时间", "自动任务 cron。"),
   sw("netease_partner.auto_catch_up", "启动补跑", "错过当天任务后启动补跑。"),
+  sw("netease_partner.notify_master", "给主人发结果图", "自动任务完成后私聊给主人发送图片报告。"),
   number("netease_partner.login_timeout_ms", "登录超时", "单位毫秒。"),
   number("netease_partner.login_poll_ms", "登录轮询间隔", "单位毫秒。"),
   number("netease_partner.delay_ms_min", "最小操作间隔", "单位毫秒。"),
