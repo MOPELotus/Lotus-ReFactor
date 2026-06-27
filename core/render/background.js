@@ -6,6 +6,8 @@ import { loadGlobalConfig } from "../config/global.js"
 import { resolveData } from "../path.js"
 
 const FALLBACK_BACKGROUND = "https://api.dujin.org/bing/1920.php"
+const IMAGE_URL_PATTERN = /^https?:\/\/[^\s"'<>]+?\.(?:png|jpe?g|webp|gif)(?:\?[^\s"'<>]*)?$/i
+const IMAGE_URL_GLOBAL_PATTERN = /https?:\\?\/\\?\/[^\s"'<>]+?\.(?:png|jpe?g|webp|gif)(?:\?[^\s"'<>]*)?/gi
 
 export async function getRenderBackground(configOverride = null) {
   const config = configOverride || await loadGlobalConfig()
@@ -29,15 +31,18 @@ export async function getRenderBackgrounds(count = 1, configOverride = null) {
 }
 
 export async function resolveRenderBackgroundFromConfig(config) {
-  const source = config.render?.background || FALLBACK_BACKGROUND
-  const imageUrl = await resolveBackgroundUrl(source, config)
-
-  if (!isHttpUrl(imageUrl)) return normalizeStaticBackground(imageUrl)
-  try {
-    return await cacheRemoteBackground(imageUrl, config)
-  } catch {
-    return imageUrl
+  const sources = normalizeBackgroundSources(config.render?.background)
+  const ordered = shuffle(sources.length ? sources : [FALLBACK_BACKGROUND])
+  for (const source of ordered) {
+    try {
+      const imageUrl = await resolveBackgroundUrl(source, config)
+      if (!isHttpUrl(imageUrl)) return normalizeStaticBackground(imageUrl)
+      return await cacheRemoteBackground(imageUrl, config)
+    } catch {
+      continue
+    }
   }
+  return FALLBACK_BACKGROUND
 }
 
 async function normalizeStaticBackground(source) {
@@ -53,27 +58,41 @@ async function normalizeStaticBackground(source) {
 }
 
 async function resolveBackgroundUrl(source, config) {
-  if (!looksLikeJsonImageApi(source)) return source
+  if (!looksLikeDynamicBackgroundSource(source)) return source
 
-  try {
-    const response = await fetchWithTimeout(
-      source,
-      Number(config.render?.background_timeout_ms || 3000),
-    )
-    const contentType = response.headers.get("content-type") || ""
-    if (contentType.includes("application/json") || source.includes("xxapi.cn")) {
-      const body = await response.json()
-      return extractImageUrl(body) || source
-    }
-  } catch {
-    return FALLBACK_BACKGROUND
+  const response = await fetchWithTimeout(
+    source,
+    Number(config.render?.background_timeout_ms || 3000),
+  )
+  if (!response.ok) throw new Error(`background source request failed: ${response.status}`)
+
+  const contentType = response.headers.get("content-type") || ""
+  if (contentType.startsWith("image/")) return response.url || source
+
+  const bodyText = await response.text()
+  const urls = extractImageUrls(parseMaybeJson(bodyText) || bodyText)
+  const picked = pick(urls)
+  if (!picked) {
+    throw new Error("background source did not return an image url")
   }
-
-  return source
+  return picked
 }
 
-function looksLikeJsonImageApi(source) {
-  return isHttpUrl(source) && /xxapi\.cn|json|api/i.test(source)
+export function normalizeBackgroundSources(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap(item => normalizeBackgroundSources(item))
+  }
+  const text = String(value || "").trim()
+  if (!text) return []
+  return text
+    .split(/\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function looksLikeDynamicBackgroundSource(source) {
+  const text = String(source || "")
+  return isHttpUrl(text) && /api|json|contents|github\.com\/repos\/.+\/contents|hoyoverse|mihoyo|miyoushe/i.test(text)
 }
 
 async function fetchWithTimeout(url, timeoutMs) {
@@ -90,15 +109,34 @@ async function fetchWithTimeout(url, timeoutMs) {
   }
 }
 
-function extractImageUrl(value) {
-  if (!value || typeof value !== "object") return ""
-  for (const key of ["data", "url", "img", "image", "pic"]) {
-    const next = value[key]
-    if (typeof next === "string" && /^https?:\/\//i.test(next)) return next
-    const nested = extractImageUrl(next)
-    if (nested) return nested
+function parseMaybeJson(text) {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
   }
-  return ""
+}
+
+function extractImageUrls(value, results = []) {
+  if (!value) return results
+  if (typeof value === "string") {
+    for (const match of value.match(IMAGE_URL_GLOBAL_PATTERN) || []) {
+      results.push(match.replaceAll("\\/", "/"))
+    }
+    if (IMAGE_URL_PATTERN.test(value)) results.push(value)
+    return unique(results)
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) extractImageUrls(item, results)
+    return unique(results)
+  }
+  if (typeof value !== "object") return unique(results)
+  for (const key of ["download_url", "data", "url", "imgurl", "img", "image", "pic", "acgurl", "link"]) {
+    const next = value[key]
+    extractImageUrls(next, results)
+  }
+  for (const next of Object.values(value)) extractImageUrls(next, results)
+  return unique(results)
 }
 
 async function cacheRemoteBackground(url, config) {
@@ -108,6 +146,9 @@ async function cacheRemoteBackground(url, config) {
   const response = await fetchWithTimeout(url, timeoutMs)
   if (!response.ok) throw new Error(`background image request failed: ${response.status}`)
   const buffer = Buffer.from(await response.arrayBuffer())
+  if (!isImageBuffer(buffer, response.headers.get("content-type") || "")) {
+    throw new Error("background response is not an image")
+  }
   const ext = detectImageExt(buffer, response.headers.get("content-type"), url)
   const cacheSource = response.url && response.url !== url
     ? response.url
@@ -117,12 +158,22 @@ async function cacheRemoteBackground(url, config) {
 
   await fs.mkdir(cacheDir, { recursive: true })
   try {
-    await fs.access(file)
+    const stat = await fs.stat(file)
+    if (stat.size > 0) return pathToFileURL(file).href
   } catch (error) {
     if (error?.code !== "ENOENT") throw error
-    await fs.writeFile(file, buffer)
   }
+  await fs.writeFile(file, buffer)
   return pathToFileURL(file).href
+}
+
+function isImageBuffer(buffer, contentType = "") {
+  if (!buffer || buffer.length < 16) return false
+  return /^image\//i.test(contentType)
+    || buffer.subarray(0, 2).equals(Buffer.from([0xff, 0xd8]))
+    || buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    || (buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP")
+    || buffer.subarray(0, 3).toString("ascii") === "GIF"
 }
 
 function detectImageExt(buffer, contentType = "", url = "") {
@@ -142,4 +193,22 @@ function detectImageExt(buffer, contentType = "", url = "") {
 
 function isHttpUrl(value) {
   return /^https?:\/\//i.test(String(value || ""))
+}
+
+function shuffle(values = []) {
+  const next = [...values]
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const target = Math.floor(Math.random() * (index + 1))
+    ;[next[index], next[target]] = [next[target], next[index]]
+  }
+  return next
+}
+
+function pick(values = []) {
+  if (!values.length) return ""
+  return values[Math.floor(Math.random() * values.length)]
+}
+
+function unique(values = []) {
+  return [...new Set(values.filter(Boolean))]
 }

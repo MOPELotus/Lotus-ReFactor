@@ -1,6 +1,11 @@
 version: 1
 render:
-  background: https://v2.xxapi.cn/api/ys
+  background:
+    - https://api.lvxiaodong.com/api/ys?return=json
+    - https://api.horosama.com/random.php?name=genshin&type=pc&resolution=4k&format=json
+    - https://api.dreamofice.cn/hoyorandom/img?game=ys&type=json
+    - https://api.github.com/repos/Zeal-L/Honkai-Star-Rail-Wallpaper/contents/Offcial?ref=main
+    - https://api.dujin.org/pic/yuanshen/
   theme_color: "#66ccff"
   background_timeout_ms: 3000
 scheduler:

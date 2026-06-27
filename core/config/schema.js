@@ -153,7 +153,9 @@ function validateRenderConfig(render = {}, errors) {
     errors.push("render must be an object")
     return
   }
-  if (!isString(render.background)) errors.push("render.background must be a string")
+  if (!isString(render.background) && !isStringArray(render.background)) {
+    errors.push("render.background must be a string or string array")
+  }
   if (!isString(render.theme_color)) errors.push("render.theme_color must be a string")
   if (!isPositiveInteger(render.background_timeout_ms)) {
     errors.push("render.background_timeout_ms must be a positive integer")
@@ -517,6 +519,10 @@ function isObject(value) {
 
 function isString(value) {
   return typeof value === "string"
+}
+
+function isStringArray(value) {
+  return Array.isArray(value) && value.every(isString)
 }
 
 function isStringLike(value) {

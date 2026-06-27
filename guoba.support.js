@@ -6,6 +6,7 @@ import {
 import { DEFAULT_GLOBAL_CONFIG } from "./core/config/defaults.js"
 
 const ARRAY_FIELDS = new Set([
+  "render.background",
   "captcha.providers",
   "captcha.test_nine.model_files",
   "remote.allowed_paths",
@@ -94,7 +95,7 @@ const SCOPE_LABELS = {
 
 const GUOBA_SCHEMAS = [
   group("渲染"),
-  input("render.background", "随机背景接口", "用于图片背景的接口或本地路径。"),
+  textArea("render.background", "随机背景接口", "每行一个接口、本地路径或图片目录 JSON；会随机选择并自动兜底。"),
   input("render.theme_color", "主题色", "用于状态卡和强调色。"),
   number("render.background_timeout_ms", "背景加载超时", "单位毫秒。"),
 
@@ -434,7 +435,7 @@ function getSubmittedValue(data, field) {
 }
 
 function arrayToText(value) {
-  return Array.isArray(value) ? value.join("\n") : ""
+  return Array.isArray(value) ? value.join("\n") : String(value || "")
 }
 
 function textToArray(value) {
