@@ -56,6 +56,13 @@ const NUMBER_FIELDS = new Set([
   "atlas.update_output_limit",
 ])
 
+const CRON_FIELDS = new Set([
+  "scheduler.plan_generate_cron",
+  "scheduler.run_due_cron",
+  "netease_partner.schedule",
+  "atlas.auto_update.check_cron",
+])
+
 const POLICY_OPTIONS = [
   { label: "继承默认策略", value: "inherit" },
   { label: "允许", value: "allow" },
@@ -301,7 +308,8 @@ export function toGuobaFormData(config) {
   const result = {}
   for (const schema of GUOBA_SCHEMAS) {
     if (!schema.field) continue
-    const value = getPath(config, schema.field)
+    let value = getPath(config, schema.field)
+    if (CRON_FIELDS.has(schema.field)) value = quartzCronToGuobaCron(value)
     setPath(result, schema.field, ARRAY_FIELDS.has(schema.field) ? arrayToText(value) : value)
   }
   return result
@@ -435,6 +443,12 @@ function textToArray(value) {
     .split(/[\n,]/)
     .map(item => item.trim())
     .filter(Boolean)
+}
+
+function quartzCronToGuobaCron(value = "") {
+  const parts = String(value || "").trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return value
+  return parts.map(part => part === "?" ? "*" : part).join(" ")
 }
 
 function toNumber(value) {

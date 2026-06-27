@@ -74,10 +74,11 @@ export class ToolInstallerService {
 
     const binDir = resolveMaybeData(normalized.bin_dir || "data/tools/bin")
     const toolsDir = resolveMaybeData(normalized.dir || "data/tools")
-    const existing = await findCommandExecutable(tool.command, [binDir])
+    const existing = await findCommandExecutable(tool.command, [binDir], this.platform)
     if (existing) {
-      const health = await inspectToolInstall(name, existing, binDir, toolsDir)
+      const health = await inspectToolInstall(name, existing, binDir, toolsDir, this.platform)
       if (health.ok) {
+        await ensureExecutablePermissions(name, existing, binDir, this.platform)
         await emitProgress(onProgress, `工具链：${name} 已存在`)
         return {
           name,
@@ -121,7 +122,7 @@ export class ToolInstallerService {
           timeoutMs: normalized.timeout_ms,
         })
 
-        const executable = await findExtractedExecutable(extractDir, tool.command)
+        const executable = await findExtractedExecutable(extractDir, tool.command, this.platform)
         if (!executable) throw new Error(`${tool.command} executable not found in ${asset.name}`)
 
         const target = await copyToolPayload(name, executable, binDir, tool.command, this.platform)
@@ -263,8 +264,8 @@ export function isDisallowedReleaseAsset(tool, name = "") {
   return tool === "ffmpeg" && /(?:^|[-_.])shared(?:[-_.]|$)/i.test(String(name || ""))
 }
 
-export async function findCommandExecutable(command, dirs = []) {
-  const fileName = commandFileName(command)
+export async function findCommandExecutable(command, dirs = [], platform = process.platform) {
+  const fileName = commandFileName(command, platform)
   for (const dir of dirs.filter(Boolean)) {
     const candidate = path.join(resolveMaybeData(dir), fileName)
     if (await exists(candidate)) return candidate
@@ -302,8 +303,8 @@ async function extractArchive(spawnImpl, archive, target, options = {}) {
   throw new Error(`unsupported archive: ${path.basename(archive)}`)
 }
 
-async function findExtractedExecutable(root, command) {
-  const wanted = commandFileName(command).toLowerCase()
+async function findExtractedExecutable(root, command, platform = process.platform) {
+  const wanted = commandFileName(command, platform).toLowerCase()
   const fallback = String(command || "").toLowerCase()
   const queue = [root]
   while (queue.length) {
@@ -359,8 +360,8 @@ function runSpawn(spawnImpl, command, args = [], options = {}) {
   })
 }
 
-function commandFileName(command) {
-  if (process.platform === "win32" && !/\.exe$/i.test(command)) return `${command}.exe`
+export function commandFileName(command, platform = process.platform) {
+  if (platform === "win32" && !/\.exe$/i.test(command)) return `${command}.exe`
   return command
 }
 
@@ -372,7 +373,7 @@ function resolveMaybeData(value = "") {
   return path.resolve(rootPath, text)
 }
 
-async function inspectToolInstall(name, executable, binDir, toolsDir) {
+async function inspectToolInstall(name, executable, binDir, toolsDir, platform = process.platform) {
   if (name !== "ffmpeg") return { ok: true }
   if (await hasSharedFfmpegMarker(toolsDir)) {
     return {
@@ -380,7 +381,7 @@ async function inspectToolInstall(name, executable, binDir, toolsDir) {
       reason: "检测到旧 ffmpeg shared 下载包",
     }
   }
-  const ffprobe = path.join(binDir, commandFileName("ffprobe"))
+  const ffprobe = path.join(binDir, commandFileName("ffprobe", platform))
   if (!await exists(ffprobe)) {
     return {
       ok: false,
@@ -397,7 +398,7 @@ async function inspectToolInstall(name, executable, binDir, toolsDir) {
 }
 
 async function copyToolPayload(name, executable, binDir, command, platform = process.platform) {
-  const target = path.join(binDir, commandFileName(command))
+  const target = path.join(binDir, commandFileName(command, platform))
   if (name !== "ffmpeg") {
     await fs.copyFile(executable, target)
     if (platform !== "win32") await fs.chmod(target, 0o755).catch(() => null)
@@ -414,6 +415,15 @@ async function copyToolPayload(name, executable, binDir, command, platform = pro
     if (platform !== "win32") await fs.chmod(dest, 0o755).catch(() => null)
   }
   return target
+}
+
+async function ensureExecutablePermissions(name, executable, binDir, platform = process.platform) {
+  if (platform === "win32") return
+  await fs.chmod(executable, 0o755).catch(() => null)
+  if (name !== "ffmpeg") return
+  for (const command of ["ffmpeg", "ffprobe", "ffplay"]) {
+    await fs.chmod(path.join(binDir, commandFileName(command, platform)), 0o755).catch(() => null)
+  }
 }
 
 async function cleanupBrokenInstallArtifacts(archive, extractDir) {
