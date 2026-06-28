@@ -9,21 +9,25 @@ const OS_DS_SALT = "okr4obncj8bw5a65hbnn5oo6ixjc3l9w"
 
 const TYPE_META = Object.freeze({
   boss: {
+    kind: "boss",
     index: 0,
     label: "末日幻影",
     endpoint: "challenge_boss",
   },
   story: {
+    kind: "story",
     index: 1,
     label: "虚构叙事",
     endpoint: "challenge_story",
   },
   hall: {
+    kind: "hall",
     index: 2,
     label: "混沌回忆",
     endpoint: "challenge",
   },
   peak: {
+    kind: "peak",
     index: 3,
     label: "异相仲裁",
     endpoint: "challenge_peak",
@@ -258,10 +262,12 @@ function normalizeChallengeResult({ data, uid, meta, scheduleType, simple, recen
     floors = (activeData.all_floor_detail || [])
       .filter(floor => !floor?.is_fast)
       .map(formatFloor)
+      .filter(hasFloorRecord)
   }
 
   return {
     uid,
+    kind: meta.kind,
     label: meta.label,
     challengeType: meta.index,
     scheduleType,
@@ -293,7 +299,7 @@ function formatFloor(floor = {}) {
 
 function formatNode(node, label) {
   if (!node) return null
-  return {
+  const formatted = {
     label,
     score: node.score ?? "",
     round: node.round_num ?? "",
@@ -302,6 +308,28 @@ function formatNode(node, label) {
     buff: node.buff ? `${node.buff.name_mi18n || node.buff.name || ""}${node.buff.desc_mi18n ? `：${node.buff.desc_mi18n}` : ""}` : "",
     avatars: (node.avatars || []).map(formatAvatar),
   }
+  return hasNodeRecord(formatted) ? formatted : null
+}
+
+function hasFloorRecord(floor = {}) {
+  return hasValue(floor.score)
+    || hasValue(floor.stars)
+    || hasValue(floor.round)
+    || (floor.nodes || []).some(hasNodeRecord)
+}
+
+function hasNodeRecord(node = {}) {
+  return hasValue(node.score)
+    || hasValue(node.round)
+    || Boolean(node.time)
+    || node.defeated === true
+    || node.defeated === false
+    || Boolean(node.buff)
+    || Boolean(node.avatars?.length)
+}
+
+function hasValue(value) {
+  return value !== "" && value !== null && value !== undefined
 }
 
 function formatPeakRecord(record = {}, root = {}) {

@@ -312,7 +312,6 @@ class SkiaRenderer {
       width: this.innerWidth(),
       heroHeight: 188,
     })
-    this.gridItems(this.data.summary || [], 2)
     for (const result of this.data.results || []) {
       this.starRailChallengeCard(result)
     }
@@ -321,26 +320,18 @@ class SkiaRenderer {
 
   starRailChallengeCard(result = {}) {
     this.sectionTitle(result.label || "挑战")
-    const info = [
-      { label: "周期", value: result.period || "-" },
-      { label: "星数", value: result.extraStars ? `${result.stars || 0}+${result.extraStars}` : String(result.stars ?? "-") },
-      { label: "最深", value: String(result.maxFloor || "-") },
-      { label: "战斗", value: String(result.battleNum || "-") },
-    ]
-    this.gridItems(info, 4)
+    const floors = this.starRailDisplayFloors(result)
+    this.starRailChallengeInfo(result, floors.at(-1) || {})
 
     if (result.peak?.length) {
       for (const record of result.peak) this.starRailPeakRecord(record)
       return
     }
 
-    const floors = (result.floors || []).slice(-6)
-    for (const floor of floors) this.starRailFloorCard(floor)
-    if ((result.floors || []).length > floors.length) {
-      const omitted = (result.floors || []).length - floors.length
+    if (!floors.length) {
       const y = this.y
       this.card(this.padding, y, this.innerWidth(), 54, ctx => {
-        this.text(ctx, `已省略较早 ${omitted} 层，仅展示最近 ${floors.length} 层。`, this.padding + 18, y + 16, {
+        this.text(ctx, "暂无可展示的有效挑战记录。", this.padding + 18, y + 16, {
           width: this.innerWidth() - 36,
           size: 16,
           weight: 760,
@@ -349,13 +340,73 @@ class SkiaRenderer {
         })
       }, { fill: "rgba(255,255,255,0.72)", radius: 16 })
       this.y += 66
+      return
     }
+    for (const floor of floors) this.starRailFloorCard(floor)
+  }
+
+  starRailDisplayFloors(result = {}) {
+    const floors = (result.floors || []).filter(floor =>
+      floor?.score !== "" && floor?.score !== undefined && floor?.score !== null
+      || floor?.stars !== "" && floor?.stars !== undefined && floor?.stars !== null
+      || floor?.round !== "" && floor?.round !== undefined && floor?.round !== null
+      || Boolean(floor?.nodes?.length))
+    return floors.length ? [floors.at(-1)] : []
+  }
+
+  starRailChallengeInfo(result = {}, floor = {}) {
+    const summary = this.starRailDepthSummary(result, floor)
+    const items = [
+      { label: "周期", lines: periodLines(result.period || "-") },
+      { label: "星数", value: result.extraStars ? `${result.stars || 0}+${result.extraStars}` : String(result.stars ?? "-") },
+      summary,
+      { label: "战斗", value: String(result.battleNum || "-") },
+    ]
+    const columns = 4
+    const gap = 10
+    const cardWidth = (this.innerWidth() - gap * (columns - 1)) / columns
+    const rowHeight = 88
+    const y = this.y
+    this.commands.push(ctx => {
+      for (const [index, item] of items.entries()) {
+        const col = index % columns
+        const row = Math.floor(index / columns)
+        const x = this.padding + col * (cardWidth + gap)
+        const yy = y + row * (rowHeight + gap)
+        this.roundRect(ctx, x, yy, cardWidth, rowHeight, 15, "rgba(255,255,255,0.82)")
+        this.text(ctx, item.label, x + 12, yy + 12, { width: cardWidth - 24, size: 13, weight: 850, color: COLOR.sub, align: "center", maxLines: 1 })
+        const lines = item.lines?.length ? item.lines : [item.value || "-"]
+        const lineHeight = lines.length > 1 ? 20 : 24
+        const startY = yy + (lines.length > 1 ? 34 : 40)
+        for (const [lineIndex, line] of lines.entries()) {
+          this.text(ctx, line, x + 10, startY + lineIndex * lineHeight, {
+            width: cardWidth - 20,
+            size: lines.length > 1 ? 16 : 18,
+            weight: 900,
+            color: COLOR.ink,
+            align: "center",
+            maxLines: 1,
+          })
+        }
+      }
+    })
+    this.y += rowHeight + 14
+  }
+
+  starRailDepthSummary(result = {}, floor = {}) {
+    if (result.kind === "hall" || result.challengeType === 2) {
+      return { label: "已使用轮次", value: String(floor.round || result.battleNum || result.maxFloor || "-") }
+    }
+    if (result.kind === "story" || result.challengeType === 1) {
+      return { label: "总分", value: String(floor.score || nodeScoreTotal(floor.nodes) || result.maxFloor || "-") }
+    }
+    return { label: "最深", value: String(result.maxFloor || floor.title || "-") }
   }
 
   starRailFloorCard(floor = {}) {
     const nodes = floor.nodes || []
     const nodeHeights = nodes.map(node => this.starRailNodeHeight(node, this.innerWidth() - 36))
-    const h = Math.max(118, 72 + nodeHeights.reduce((sum, height) => sum + height + 10, 0))
+    const h = Math.max(118, 78 + nodeHeights.reduce((sum, height) => sum + height + 10, 0))
     const x = this.padding
     const y = this.y
     this.card(x, y, this.innerWidth(), h, async ctx => {
@@ -366,7 +417,7 @@ class SkiaRenderer {
       ].filter(Boolean).join(" · ")
       this.text(ctx, floor.title || "关卡", x + 18, y + 16, { width: this.innerWidth() - 36, size: 22, weight: 950, color: "#004466" })
       this.text(ctx, meta, x + 18, y + 44, { width: this.innerWidth() - 36, size: 14, weight: 780, color: COLOR.sub })
-      let yy = y + 72
+      let yy = y + 78
       for (const node of nodes) {
         yy += await this.starRailNode(ctx, node, x + 18, yy, this.innerWidth() - 36)
         yy += 10
@@ -377,30 +428,36 @@ class SkiaRenderer {
 
   starRailNodeHeight(node = {}, width = this.innerWidth()) {
     const avatarCount = Math.max(1, node.avatars?.length || 0)
-    const rows = Math.ceil(avatarCount / Math.max(1, Math.floor((width - 148) / 58)))
+    const textWidth = this.starRailNodeTextWidth(width)
+    const rows = Math.ceil(avatarCount / Math.max(1, Math.floor((width - textWidth - 38) / 58)))
+    const textLines = 2 + (node.defeated === true || node.defeated === false ? 1 : 0)
+    const textHeight = 18 + textLines * 22
     const buffHeight = node.buff ? this.measureParagraph(node.buff, width - 20, 12, 17) + 8 : 0
-    return Math.max(72, rows * 68 + buffHeight)
+    return Math.max(88, Math.max(textHeight, rows * 68 + 18) + buffHeight)
+  }
+
+  starRailNodeTextWidth(width) {
+    return Math.min(268, Math.max(220, Math.floor(width * 0.38)))
   }
 
   async starRailNode(ctx, node = {}, x, y, width) {
     const h = this.starRailNodeHeight(node, width)
     this.roundRect(ctx, x, y, width, h, 14, "rgba(102,204,255,0.12)")
-    const meta = [
-      node.score ? `积分 ${node.score}` : "",
-      node.round ? `轮 ${node.round}` : "",
-      node.time || "",
-      node.defeated === true ? "首领已击败" : node.defeated === false ? "首领未击败" : "",
-    ].filter(Boolean).join(" · ")
-    this.text(ctx, node.label || "节点", x + 12, y + 12, { width: 118, size: 16, weight: 920, color: "#004466" })
-    this.text(ctx, meta, x + 12, y + 38, { width: 120, size: 12, lineHeight: 16, weight: 720, color: COLOR.sub, maxLines: 2 })
-    let xx = x + 142
+    const textWidth = this.starRailNodeTextWidth(width)
+    const title = [node.label || "节点", hasRenderValue(node.score) ? `积分 ${node.score}` : ""].filter(Boolean).join(" ")
+    const time = node.time || (hasRenderValue(node.round) ? `轮次 ${node.round}` : "")
+    const defeated = node.defeated === true ? "已击败首领" : node.defeated === false ? "未击败首领" : ""
+    this.text(ctx, title, x + 12, y + 12, { width: textWidth, size: 16, weight: 920, color: "#004466", maxLines: 1 })
+    this.text(ctx, time || "-", x + 12, y + 38, { width: textWidth, size: 13, lineHeight: 18, weight: 760, color: COLOR.sub, maxLines: 1 })
+    if (defeated) this.text(ctx, defeated, x + 12, y + 60, { width: textWidth, size: 13, lineHeight: 18, weight: 820, color: COLOR.blue, maxLines: 1 })
+    let xx = x + textWidth + 30
     let yy = y + 10
     const maxX = x + width - 54
     for (const avatar of node.avatars || []) {
       await this.starRailAvatar(ctx, avatar, xx, yy, 50)
       xx += 58
       if (xx > maxX) {
-        xx = x + 142
+        xx = x + textWidth + 30
         yy += 68
       }
     }
@@ -903,7 +960,55 @@ class SkiaRenderer {
       }, { fill: "rgba(255,255,255,0.78)", radius: 16 })
       this.y += 70
     }
+    if (overview.descriptions?.length) this.hardChallengeDescriptionCard(overview.descriptions)
+    if (overview.monsters?.length) {
+      this.hardChallengeMonsterOverviewCard(overview)
+      return
+    }
     for (const level of overview.levels || []) this.hardChallengeLevelCard(level)
+  }
+
+  hardChallengeDescriptionCard(descriptions = []) {
+    const items = descriptions.filter(item => item?.text)
+    if (!items.length) return
+    const x = this.padding
+    const y = this.y
+    const width = this.innerWidth()
+    const bodyWidth = width - 36
+    const heights = items.map(item => 22 + this.measureParagraph(item.text, bodyWidth, 13, 20))
+    const h = 22 + heights.reduce((sum, height) => sum + height + 8, 0)
+    this.card(x, y, width, h, ctx => {
+      let yy = y + 14
+      for (const item of items) {
+        yy += this.text(ctx, item.label, x + 18, yy, { width: bodyWidth, size: 15, lineHeight: 19, weight: 950, color: COLOR.blue, align: "center", maxLines: 1 })
+        yy += 4
+        yy += this.text(ctx, item.text, x + 18, yy, { width: bodyWidth, size: 14, lineHeight: 22, weight: 650, color: COLOR.ink })
+        yy += 8
+      }
+    }, { fill: "rgba(255,255,255,0.86)", radius: 16 })
+    this.y += h + 14
+  }
+
+  hardChallengeMonsterOverviewCard(overview = {}) {
+    const monsters = overview.monsters || []
+    const columns = Math.min(3, Math.max(1, monsters.length || 1))
+    const gap = 14
+    const width = (this.innerWidth() - gap * (columns - 1)) / columns
+    const heights = monsters.map(monster => this.hardChallengeMonsterColumnHeight(monster, width))
+    const rowHeights = this.gridRowHeights(heights, columns)
+    const h = Math.max(280, 24 + rowHeights.reduce((sum, height) => sum + height + 18, 0))
+    const x = this.padding
+    const y = this.y
+    this.card(x, y, this.innerWidth(), h, async ctx => {
+      for (const [index, monster] of monsters.entries()) {
+        const col = index % columns
+        const row = Math.floor(index / columns)
+        const mx = x + col * (width + gap)
+        const my = y + 18 + rowHeights.slice(0, row).reduce((sum, height) => sum + height + 18, 0)
+        await this.hardChallengeMonsterColumn(ctx, monster, mx, my, width)
+      }
+    }, { fill: "rgba(255,255,255,0.9)", radius: 18 })
+    this.y += h + 14
   }
 
   hardChallengeLevelCard(level) {
@@ -915,8 +1020,9 @@ class SkiaRenderer {
     const width = (this.innerWidth() - gap * (columns - 1)) / columns
     const desc = [level.subtitle, ...(level.goals || []), level.desc].filter(Boolean).join(" / ")
     const descH = desc ? this.measureParagraph(desc, this.innerWidth() - 36, 14, 21) + 8 : 0
-    const monsterRows = Math.ceil((monsters.length || 1) / columns)
-    const h = Math.max(250, 76 + descH + monsterRows * 196)
+    const heights = monsters.map(monster => this.hardChallengeMonsterColumnHeight(monster, width))
+    const rowHeights = this.gridRowHeights(heights, columns)
+    const h = Math.max(250, 76 + descH + rowHeights.reduce((sum, height) => sum + height + 16, 0))
     const x = this.padding
     const y = this.y
     this.card(x, y, this.innerWidth(), h, async ctx => {
@@ -930,11 +1036,32 @@ class SkiaRenderer {
         const col = index % columns
         const row = Math.floor(index / columns)
         const mx = x + col * (width + gap)
-        const my = yy + row * 196
+        const my = yy + rowHeights.slice(0, row).reduce((sum, height) => sum + height + 16, 0)
         await this.hardChallengeMonsterColumn(ctx, monster, mx, my, width)
       }
     }, { fill: "rgba(255,255,255,0.9)", radius: 18 })
     this.y += h + 14
+  }
+
+  gridRowHeights(heights = [], columns = 1) {
+    const rows = Math.max(1, Math.ceil(Math.max(1, heights.length) / Math.max(1, columns)))
+    return Array.from({ length: rows }, (_, row) => {
+      const slice = heights.slice(row * columns, row * columns + columns)
+      return Math.max(196, ...slice)
+    })
+  }
+
+  hardChallengeMonsterColumnHeight(monster = {}, width = 200) {
+    let height = 142
+    const hpLine = this.hardChallengeHpLine(monster)
+    if (hpLine) height += this.measureParagraph(hpLine, width - 16, 13, 18) + 4
+    const descriptions = this.hardChallengeMonsterDescriptions(monster)
+    if (descriptions.length) {
+      for (const item of descriptions) {
+        height += 22 + this.measureParagraph(item.text, width - 16, 13, 20) + 8
+      }
+    }
+    return Math.max(196, height + 10)
   }
 
   async hardChallengeMonsterColumn(ctx, monster, x, y, width) {
@@ -942,9 +1069,40 @@ class SkiaRenderer {
     if (icon) this.drawImageContain(ctx, icon, x + (width - 88) / 2, y, 88, 88)
     else this.iconPlaceholder(ctx, x + (width - 88) / 2, y, 88, 88, "敌")
     const title = [monster.side, monster.name].filter(Boolean).join(" · ")
-    this.text(ctx, title, x + 8, y + 98, { width: width - 16, size: 15, lineHeight: 20, weight: 900, color: COLOR.ink, align: "center", maxLines: 2 })
-    const meta = [monster.hp, monster.weakness, monster.level].filter(Boolean).join(" / ")
-    this.text(ctx, meta, x + 8, y + 142, { width: width - 16, size: 13, lineHeight: 18, weight: 850, color: COLOR.blue, align: "center", maxLines: 2 })
+    let yy = y + 98
+    yy += this.text(ctx, title, x + 8, yy, { width: width - 16, size: 15, lineHeight: 20, weight: 900, color: COLOR.ink, align: "center", maxLines: 2 })
+    yy += 4
+    const hpLine = this.hardChallengeHpLine(monster)
+    if (hpLine) {
+      yy += this.text(ctx, hpLine, x + 8, yy, { width: width - 16, size: 13, lineHeight: 18, weight: 900, color: COLOR.blue, align: "center", maxLines: 2 })
+      yy += 6
+    }
+    for (const item of this.hardChallengeMonsterDescriptions(monster)) {
+      yy += this.text(ctx, item.label, x + 8, yy, { width: width - 16, size: 13, lineHeight: 17, weight: 900, color: "#006699", align: "center", maxLines: 1 })
+      yy += this.text(ctx, item.text, x + 8, yy, { width: width - 16, size: 13, lineHeight: 20, weight: 650, color: COLOR.ink })
+      yy += 6
+    }
+  }
+
+  hardChallengeHpLine(monster = {}) {
+    const levels = monster.levelByChallenge || {}
+    const lv5 = levels.N5 || levels["5"] || ""
+    const lv6 = levels.N6 || levels["6"] || ""
+    if (lv5 || lv6) return `等级 ${lv5 || "-"}/${lv6 || "-"}`
+    return monster.level ? `等级 ${monster.level}` : ""
+  }
+
+  hardChallengeMonsterDescriptions(monster = {}) {
+    const byLevel = monster.descByLevel || {}
+    const n5 = String(byLevel.N5 || byLevel["5"] || "").trim()
+    const n6 = String(byLevel.N6 || byLevel["6"] || "").trim()
+    if (n5 && n6 && n5 === n6) return [{ label: "说明", text: n5 }]
+    const items = [
+      n5 ? { label: "N5说明", text: n5 } : null,
+      n6 ? { label: "N6说明", text: n6 } : null,
+    ].filter(Boolean)
+    if (items.length) return items
+    return monster.desc ? [{ label: "说明", text: String(monster.desc) }] : []
   }
 
   drawTheaterOverview(overview) {
@@ -1465,6 +1623,30 @@ function tableColumnWidths(count, width) {
     : width / columns
   const rest = (width - first) / (columns - 1)
   return [first, ...Array.from({ length: columns - 1 }, () => rest)]
+}
+
+function periodLines(period = "") {
+  const text = String(period || "").trim()
+  if (!text || text === "-") return ["-"]
+  const parts = text.split(/\s+-\s+/).filter(Boolean)
+  if (parts.length < 2) return [text]
+  return [`${parts[0]} -`, parts.slice(1).join(" - ")]
+}
+
+function nodeScoreTotal(nodes = []) {
+  let total = 0
+  let seen = false
+  for (const node of nodes || []) {
+    const value = Number(node?.score)
+    if (!Number.isFinite(value)) continue
+    total += value
+    seen = true
+  }
+  return seen ? total : ""
+}
+
+function hasRenderValue(value) {
+  return value !== "" && value !== null && value !== undefined
 }
 
 function formatShortNumber(value) {

@@ -1428,6 +1428,8 @@ function getAtlasPageIndex(item, page) {
         name,
         image,
         file,
+        list,
+        detail,
       }
       for (const alias of [
         record.id,
@@ -1437,6 +1439,7 @@ function getAtlasPageIndex(item, page) {
         detail.name,
         path.basename(file, ".json"),
         stripDuplicateSuffix(path.basename(file, ".json")),
+        ...monsterEntityAliases(list, detail),
       ].filter(Boolean)) {
         index.set(String(alias), record)
         index.set(normalizeForMatch(alias), record)
@@ -1445,6 +1448,21 @@ function getAtlasPageIndex(item, page) {
   }
   ATLAS_PAGE_INDEX_CACHE.set(key, index)
   return index
+}
+
+function monsterEntityAliases(list = {}, detail = {}) {
+  const aliases = []
+  const push = (value) => {
+    const text = String(value || "").trim()
+    if (text) aliases.push(text, stripMonsterVariantNumber(text), normalizeInternalMonsterAlias(text))
+  }
+  push(list.icon)
+  push(detail.icon)
+  for (const child of Object.values(detail.child || detail.Child || {})) {
+    push(child?.monster_name || child?.MonsterName)
+    push(child?.icon || child?.Icon)
+  }
+  return [...new Set(aliases.filter(Boolean))]
 }
 
 function listJsonFilesSync(dir) {
@@ -2696,19 +2714,25 @@ function extractGenshinHardChallengeOverview(item, list, detail, images) {
   if (!rooms.length) return null
   let selected = rooms.filter(isHardChallengeLevelFiveOrSix)
   if (!selected.length && rooms.length >= 2) selected = rooms.slice(-2)
-  selected = selected.slice(0, 2)
+  selected = selected
+    .sort((a, b) => hardChallengeDifficultyNumber(a, 0) - hardChallengeDifficultyNumber(b, 0))
+    .slice(0, 2)
   if (!selected.length) return null
+  const levels = selected.map((room, index) => ({
+    ...room,
+    hardLabel: hardChallengeLevelLabel(room, index),
+    title: normalizeHardChallengeTitle(room.title, index),
+    monsters: flattenHardChallengeMonsters(room),
+  }))
 
   const date = extractDateRange({ content: { list, detail } })
   return {
     version: theaterVersionLabel(item.version),
     period: [formatLooseDate(date.start), formatLooseDate(date.end)].filter(Boolean).join(" - "),
     title: `${theaterVersionLabel(item.version)} 幽境危战 N5/6`.trim(),
-    levels: selected.map((room, index) => ({
-      ...room,
-      title: normalizeHardChallengeTitle(room.title, index),
-      monsters: flattenHardChallengeMonsters(room),
-    })),
+    levels,
+    descriptions: hardChallengeLevelDescriptions(levels),
+    monsters: combineHardChallengeMonsters(levels),
   }
 }
 
@@ -2722,6 +2746,40 @@ function normalizeHardChallengeTitle(title = "", index = 0) {
   return `${title || "关卡"} · N${index + 5}`
 }
 
+function hardChallengeDifficultyNumber(room = {}, index = 0) {
+  const level = hardChallengeLevelFromRoom(room)
+  if (level === 105) return 5
+  if (level === 110) return 6
+  const text = `${room.title || ""} ${room.subtitle || ""}`
+  const match = text.match(/N?([56])|难度([56])|第([五六])/i)
+  if (!match) return index + 5
+  if (match[1] || match[2]) return Number(match[1] || match[2])
+  return match[3] === "五" ? 5 : 6
+}
+
+function hardChallengeLevelLabel(room = {}, index = 0) {
+  const number = hardChallengeDifficultyNumber(room, index)
+  return number === 6 ? "N6" : "N5"
+}
+
+function hardChallengeLevelFromRoom(room = {}, label = "") {
+  if (label === "N5") return 105
+  if (label === "N6") return 110
+  const raw = Number(room.rawMonsterLevel ?? room.monster_level)
+  if (!Number.isFinite(raw) || raw <= 0) return ""
+  if (raw === 104) return 105
+  if (raw === 109) return 110
+  return raw + 1
+}
+
+function hardChallengeLevelDescriptions(levels = []) {
+  return levels.map((level, index) => {
+    const label = level.hardLabel || hardChallengeLevelLabel(level, index)
+    const text = cleanChallengeTextList(level.descriptions || level.desc_list).join("\n")
+    return text ? { label, text } : null
+  }).filter(Boolean)
+}
+
 function flattenHardChallengeMonsters(room = {}) {
   const monsters = []
   for (const side of room.sides || []) {
@@ -2733,6 +2791,33 @@ function flattenHardChallengeMonsters(room = {}) {
     }
   }
   return dedupeMiniCards(monsters).slice(0, 6)
+}
+
+function combineHardChallengeMonsters(levels = []) {
+  const map = new Map()
+  for (const [levelIndex, level] of levels.entries()) {
+    const label = level.hardLabel || hardChallengeLevelLabel(level, levelIndex)
+    const actualLevel = hardChallengeLevelFromRoom(level, label)
+    for (const monster of level.monsters || []) {
+      const key = monster.id || monster.name || monster.icon
+      if (!key) continue
+      const current = map.get(key) || {
+        ...monster,
+        side: "",
+        descByLevel: {},
+        levelByChallenge: {},
+      }
+      if (!current.icon && monster.icon) current.icon = monster.icon
+      if (!current.name && monster.name) current.name = monster.name
+      if (!current.id && monster.id) current.id = monster.id
+      if (!current.weakness && monster.weakness) current.weakness = monster.weakness
+      current.levelByChallenge[label] = monster.level || (actualLevel ? `Lv${actualLevel}` : "")
+      const monsterDesc = [monster.desc, monster.buffText].filter(Boolean).join("\n")
+      if (monsterDesc) current.descByLevel[label] = monsterDesc
+      map.set(key, current)
+    }
+  }
+  return [...map.values()].slice(0, 6)
 }
 
 function extractChallengeRoomCards(item, detail, images) {
@@ -2762,13 +2847,16 @@ function extractChallengeRoomCards(item, detail, images) {
   }
   for (const [difficultyKey, value] of Object.entries(detail?.difficulty_config || {})) {
     for (const [roomKey, room] of Object.entries({ ...(value.room || {}), ...(value.hard_room || {}) })) {
+      const actualLevel = hardChallengeLevelFromRoom(room)
       const monsters = toArray(room.monster_preview_list)
-        .map((monster, index) => monsterCard(monster, images.first([`detail.difficulty_config.${difficultyKey}.room.${roomKey}.monster_preview_list.${index}.icon`, `detail.difficulty_config.${difficultyKey}.hard_room.${roomKey}.monster_preview_list.${index}.icon`, monster.icon]), null, item))
+        .map((monster, index) => monsterCard(monster, images.first([`detail.difficulty_config.${difficultyKey}.room.${roomKey}.monster_preview_list.${index}.icon`, `detail.difficulty_config.${difficultyKey}.hard_room.${roomKey}.monster_preview_list.${index}.icon`, monster.icon]), null, item, { level: actualLevel ? `Lv${actualLevel}` : "" }))
       if (!monsters.length && !room.title && !room.desc) continue
       cards.push({
         title: `难度${difficultyKey} · 房间${roomKey}`,
-        subtitle: room.monster_level ? `Lv${room.monster_level}` : "",
+        subtitle: actualLevel ? `Lv${actualLevel}` : "",
         desc: cleanText(room.desc).replace(/\n/g, " "),
+        descriptions: cleanChallengeTextList(room.desc_list),
+        rawMonsterLevel: room.monster_level,
         sides: [
           { label: "敌人", monsters },
         ],
@@ -2789,16 +2877,19 @@ function extractChallengeRoomCards(item, detail, images) {
   }
   for (const level of toArray(detail?.level)) {
     const sides = collectChallengeLevelCardSides(level, images, item)
+    const actualLevel = hardChallengeLevelFromRoom(level)
     cards.push({
       title: challengeLevelTitle(level, detail.level),
       subtitle: [
-        sides[0]?.monsters?.[0]?.level || "",
+        actualLevel ? `Lv${actualLevel}` : sides[0]?.monsters?.[0]?.level || "",
         level.damage_type1?.length ? `上半弱点 ${valueLabel(level.damage_type1)}` : "",
         level.damage_type2?.length ? `下半弱点 ${valueLabel(level.damage_type2)}` : "",
         level.damage_type3?.length ? `第三路弱点 ${valueLabel(level.damage_type3)}` : "",
         level.damage_type?.length ? `弱点 ${valueLabel(level.damage_type)}` : "",
       ].filter(Boolean).join(" · "),
       goals: toArray(level.challenge).map(item => cleanText(item.name, item.param)).filter(Boolean),
+      descriptions: cleanChallengeTextList(level.desc_list || level.difficulty_config?.desc_list),
+      rawMonsterLevel: level.monster_level,
       sides,
     })
   }
@@ -2825,8 +2916,12 @@ function extractChallengeRoomCards(item, detail, images) {
 
 function collectChallengeLevelCardSides(level, images, item) {
   const sides = []
+  const actualLevel = hardChallengeLevelFromRoom(level)
+  const context = {
+    level: actualLevel ? `Lv${actualLevel}` : "",
+  }
   const push = (label, value) => {
-    const monsters = collectMonsterCards(value, images, item).slice(0, 8)
+    const monsters = collectMonsterCards(value, images, item, context).slice(0, 8)
     if (monsters.length) sides.push({ label, monsters })
   }
   push("上半", level.event_id_list1 || level.boss_monster_config1 || level.boss_monster_id1 || level.npc_monster_id_list1)
@@ -2836,24 +2931,148 @@ function collectChallengeLevelCardSides(level, images, item) {
   return sides
 }
 
-function collectMonsterCards(value, images, item) {
+function collectMonsterCards(value, images, item, context = {}) {
   return collectMonsterRefs(value)
     .map(ref => typeof ref === "object"
-      ? monsterCard(ref, images.first([ref.icon, ref.name].filter(Boolean)), null, item)
-      : monsterCard({ id: ref }, "", null, item))
+      ? monsterCard(ref, images.first([ref.icon, ref.name].filter(Boolean)), null, item, context)
+      : monsterCard({ id: ref }, "", null, item, context))
     .filter(card => card.name || card.icon)
 }
 
-function monsterCard(monster, icon = "", weakness = null, item = null) {
-  const indexed = monster?.id ? findAtlasEntity(item, ["敌人", "敌人数值"], normalizeMonsterId(monster.id)) : null
+function monsterCard(monster, icon = "", weakness = null, item = null, context = {}) {
+  const indexed = findMonsterAtlasEntity(item, monster)
+  const hp = formatMonsterHp(monster?.hp)
+    || formatMonsterHp(monster?.stats?.hp)
+    || formatMonsterHp(findDeepValue(monster, ["hp", "max_hp", "base_hp", "life"]))
+    || formatMonsterHp(findDeepValue(indexed?.detail, ["hp", "max_hp", "base_hp", "life"]))
+    || formatMonsterHp(findDeepValue(indexed?.list, ["hp", "max_hp", "base_hp", "life"]))
+  const desc = firstDeepText([
+    monster,
+    indexed?.detail,
+    indexed?.list,
+  ], ["desc", "description", "describe", "monster_desc", "intro", "effect"])
+  const buffText = monsterBuffText(monster)
   return {
     id: monster?.id ? normalizeMonsterId(monster.id) : indexed?.id || "",
     name: cleanText(monster?.name || monster?.title || indexed?.name || (monster?.id ? `敌人 ${normalizeMonsterId(monster.id)}` : "敌人")),
     icon: icon || indexed?.image || monsterIconName(monster?.id),
-    hp: monster?.hp ? formatInteger(monster.hp) : monster?.stats?.hp ? formatInteger(monster.stats.hp) : "",
-    level: monster?.level ? `Lv${monster.level}` : "",
+    hp,
+    level: monster?.level ? `Lv${monster.level}` : context.level || "",
     weakness: valueLabel(weakness || monster?.monster_weakness),
+    desc,
+    buffText,
   }
+}
+
+function findMonsterAtlasEntity(item, monster = {}) {
+  if (!item?.atlasRoot) return null
+  const candidates = []
+  const push = (value) => {
+    const text = cleanText(value)
+    if (text && !candidates.includes(text)) candidates.push(text)
+  }
+  push(monster?.id ? normalizeMonsterId(monster.id) : "")
+  push(monster?.monster_id ? normalizeMonsterId(monster.monster_id) : "")
+  push(monster?.monster_template_id ? normalizeMonsterId(monster.monster_template_id) : "")
+  push(monster?.name)
+  push(monster?.title)
+  const iconName = monsterIconToInternalName(monster?.icon)
+  push(iconName)
+  push(stripMonsterVariantNumber(iconName))
+  for (const alias of monsterInternalAliasCandidates(iconName)) push(alias)
+  const baseName = baseMonsterName(monster?.name || monster?.title)
+  push(baseName)
+  for (const candidate of candidates) {
+    const hit = findAtlasEntity(item, ["敌人", "敌人数值"], candidate)
+    if (hit) return hit
+  }
+  return null
+}
+
+function baseMonsterName(value = "") {
+  const text = cleanText(value)
+  if (!text) return ""
+  return text.split(/[·・]/)[0].trim()
+}
+
+function monsterIconToInternalName(icon = "") {
+  const text = String(icon || "").split(/[\\/]/).at(-1)?.replace(/\.(?:png|webp|jpg|jpeg|avif)$/i, "") || ""
+  if (!text) return ""
+  return text.replace(/^UI_MonsterIcon_/i, "Monster_").replace(/^IconMonster_/i, "Monster_")
+}
+
+function stripMonsterVariantNumber(value = "") {
+  return String(value || "").replace(/_\d+$/g, "")
+}
+
+function normalizeInternalMonsterAlias(value = "") {
+  return stripMonsterVariantNumber(String(value || "").replace(/^(?:UI_MonsterIcon_|UI_AnimalIcon_|IconMonster_|Monster_)/i, ""))
+}
+
+function monsterInternalAliasCandidates(value = "") {
+  const base = normalizeInternalMonsterAlias(value)
+  if (!base) return []
+  const aliases = [base]
+  const parts = base.split("_").filter(Boolean)
+  while (parts.length > 1) {
+    parts.pop()
+    aliases.push(parts.join("_"))
+  }
+  return [...new Set(aliases.filter(alias => alias.length >= 4))]
+}
+
+function cleanChallengeTextList(value) {
+  return toArray(value)
+    .map(item => cleanText(item).replace(/\n{2,}/g, "\n").trim())
+    .filter(Boolean)
+}
+
+function monsterBuffText(monster = {}) {
+  const names = toArray(monster.monster_buff_name_list).map(cleanText)
+  const summary = toArray(monster.monster_buff_desc_list)
+  const details = toArray(monster.monster_buff_detail_list)
+  const lines = []
+  const push = (label, text) => {
+    const clean = cleanText(text).replace(/\n{2,}/g, "\n").trim()
+    if (!clean) return
+    const value = label ? `${label}：${clean}` : clean
+    if (!lines.includes(value)) lines.push(value)
+  }
+  summary.forEach((text, index) => push(names[index] || "", text))
+  details.forEach((text, index) => {
+    const label = names[index] ? `${names[index]}详情` : ""
+    push(label, text)
+  })
+  return lines.join("\n")
+}
+
+function formatMonsterHp(value) {
+  if (value == null || value === "") return ""
+  if (typeof value === "number") return formatInteger(value)
+  const text = cleanText(value)
+  if (!text) return ""
+  return /^\d+(?:\.\d+)?$/.test(text) ? formatInteger(text) : text
+}
+
+function firstDeepText(sources = [], keys = []) {
+  for (const source of sources) {
+    const value = findDeepValue(source, keys)
+    const text = cleanText(value).replace(/\n{2,}/g, "\n").trim()
+    if (text) return text.slice(0, 420)
+  }
+  return ""
+}
+
+function findDeepValue(value, keys = [], depth = 0) {
+  if (!value || typeof value !== "object" || depth > 4) return ""
+  for (const key of keys) {
+    if (value[key] != null && value[key] !== "") return value[key]
+  }
+  for (const child of Object.values(value)) {
+    const hit = findDeepValue(child, keys, depth + 1)
+    if (hit != null && hit !== "") return hit
+  }
+  return ""
 }
 
 function extractMaterialObjects(item, detail, images) {
@@ -3592,13 +3811,17 @@ function collectMonsterRefs(value, state = { refs: [], seen: new Set() }, pathTe
   if (typeof value !== "object") return state.refs
   if (value.name || value.title) {
     const ref = {
-      id: value.id || value.monster_id || value.monster_template_id,
+      id: value.id || value.monster_id || value.monster_template_id || monsterRefIdFromPath(pathText),
       name: cleanText(value.name || value.title),
       icon: value.icon || value.image || value.image_path || "",
       hp: value.hp,
       stats: value.stats,
       level: value.level || value.monster_level,
       monster_weakness: value.monster_weakness,
+      desc: value.desc,
+      monster_buff_name_list: value.monster_buff_name_list,
+      monster_buff_desc_list: value.monster_buff_desc_list,
+      monster_buff_detail_list: value.monster_buff_detail_list,
     }
     pushMonsterRef(state, ref)
   }
@@ -3606,6 +3829,11 @@ function collectMonsterRefs(value, state = { refs: [], seen: new Set() }, pathTe
     collectMonsterRefs(child, state, `${pathText}.${key}`)
   }
   return state.refs
+}
+
+function monsterRefIdFromPath(pathText = "") {
+  const key = String(pathText).split(".").filter(Boolean).at(-1) || ""
+  return /^\d{5,}$/.test(key) ? key : ""
 }
 
 function isMonsterIdPath(pathText = "") {

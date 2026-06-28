@@ -17,6 +17,7 @@ import { StarRailChallengeService } from "../services/starRailChallenge/service.
 
 const P = PROFILE_ID_REQUIRED_SUFFIX_PATTERN
 const Z = "(?:[%％]|#绝区零)"
+const SR_CHALLENGE_WORDS = "(?:深渊|忘却|忘却之庭|混沌|混沌回忆|虚构|虚构叙事|末日|末日幻影|异乡|异相|异向|仲裁|异相仲裁)"
 
 export class LotusProfileQuery extends BasePlugin {
   constructor(options = {}) {
@@ -39,8 +40,10 @@ export class LotusProfileQuery extends BasePlugin {
         { reg: `^#(?:喵喵|上传|本期)*(?:深渊|深境|深境螺旋)[ |0-9]*(?:数据)?\\s*${P}$`, fnc: "miaoAbyssSummary" },
         { reg: `^#(?:喵喵)*(?:本期|上期)?(?:幻想|幻境|剧诗|幻想真境剧诗)[ |0-9]*(?:数据)?\\s*${P}$`, fnc: "miaoRoleCombatSummary" },
         { reg: `^#(?:喵喵)*(?:本期|上期)?(?:幽境|危战|幽境危战)(?:单人|单挑|组队|多人|合作|最佳)?[ |0-9]*(?:数据)?\\s*${P}$`, fnc: "miaoHardChallengeSummary" },
-        { reg: `^\\*(?:往期|上期|本期|最新|当期)?(?:简易)?(?:深渊|忘却|忘却之庭|混沌|混沌回忆|虚构|虚构叙事|末日|末日幻影|异乡|异相|异向|仲裁|异相仲裁)\\s*${P}$`, fnc: "starRailChallenge" },
-        { reg: `^#星铁(?:往期|上期|本期|最新|当期)?(?:简易)?(?:深渊|忘却|忘却之庭|混沌|混沌回忆|虚构|虚构叙事|末日|末日幻影|异乡|异相|异向|仲裁|异相仲裁)\\s*${P}$`, fnc: "starRailChallenge" },
+        { reg: `^\\*(?:往期|上期|本期|最新|当期)?(?:简易)?${SR_CHALLENGE_WORDS}\\s*${P}$`, fnc: "starRailChallenge" },
+        { reg: `^#星铁(?:往期|上期|本期|最新|当期)?(?:简易)?${SR_CHALLENGE_WORDS}\\s*${P}$`, fnc: "starRailChallenge" },
+        { reg: `^\\*(?:简易)?${SR_CHALLENGE_WORDS}\\s*$`, fnc: "starRailChallenge" },
+        { reg: `^#星铁(?:简易)?${SR_CHALLENGE_WORDS}\\s*$`, fnc: "starRailChallenge" },
         { reg: `^${Z}(?![\\s\\S]*(?:更新|刷新))[\\s\\S]*(?:面板)(?:列表)?\\s*${P}$`, fnc: "zzzPanel" },
         { reg: `^${Z}[\\s\\S]+伤害\\s*${P}$`, fnc: "zzzDamage" },
         { reg: `^${Z}练度(?:统计)?\\s*${P}$`, fnc: "zzzProficiency" },
@@ -131,29 +134,29 @@ export class LotusProfileQuery extends BasePlugin {
 
   async runStarRailChallenge() {
     const parsed = splitProfileSuffix(this.e.msg)
-    if (!parsed.hasProfileSuffix) return false
+    const profileId = parsed.hasProfileSuffix ? parsed.profileId : 1
     const userId = String(this.e.user_id)
     const command = normalizeStarRailCommand(parsed.message)
     return this.runProfileQuery({
       userId,
-      profileId: parsed.profileId,
+      profileId,
       game: "sr",
       command,
       runner: async profile => {
         const result = await this.starRail.queryProfile({
           profile,
-          profileId: parsed.profileId,
+          profileId,
           command,
         })
         const image = await renderTemplate("starrail-challenge", result.renderData, {
-          saveId: `lotus-sr-challenge-${userId}-${parsed.profileId}-${Date.now()}`,
+          saveId: `lotus-sr-challenge-${userId}-${profileId}-${Date.now()}`,
         })
         await replyImage(this, image, `[荷花插件]${result.renderData.title}查询完成。`)
         return {
           ok: true,
           game: "sr",
           uid: result.uid,
-          profileId: parsed.profileId,
+          profileId,
           messages: [],
           forwarded: ["[图片]"],
         }
