@@ -112,6 +112,8 @@ class SkiaRenderer {
     if (this.templateName === "genshin-team-damage") return this.buildGenshinTeamDamage()
     if (this.templateName === "starrail-team-damage") return this.buildStarRailTeamDamage()
     if (this.templateName === "starrail-challenge") return this.buildStarRailChallenge()
+    if (this.templateName === "achievement-index") return this.buildAchievementIndex()
+    if (this.templateName === "achievement-category") return this.buildAchievementCategory()
     if (this.templateName === "atlas-result") return this.buildAtlasResult()
     if (this.templateName === "atlas-challenge") return this.buildAtlasChallenge()
     if (this.templateName === "atlas-item") return this.buildAtlasItem()
@@ -1004,6 +1006,186 @@ class SkiaRenderer {
       for (const room of view.rooms) this.roomCard(room)
     }
     this.footer("数据来源 Nanoka Atlas")
+  }
+
+  buildAchievementIndex() {
+    const categories = this.data.categories || []
+    this.hero({
+      title: this.data.title || "原神成就目录",
+      subtitle: this.data.subtitle || "",
+      badge: this.data.badge || "ACH",
+      message: this.data.message || "",
+      image: this.data.icon || this.data.image,
+      width: this.innerWidth(),
+      heroHeight: 198,
+    })
+    this.gridItems(this.data.summary || [], 4)
+    this.sectionTitle("目录")
+    const gap = 12
+    const columns = 2
+    const width = (this.innerWidth() - gap) / columns
+    for (let index = 0; index < categories.length; index += columns) {
+      const row = categories.slice(index, index + columns)
+      const height = 112
+      row.forEach((category, offset) => {
+        const x = this.padding + offset * (width + gap)
+        const y = this.y
+        this.achievementCategoryTile(category, x, y, width, height)
+      })
+      this.y += height + 10
+    }
+    this.footer(this.data.source || "Nanoka Atlas / 椰羊成就 JSON")
+  }
+
+  buildAchievementCategory() {
+    const groups = this.data.groups || []
+    this.hero({
+      title: this.data.title || "原神成就",
+      subtitle: this.data.subtitle || "",
+      badge: this.data.badge || "ACH",
+      message: this.data.message || "",
+      image: this.data.icon || this.data.image,
+      width: this.innerWidth(),
+      heroHeight: 198,
+    })
+    this.gridItems(this.data.summary || [], 4)
+    this.sectionTitle("成就")
+    for (const group of groups) this.achievementGroupCard(group)
+    if (this.data.hiddenCount > 0) {
+      const y = this.y
+      this.card(this.padding, y, this.innerWidth(), 58, ctx => {
+        this.text(ctx, `还有 ${this.data.hiddenCount} 个条目未展示，可后续补分页入口继续查看。`, this.padding + 18, y + 18, {
+          width: this.innerWidth() - 36,
+          size: 16,
+          weight: 820,
+          color: COLOR.sub,
+          align: "center",
+          maxLines: 1,
+        })
+      }, { fill: "rgba(255,255,255,0.82)", radius: 16 })
+      this.y += 70
+    }
+    this.footer(this.data.source || "Nanoka Atlas / 椰羊成就 JSON")
+  }
+
+  achievementCategoryTile(category = {}, x, y, width, height) {
+    this.card(x, y, width, height, async ctx => {
+      const completed = Number(category.completed || 0)
+      const total = Number(category.total || 0)
+      const pct = total ? Math.max(0, Math.min(1, completed / total)) : 0
+      const icon = await this.loadImage(category.icon)
+      if (icon) this.drawImageContain(ctx, icon, x + 16, y + 18, 56, 56)
+      else this.iconPlaceholder(ctx, x + 16, y + 18, 56, 56, "成")
+      const statusColor = completed >= total && total > 0 ? "#26b875" : COLOR.blue
+      this.text(ctx, category.name || "成就分类", x + 86, y + 16, {
+        width: width - 104,
+        size: 20,
+        weight: 950,
+        color: "#004466",
+        maxLines: 1,
+      })
+      this.text(ctx, `成就 ${completed}/${total} · 原石 ${category.pointsDone || 0}/${category.pointsTotal || 0} · ${category.percent || 0}%`, x + 86, y + 46, {
+        width: width - 104,
+        size: 13,
+        weight: 760,
+        color: COLOR.sub,
+        maxLines: 1,
+      })
+      this.roundRect(ctx, x + 86, y + 76, width - 118, 12, 6, "rgba(102,204,255,0.16)")
+      this.roundRect(ctx, x + 86, y + 76, Math.max(4, (width - 118) * pct), 12, 6, statusColor)
+      this.pill(ctx, x + width - 78, y + 72, 54, 24, completed >= total && total > 0 ? "完成" : "未完", statusColor)
+    }, { fill: "rgba(255,255,255,0.9)", radius: 18 })
+  }
+
+  achievementGroupCard(group = {}) {
+    const stages = group.stages || []
+    const width = this.innerWidth()
+    const bodyWidth = width - 122
+    const stageHeights = stages.map(stage => this.achievementStageHeight(stage, bodyWidth))
+    const descHeight = group.desc && stages.length > 1 ? this.measureParagraph(group.desc, width - 40, 13, 18) + 8 : 0
+    const height = Math.max(112, 62 + descHeight + stageHeights.reduce((sum, item) => sum + item + 8, 0))
+    const x = this.padding
+    const y = this.y
+    this.card(x, y, width, height, ctx => {
+      const statusColor = group.done ? "#26b875" : group.partial ? "#ef9f2f" : COLOR.blue
+      this.roundRect(ctx, x + 18, y + 20, 34, 34, 17, statusColor)
+      this.text(ctx, group.done ? "✓" : group.partial ? "…" : "○", x + 18, y + 23, {
+        width: 34,
+        size: 20,
+        weight: 950,
+        color: "#fff",
+        align: "center",
+        maxLines: 1,
+      })
+      this.text(ctx, group.name || "成就", x + 66, y + 16, {
+        width: width - 250,
+        size: 22,
+        weight: 950,
+        color: "#004466",
+        maxLines: 1,
+      })
+      this.pill(ctx, x + width - 164, y + 18, 132, 28, `${group.completed || 0}/${group.total || 0} · ${group.pointsDone || 0}/${group.pointsTotal || 0}`, statusColor)
+      let yy = y + 58
+      if (group.desc && stages.length > 1) {
+        yy += this.text(ctx, group.desc, x + 20, yy, {
+          width: width - 40,
+          size: 13,
+          lineHeight: 18,
+          weight: 650,
+          color: COLOR.sub,
+          maxLines: 3,
+        }) + 8
+      }
+      for (const [index, stage] of stages.entries()) {
+        const h = stageHeights[index]
+        this.achievementStageRow(ctx, stage, x + 20, yy, width - 40, h)
+        yy += h + 8
+      }
+    }, { fill: group.done ? "rgba(255,255,255,0.76)" : "rgba(255,255,255,0.92)", radius: 18 })
+    this.y += height + 12
+  }
+
+  achievementStageHeight(stage = {}, width = this.innerWidth()) {
+    const descLines = this.wrap(stage.desc || "", width - 172, 13, 4, 650).length
+    return Math.max(56, 30 + descLines * 18)
+  }
+
+  achievementStageRow(ctx, stage = {}, x, y, width, height) {
+    const statusColor = stage.done ? "#26b875" : COLOR.blue
+    this.roundRect(ctx, x, y, width, height, 14, stage.done ? "rgba(232,248,255,0.55)" : "rgba(232,248,255,0.9)")
+    this.roundRect(ctx, x + 12, y + 14, 28, 28, 14, stage.done ? "rgba(38,184,117,0.9)" : "rgba(36,169,216,0.22)")
+    this.text(ctx, stage.done ? "✓" : "", x + 12, y + 18, {
+      width: 28,
+      size: 15,
+      weight: 950,
+      color: "#fff",
+      align: "center",
+      maxLines: 1,
+    })
+    const stageLabel = stage.stageTotal > 1 ? `阶段 ${stage.stageIndex}/${stage.stageTotal}` : "单项"
+    this.text(ctx, `${stageLabel} · ${stage.points || 0} 原石 · ${stage.progress || "0/1"}`, x + 52, y + 12, {
+      width: 168,
+      size: 13,
+      weight: 900,
+      color: "#006699",
+      maxLines: 1,
+    })
+    this.text(ctx, stage.desc || stage.name || "-", x + 222, y + 12, {
+      width: width - 382,
+      size: 13,
+      lineHeight: 18,
+      weight: 680,
+      color: COLOR.ink,
+      maxLines: 4,
+    })
+    this.text(ctx, stage.done ? (stage.date || "已完成") : "未完成", x + width - 142, y + 12, {
+      width: 126,
+      size: 13,
+      weight: 900,
+      color: statusColor,
+      align: "right",
+      maxLines: 1,
+    })
   }
 
   hero({ title, subtitle, badge, message, image, width, heroHeight = 198 }) {
@@ -1903,7 +2085,7 @@ function normalizeBackgroundSources(data = {}) {
 }
 
 function isAtlasTemplate(templateName) {
-  return /^atlas-/.test(templateName)
+  return /^(?:atlas-|achievement-)/.test(templateName)
 }
 
 function normalizeRenderScale(value) {

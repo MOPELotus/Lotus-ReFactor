@@ -16,6 +16,10 @@ export const LOTUS_CONFIG_DISABLED_PLUGIN_NAMES = Object.freeze([
   "Atlas图鉴帮助",
   "Atlas原魔属性计算",
 
+  // achievements-plugin overlaps. Lotus owns achievement import/catalog rendering.
+  "成就查漏",
+  "achievements-plugin",
+
   // xiaoyao catch-all adapter
   "xiaoyao-cvs-plugin",
 

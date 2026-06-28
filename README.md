@@ -17,6 +17,7 @@
 - 内置设备绑定，为社区签到和米游社请求提供设备信息。
 - 体力、面板、抽卡按 profile 和 UID 处理原神、星铁、绝区零数据。
 - 本地图鉴接入 nanoka atlas，首次全量抓取，后续增量更新。
+- 原神成就目录接入本地图鉴，支持椰羊 JSON 导入和分类完成状态渲染。
 - B 站支持长链、短链、BV、av、QQ 分享卡片；视频走 BBDown，直播发播放器链接。
 - 远程 spawn、上传、下载需要 master 权限、2FA、审计和脱敏。
 - scope 权限系统替代旧黑白名单。
@@ -52,6 +53,7 @@
 - [Nwflower/Atlas](https://github.com/Nwflower/Atlas)
 - [MOPELotus/calendar-plugin](https://github.com/MOPELotus/calendar-plugin)
 - [MOPELotus/nanoka-atlas-backend](https://github.com/MOPELotus/nanoka-atlas-backend)
+- [zolay-poi/achievements-plugin](https://gitee.com/zolay-poi/achievements-plugin)
 - [TimeRainStarSky/Yunzai](https://github.com/TimeRainStarSky/Yunzai)
 - [yoimiya-kokomi/miao-plugin](https://github.com/yoimiya-kokomi/miao-plugin)
 - [guoba-yunzai/guoba-plugin](https://github.com/guoba-yunzai/guoba-plugin)
