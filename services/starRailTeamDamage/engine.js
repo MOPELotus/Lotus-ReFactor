@@ -2,9 +2,13 @@ import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
 import vm from "node:vm"
+import { rootPath } from "../../core/path.js"
 
 const SYSTEM_DATA_ENDPOINT = "https://api.lingyuan.design/api/v1/system_data/public?is_update=true&type=all"
 const API_ORIGIN = "https://api.lingyuan.design"
+const SERVICE_DATA_ROOT = path.join(rootPath, "services", "starRailTeamDamage", "data")
+const DEFAULT_ENGINE_ROOT = path.join(SERVICE_DATA_ROOT, "starrail-dps-engine")
+const DEFAULT_SYSTEM_DATA_CACHE_FILE = path.join(SERVICE_DATA_ROOT, "system-data.json")
 const API_HEADERS = Object.freeze({
   version: "280",
   platform: "weixin",
@@ -19,8 +23,8 @@ export class StarRailDpsEngine {
     this.timeoutMs = options.timeoutMs || 20000
     this.mainRoot = options.mainRoot || process.env.LOTUS_STAR_RAIL_DPS_MAIN_ROOT || ""
     this.dpsRoot = options.dpsRoot || process.env.LOTUS_STAR_RAIL_DPS_DPS_ROOT || ""
-    this.engineRoot = options.engineRoot || process.env.LOTUS_STAR_RAIL_DPS_ENGINE_ROOT || ""
-    this.systemDataCacheFile = options.systemDataCacheFile || path.resolve("data", "starrail-team-damage", "system-data.json")
+    this.engineRoot = options.engineRoot || process.env.LOTUS_STAR_RAIL_DPS_ENGINE_ROOT || DEFAULT_ENGINE_ROOT
+    this.systemDataCacheFile = options.systemDataCacheFile || DEFAULT_SYSTEM_DATA_CACHE_FILE
     this.context = null
     this.req = null
     this.moduleFactories = null
@@ -271,21 +275,15 @@ export class StarRailDpsEngine {
     })
     if (explicit) return explicit
 
-    const roots = [
-      this.engineRoot,
-      path.resolve("data", "starrail-dps-engine"),
-      path.resolve("data", "tmp", "wxapkg-tools", "out", "unpacked"),
-    ].filter(Boolean)
-    for (const root of roots) {
-      const pair = normalizeEngineRootPair({
-        mainRoot: path.join(root, "__APP__.dec"),
-        dpsRoot: path.join(root, "_pagesDps_.dec", "pagesDps"),
-      })
-      if (pair) return pair
-    }
+    const pair = normalizeEngineRootPair({
+      mainRoot: path.join(this.engineRoot, "__APP__.dec"),
+      dpsRoot: path.join(this.engineRoot, "_pagesDps_.dec", "pagesDps"),
+    })
+    if (pair) return pair
+
     return {
-      mainRoot: this.mainRoot || path.resolve("data", "starrail-dps-engine", "__APP__.dec"),
-      dpsRoot: this.dpsRoot || path.resolve("data", "starrail-dps-engine", "_pagesDps_.dec", "pagesDps"),
+      mainRoot: path.join(this.engineRoot, "__APP__.dec"),
+      dpsRoot: path.join(this.engineRoot, "_pagesDps_.dec", "pagesDps"),
     }
   }
 

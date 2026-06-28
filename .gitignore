@@ -10,7 +10,7 @@ __pycache__/
 .yarn/
 .yarnrc.yml
 yarn.lock
-data/
+/data/
 temp/
 config/global.yaml
 config/local.yaml
