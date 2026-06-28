@@ -355,6 +355,7 @@ class SkiaRenderer {
   }
 
   starRailChallengeInfo(result = {}, floor = {}) {
+    if (result.kind === "peak" || result.challengeType === 3) return
     const summary = this.starRailDepthSummary(result, floor)
     const items = [
       { label: "周期", lines: periodLines(result.period || "-") },
@@ -398,6 +399,9 @@ class SkiaRenderer {
       return { label: "已使用轮次", value: String(floor.round || result.battleNum || result.maxFloor || "-") }
     }
     if (result.kind === "story" || result.challengeType === 1) {
+      return { label: "总分", value: String(floor.score || nodeScoreTotal(floor.nodes) || result.maxFloor || "-") }
+    }
+    if (result.kind === "boss" || result.challengeType === 0) {
       return { label: "总分", value: String(floor.score || nodeScoreTotal(floor.nodes) || result.maxFloor || "-") }
     }
     return { label: "最深", value: String(result.maxFloor || floor.title || "-") }
