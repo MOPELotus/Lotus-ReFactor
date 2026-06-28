@@ -63,6 +63,9 @@ export const LOTUS_CONFIG_DISABLED_PLUGIN_NAMES = Object.freeze([
   "Wiki",
   "wuwaWiki",
 
+  // FanSky_Qs team damage overlaps.
+  "提瓦特小助手",
+
   // loveMys / related captcha handler overlaps.
   "mys请求错误处理",
   "[loveMys] 插件更新",

@@ -109,6 +109,8 @@ class SkiaRenderer {
     if (this.templateName === "checkin-result") return this.buildCheckinResult()
     if (this.templateName === "schedule-notice") return this.buildScheduleNotice()
     if (this.templateName === "bilibili-info") return this.buildBilibiliInfo()
+    if (this.templateName === "genshin-team-damage") return this.buildGenshinTeamDamage()
+    if (this.templateName === "starrail-team-damage") return this.buildStarRailTeamDamage()
     if (this.templateName === "starrail-challenge") return this.buildStarRailChallenge()
     if (this.templateName === "atlas-result") return this.buildAtlasResult()
     if (this.templateName === "atlas-challenge") return this.buildAtlasChallenge()
@@ -316,6 +318,312 @@ class SkiaRenderer {
       this.starRailChallengeCard(result)
     }
     this.footer("数据来源 米游社 / HoYoLAB")
+  }
+
+  buildGenshinTeamDamage() {
+    this.hero({
+      title: this.data.title || "原神队伍伤害",
+      subtitle: this.data.subtitle || "",
+      badge: this.data.badge || "GS",
+      message: this.data.message || "",
+      width: this.innerWidth(),
+      heroHeight: 188,
+    })
+    this.gridItems(this.data.summary || [], 4)
+    this.genshinTeamDamageChart()
+    this.genshinTeamMembers()
+    if (this.data.detail) {
+      this.genshinTeamTimeline("伤害过程", this.data.damages || [], "damage")
+      this.genshinTeamTimeline("增益过程", this.data.buffs || [], "buff")
+    } else if (this.data.actions?.length) {
+      this.sectionTitle("输出轴")
+      this.drawTextCards([{ title: "动作序列", body: this.data.actions.join(" · ") }], 1, "title", "body")
+    }
+    this.footer(this.data.source || "提瓦特小助手")
+  }
+
+  buildStarRailTeamDamage() {
+    this.hero({
+      title: this.data.title || "星铁队伍伤害",
+      subtitle: this.data.subtitle || "",
+      badge: this.data.badge || "SR",
+      message: this.data.message || "",
+      width: this.innerWidth(),
+      heroHeight: 188,
+    })
+    this.gridItems(this.data.summary || [], 4)
+    this.genshinTeamDamageChart()
+    this.starRailTeamMembers()
+    this.starRailBattleRecords()
+    if (this.data.detail) this.starRailDamageLogs()
+    this.footer(this.data.source || "星穹铁道工坊")
+  }
+
+  genshinTeamDamageChart() {
+    const rows = this.data.pie || []
+    if (!rows.length) return
+    this.sectionTitle("伤害占比")
+    const total = rows.reduce((sum, row) => sum + Number(row.damage || 0), 0) || 1
+    const y = this.y
+    const height = 54 + rows.length * 38
+    this.card(this.padding, y, this.innerWidth(), height, ctx => {
+      let yy = y + 18
+      const chartWidth = this.innerWidth()
+      const nameWidth = Math.min(118, Math.max(86, Math.floor(chartWidth * 0.17)))
+      const valueWidth = Math.min(152, Math.max(132, Math.floor(chartWidth * 0.22)))
+      const gap = 12
+      const nameX = this.padding + 18
+      const barX = nameX + nameWidth + gap
+      const valueX = this.padding + chartWidth - 18 - valueWidth
+      const barMaxWidth = Math.max(80, valueX - gap - barX)
+      for (const row of rows) {
+        const pct = Number(row.damage || 0) / total
+        const barWidth = Math.max(4, Math.floor(barMaxWidth * pct))
+        const color = row.color || COLOR.blue
+        this.text(ctx, row.char || "未知", nameX, yy + 2, { width: nameWidth, size: 16, weight: 900, color: COLOR.ink, maxLines: 1 })
+        this.roundRect(ctx, barX, yy + 4, barMaxWidth, 12, 6, "rgba(102,204,255,0.14)")
+        this.roundRect(ctx, barX, yy + 4, barWidth, 12, 6, color)
+        this.text(ctx, `${formatLargeNumber(row.damage)} · ${Math.round(pct * 1000) / 10}%`, valueX, yy - 1, {
+          width: valueWidth,
+          size: 13,
+          weight: 850,
+          color: COLOR.sub,
+          align: "right",
+          maxLines: 1,
+        })
+        yy += 38
+      }
+    })
+    this.y += height + 12
+  }
+
+  genshinTeamMembers() {
+    const members = this.data.team || []
+    if (!members.length) return
+    this.sectionTitle("队伍面板")
+    const gap = 10
+    const columns = 2
+    const width = (this.innerWidth() - gap) / columns
+    for (let index = 0; index < members.length; index += columns) {
+      const row = members.slice(index, index + columns)
+      const height = 132
+      row.forEach((member, offset) => {
+        const x = this.padding + offset * (width + gap)
+        const y = this.y
+        this.card(x, y, width, height, ctx => {
+          this.roundRect(ctx, x + 14, y + 18, 54, 54, 14, elementColor(member.elem))
+          this.text(ctx, member.name || "角色", x + 80, y + 17, { width: width - 96, size: 21, weight: 950, color: "#004466", maxLines: 1 })
+          this.text(ctx, `${member.elem || "-"} · Lv${member.level || "-"} · ${member.cons ?? 0}命`, x + 80, y + 45, {
+            width: width - 96,
+            size: 13,
+            weight: 760,
+            color: COLOR.sub,
+            maxLines: 1,
+          })
+          this.text(ctx, `${member.weapon || "-"} R${member.weaponAffix || "-"} Lv${member.weaponLevel || "-"}`, x + 14, y + 84, {
+            width: width - 28,
+            size: 14,
+            weight: 820,
+            color: COLOR.ink,
+            maxLines: 1,
+          })
+          const stats = member.stats || {}
+          const statText = [
+            `暴 ${stats["暴击率"] ?? "-"}%`,
+            `爆 ${stats["暴击伤害"] ?? "-"}%`,
+            `充 ${stats["元素充能效率"] ?? "-"}%`,
+          ].join(" · ")
+          this.text(ctx, statText, x + 14, y + 106, { width: width - 28, size: 13, weight: 720, color: COLOR.sub, maxLines: 1 })
+        })
+      })
+      this.y += height + 10
+    }
+  }
+
+  starRailTeamMembers() {
+    const members = this.data.team || []
+    if (!members.length) return
+    this.sectionTitle("队伍面板")
+    const gap = 10
+    const columns = 2
+    const width = (this.innerWidth() - gap) / columns
+    for (let index = 0; index < members.length; index += columns) {
+      const row = members.slice(index, index + columns)
+      const height = 146
+      row.forEach((member, offset) => {
+        const x = this.padding + offset * (width + gap)
+        const y = this.y
+        this.card(x, y, width, height, async ctx => {
+          const icon = await this.loadImage(member.icon)
+          this.roundRect(ctx, x + 14, y + 16, 58, 58, 16, elementColor(member.elem))
+          if (icon) this.drawImageContain(ctx, icon, x + 17, y + 19, 52, 52)
+          else this.text(ctx, String(member.name || "?").slice(0, 1), x + 14, y + 30, { width: 58, size: 24, weight: 950, color: "#fff", align: "center" })
+          this.text(ctx, member.name || "角色", x + 82, y + 15, { width: width - 98, size: 20, weight: 950, color: "#004466", maxLines: 1 })
+          this.text(ctx, `${member.elem || "-"} · ${member.path || "-"} · Lv${member.level || "-"} · ${member.rank ?? 0}魂`, x + 82, y + 43, {
+            width: width - 98,
+            size: 13,
+            weight: 760,
+            color: COLOR.sub,
+            maxLines: 1,
+          })
+          this.text(ctx, `${member.weapon || "-"} S${member.weaponRank || "-"} Lv${member.weaponLevel || "-"}`, x + 14, y + 83, {
+            width: width - 28,
+            size: 14,
+            weight: 820,
+            color: COLOR.ink,
+            maxLines: 1,
+          })
+          const stats = member.stats || {}
+          const statText = [
+            `暴 ${stats["暴击率"] ?? "-"}`,
+            `爆 ${stats["暴击伤害"] ?? "-"}`,
+            `速 ${stats["速度"] ?? "-"}`,
+            `击 ${stats["击破"] ?? "-"}`,
+          ].join(" · ")
+          this.text(ctx, statText, x + 14, y + 106, { width: width - 28, size: 12, weight: 720, color: COLOR.sub, maxLines: 1 })
+          this.text(ctx, member.panelSource || "默认模板", x + 14, y + 126, { width: width - 28, size: 11, weight: 760, color: "#006699", maxLines: 1 })
+        })
+      })
+      this.y += height + 10
+    }
+  }
+
+  starRailActionTrack() {
+    const rows = this.data.actionTrack || []
+    if (!rows.length) return
+    this.sectionTitle("行动轨迹")
+    const visible = rows.slice(0, 12)
+    const height = 46 + Math.ceil(visible.length / 2) * 34
+    const y = this.y
+    this.card(this.padding, y, this.innerWidth(), height, ctx => {
+      const colW = (this.innerWidth() - 46) / 2
+      visible.forEach((row, index) => {
+        const col = index % 2
+        const line = Math.floor(index / 2)
+        const x = this.padding + 18 + col * (colW + 10)
+        const yy = y + 18 + line * 34
+        this.roundRect(ctx, x, yy, 28, 24, 12, "rgba(36,169,216,0.14)")
+        this.text(ctx, String(row.order || index + 1), x, yy + 5, { width: 28, size: 12, weight: 950, color: "#006699", align: "center", maxLines: 1 })
+        this.text(ctx, `${row.name || "-"} · ${row.actionPoints ?? "-"} 行动值`, x + 36, yy + 4, {
+          width: colW - 38,
+          size: 13,
+          weight: 820,
+          color: COLOR.ink,
+          maxLines: 1,
+        })
+      })
+    })
+    this.y += height + 12
+  }
+
+  starRailBattleRecords() {
+    const rows = this.data.battleRecords || []
+    if (!rows.length) {
+      this.starRailActionTrack()
+      return
+    }
+    this.sectionTitle("行动记录")
+    const visible = rows.slice(0, this.data.detail ? 24 : 12)
+    const bodyWidth = this.innerWidth() - 56
+    const rowHeights = visible.map(row => this.starRailBattleRecordHeight(row, bodyWidth))
+    const moreHeight = rows.length > visible.length ? 28 : 0
+    const height = 24 + rowHeights.reduce((sum, rowHeight) => sum + rowHeight + 10, 0) + moreHeight
+    const y = this.y
+    this.card(this.padding, y, this.innerWidth(), height, ctx => {
+      let yy = y + 16
+      for (const [index, row] of visible.entries()) {
+        const rowH = rowHeights[index]
+        this.roundRect(ctx, this.padding + 14, yy, this.innerWidth() - 28, rowH, 14, "rgba(232,248,255,0.72)")
+        const badgeColor = row.color || COLOR.blue
+        this.roundRect(ctx, this.padding + 28, yy + 14, 30, 24, 12, badgeColor)
+        this.text(ctx, String(row.order || index + 1), this.padding + 28, yy + 19, {
+          width: 30,
+          size: 11,
+          weight: 950,
+          color: "#fff",
+          align: "center",
+          maxLines: 1,
+        })
+        const actionText = Number.isFinite(Number(row.actionPoint)) ? `行动值: ${row.actionPoint}` : ""
+        this.text(ctx, `${row.title || row.name || "行动"}${actionText ? `（${actionText}）` : ""}`, this.padding + 68, yy + 15, {
+          width: bodyWidth - 12,
+          size: 15,
+          weight: 950,
+          color: "#004466",
+          maxLines: 1,
+        })
+        let lineY = yy + 43
+        for (const line of row.lines || []) {
+          const isDamage = line.type === "damage"
+          lineY += this.text(ctx, line.text || "-", this.padding + 68, lineY, {
+            width: bodyWidth - 12,
+            size: isDamage ? 12 : 13,
+            lineHeight: isDamage ? 18 : 19,
+            weight: isDamage ? 700 : 820,
+            color: isDamage ? COLOR.ink : COLOR.blue,
+            maxLines: 2,
+          }) + 3
+        }
+        yy += rowH + 10
+      }
+      if (rows.length > visible.length) {
+        this.text(ctx, `还有 ${rows.length - visible.length} 条行动记录，可使用“详情/过程/全图”查看更多。`, this.padding + 18, yy + 2, {
+          width: this.innerWidth() - 36,
+          size: 12,
+          weight: 760,
+          color: COLOR.sub,
+          align: "center",
+          maxLines: 1,
+        })
+      }
+    })
+    this.y += height + 12
+  }
+
+  starRailBattleRecordHeight(row = {}, bodyWidth = 500) {
+    let height = 52
+    for (const line of row.lines || []) {
+      const isDamage = line.type === "damage"
+      height += this.measureParagraph(line.text || "-", bodyWidth - 12, isDamage ? 12 : 13, isDamage ? 18 : 19) + 3
+    }
+    return Math.max(72, height + 10)
+  }
+
+  starRailDamageLogs() {
+    const rows = this.data.damageLogs || []
+    if (!rows.length) return
+    this.sectionTitle("伤害过程")
+    const visible = rows.slice(0, 18)
+    const height = 42 + visible.length * 27
+    const y = this.y
+    this.card(this.padding, y, this.innerWidth(), height, ctx => {
+      let yy = y + 18
+      for (const row of visible) {
+        this.text(ctx, String(row.order || ""), this.padding + 18, yy, { width: 32, size: 12, weight: 900, color: "#006699", align: "center", maxLines: 1 })
+        this.text(ctx, row.text || "-", this.padding + 58, yy, { width: this.innerWidth() - 76, size: 12, weight: 700, color: COLOR.ink, maxLines: 1 })
+        yy += 27
+      }
+    })
+    this.y += height + 12
+  }
+
+  genshinTeamTimeline(title, rows = [], type = "damage") {
+    if (!rows.length) return
+    this.sectionTitle(title)
+    const visible = rows.slice(0, 18)
+    const height = 42 + visible.length * 28
+    const y = this.y
+    this.card(this.padding, y, this.innerWidth(), height, ctx => {
+      let yy = y + 18
+      for (const row of visible) {
+        const left = type === "buff" ? `${row.time || "-"}s ${row.name || ""}` : `${row.time || "-"}s ${row.action || ""}`
+        const right = type === "buff" ? row.detail || "-" : (row.values || []).join(" / ") || "-"
+        this.text(ctx, left, this.padding + 18, yy, { width: 190, size: 13, weight: 850, color: "#004466", maxLines: 1 })
+        this.text(ctx, right, this.padding + 218, yy, { width: this.innerWidth() - 240, size: 13, weight: 700, color: COLOR.ink, maxLines: 1 })
+        yy += 28
+      }
+    })
+    this.y += height + 12
   }
 
   starRailChallengeCard(result = {}) {
@@ -1651,6 +1959,26 @@ function nodeScoreTotal(nodes = []) {
 
 function hasRenderValue(value) {
   return value !== "" && value !== null && value !== undefined
+}
+
+function formatLargeNumber(value) {
+  const number = Number(value || 0)
+  if (!Number.isFinite(number) || number <= 0) return "-"
+  if (number >= 100000000) return `${Math.round(number / 10000000) / 10}亿`
+  if (number >= 10000) return `${Math.round(number / 1000) / 10}万`
+  return String(Math.round(number))
+}
+
+function elementColor(elem = "") {
+  const key = String(elem || "")
+  if (/火|pyro/i.test(key)) return "rgba(234,91,76,0.82)"
+  if (/水|hydro/i.test(key)) return "rgba(50,154,224,0.82)"
+  if (/冰|cryo/i.test(key)) return "rgba(92,199,218,0.82)"
+  if (/雷|electro/i.test(key)) return "rgba(150,102,214,0.82)"
+  if (/风|anemo/i.test(key)) return "rgba(67,181,151,0.82)"
+  if (/岩|geo/i.test(key)) return "rgba(205,154,61,0.82)"
+  if (/草|dendro/i.test(key)) return "rgba(109,179,82,0.82)"
+  return "rgba(102,204,255,0.78)"
 }
 
 function formatShortNumber(value) {
