@@ -1,22 +1,30 @@
-# 体力查询
+# 体力查询-原神、星铁、绝区零
 
-体力查询按 profile 和 UID 收集数据。单个 UID 失败不会中断其他 UID。
+返回：[上一级](../daily-note.md) / [文档目录](../README.md) / [小功能索引](README.md)
 
-全部查询：
+## 功能特性
 
-- `#全部体力`
-- `#全部体力2`
-- `#多体力2`
-- `#全体力2`
+- 按 profile 和游戏 UID 收集体力数据，不把 profile 序号当作 UID。
+- `全部体力` 会遍历当前 QQ 的 profile、游戏和 UID。
+- 单个 UID 查询失败不会中断其他 UID。
+- 原神、星铁和绝区零都使用对应 profile 的本人登录态。
 
-单游戏查询：
+## 指令用法
 
-- `#体力2`
-- `#树脂2`
-- `#便笺2`
-- `*体力2`
-- `#星铁体力2`
-- `%体力2`
-- `#绝区零体力2`
+```text
+#全部体力[profile]
+#多体力[profile]
+#全体力[profile]
 
-`#全部体力` 会收集当前 QQ 所有 profile、所有游戏、所有 UID。
+#体力[profile]
+#树脂[profile]
+#便笺[profile]
+*体力[profile]
+#星铁体力[profile]
+%体力[profile]
+#绝区零体力[profile]
+```
+
+## 变量说明
+
+- `profile`：可选，Lotus 内部 profile 序号，范围 `1..255`；省略时使用 profile 1；用于 `全部体力` 时只收集指定 profile。

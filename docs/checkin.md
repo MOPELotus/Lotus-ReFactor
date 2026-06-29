@@ -1,11 +1,13 @@
 # 签到与调度总览
 
+返回：[项目主页](../README.md) / [文档目录](README.md)
+
 签到模块按 profile 执行，包含自动签到、游戏/社区签到开关、用户通知和随机/固定调度。
 
 ## 小功能
 
-- [自动签到](features/checkin.md)
-- [签到调度](features/scheduler.md)
+- [自动签到-多 profile](features/checkin.md)
+- [签到调度-随机与固定](features/scheduler.md)
 
 所有用户操作都允许在群聊执行。通知默认开启，私聊优先；若无法私聊，会在共同群聊 at 用户。
 

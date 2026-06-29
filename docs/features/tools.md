@@ -1,19 +1,20 @@
-# 工具链与缓存
+# 工具链-BBDown/ffmpeg/aria2
 
-工具链初始化入口：
+返回：[上一级](../initialization.md) / [文档目录](../README.md) / [小功能索引](README.md)
 
-- `#初始化工具环境`
+## 功能特性
 
-会准备：
+- 自动准备 B 站下载所需的 BBDown、ffmpeg、ffprobe、ffplay 和 aria2c。
+- Windows 识别 `.exe` 文件；Linux/macOS 识别无后缀可执行文件，并在初始化时补 `chmod +x`。
+- 下载到损坏压缩包、不完整 shared 包或 `.part` 临时文件时，会清理后重新下载。
+- B 站下载固定走 BBDown，ffmpeg 和 aria2c 只作为配套工具链。
 
-- BBDown
-- ffmpeg 完整构建
-- ffprobe
-- ffplay
-- aria2c
+## 指令用法
 
-Windows 会识别 `.exe`；Linux/macOS 会识别无后缀可执行文件，并自动补 `chmod +x`。
+```text
+#初始化工具环境
+```
 
-B 站下载只走 BBDown。ffmpeg 和 aria2 是自动准备的配套工具，不再提供“是否使用 BBDown”的开关。
+## 变量说明
 
-如果下载目录里出现损坏压缩包、不完整 shared 包、`.part` 临时文件，初始化会自动重下修复。
+此指令没有额外变量。初始化结果会写入运行时缓存目录，正常使用时不需要手动移动工具文件。

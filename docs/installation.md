@@ -1,5 +1,7 @@
 # 安装与部署
 
+返回：[项目主页](../README.md) / [文档目录](README.md)
+
 ## 环境
 
 - Node.js 按当前 Yunzai/TRSS 环境要求准备。

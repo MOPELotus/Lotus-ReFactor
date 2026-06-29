@@ -8,14 +8,7 @@
 
 ## 文档
 
-完整使用说明请从 [文档目录](docs/README.md) 进入。常用入口：
-
-- 安装与运行：[安装与部署](docs/installation.md)、[初始化](docs/initialization.md)
-- 账号与安全：[登录与多 profile](docs/profile-login.md)、[验证码链](docs/captcha.md)、[权限系统](docs/permissions.md)
-- 签到：[签到与调度](docs/checkin.md)
-- 查询与图鉴：[个人查询](docs/daily-note.md)、[图鉴与成就](docs/atlas.md)
-- 媒体与管理：[B 站模块](docs/bilibili.md)、[远程 spawn](docs/remote-spawn.md)
-- 快速查命令：[指令索引](docs/commands.md)
+完整使用说明请从 [文档目录](docs/README.md) 进入。
 
 ## 鸣谢
 

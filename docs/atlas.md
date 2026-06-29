@@ -1,12 +1,14 @@
 # 图鉴与成就总览
 
+返回：[项目主页](../README.md) / [文档目录](README.md)
+
 图鉴数据来自 `nanoka-atlas-backend`。插件侧负责触发更新、维护本地索引、注册查询指令和渲染图片。
 
 ## 小功能
 
-- [图鉴查询](features/atlas-gallery.md)
-- [成就图鉴](features/achievements.md)
-- [挑战查询](features/challenge-query.md)
+- [图鉴查询-多游戏资料](features/atlas-gallery.md)
+- [成就图鉴-查漏补缺](features/achievements.md)
+- [挑战查询-图鉴期数](features/challenge-query.md)
 
 ## 数据更新
 
