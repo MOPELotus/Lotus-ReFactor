@@ -44,9 +44,26 @@ for (const [index, result] of modules.entries()) {
   }
 
   const exported = result.value[Object.keys(result.value)[0]]
-  if (exported) apps[name] = exported
+  if (exported) apps[name] = silencePluginLogs(exported)
 }
 
 logger?.info?.(`Lotus-Plugin refactor loaded: ${Object.keys(apps).length} app(s)`)
 
 export { apps }
+
+function silencePluginLogs(AppClass) {
+  return class LotusSilentPluginLogs extends AppClass {
+    constructor(...args) {
+      super(...args)
+      silenceEntries(this.rule)
+      silenceEntries(this.task)
+    }
+  }
+}
+
+function silenceEntries(entries) {
+  if (!entries) return
+  for (const entry of Array.isArray(entries) ? entries : [entries]) {
+    if (entry && typeof entry === "object") entry.log = false
+  }
+}
