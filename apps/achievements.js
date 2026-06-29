@@ -8,8 +8,9 @@ import {
   profileLoginRequiredMessage,
   PROFILE_ID_SUFFIX_PATTERN,
 } from "../core/config/profile.js"
+import { getRenderBackgrounds } from "../core/render/background.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
-import { replyImage, replyText } from "../core/transport/reply.js"
+import { replyForward, replyImage, replyText } from "../core/transport/reply.js"
 import { getRoleUid, pickRole, splitProfileSuffix } from "../services/pluginBridge/common.js"
 import {
   GenshinAchievementService,
@@ -43,6 +44,7 @@ const CATEGORY_RESERVED_TERMS = [
 ]
 
 const IMPORT_WAIT_MS = 5 * 60 * 1000
+const ACHIEVEMENT_CATEGORY_PAGE_LIMIT = 25
 const pendingAchievementImports = new Map()
 
 export class LotusAchievements extends BasePlugin {
@@ -184,14 +186,35 @@ export class LotusAchievements extends BasePlugin {
       }
 
       const uid = await resolveGenshinUid(this.e, parsed.profileId)
-      const result = await this.service.buildCategory({
-        uid,
-        query: parsed.query,
-      })
-      const image = await renderTemplate("achievement-category", result.renderData, {
-        saveId: `lotus-achievement-category-${this.e.user_id}-${parsed.profileId}-${Date.now()}`,
-      })
-      await replyImage(this, image, `[荷花插件]${category.name} 成就生成完成。`)
+      let offset = 0
+      let pageCount = 0
+      const images = []
+      const backgrounds = await getRenderBackgrounds(1)
+      while (true) {
+        const result = await this.service.buildCategory({
+          uid,
+          query: parsed.query,
+          offset,
+          limit: ACHIEVEMENT_CATEGORY_PAGE_LIMIT,
+        })
+        result.renderData.backgrounds = backgrounds
+        pageCount += 1
+        const page = result.renderData.page || { index: pageCount, total: pageCount, hasNext: false }
+        const image = await renderTemplate("achievement-category", result.renderData, {
+          saveId: `lotus-achievement-category-${this.e.user_id}-${parsed.profileId}-${page.index}-${Date.now()}`,
+        })
+        images.push(image)
+        if (!page.hasNext) break
+        offset = page.end
+      }
+
+      if (images.length === 1) {
+        await replyImage(this, images[0], `[荷花插件]${category.name} 成就生成完成。`)
+      } else {
+        await replyForward(this, images, {
+          description: `${category.name} 成就 ${images.length} 张`,
+        })
+      }
       return true
     } catch (error) {
       if (!parsed.explicit && isAchievementDataMissing(error)) return false

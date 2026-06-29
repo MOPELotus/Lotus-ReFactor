@@ -7,7 +7,7 @@ import { resolveAtlasDataRoot } from "../nanokaAtlas/update.js"
 const ACHIEVEMENT_DATA_MISSING = "achievement_data_missing"
 const COCOGOAT_SOURCE = "椰羊成就"
 const DEFAULT_LOCALE = "简体中文"
-const DEFAULT_CATEGORY_LIMIT = 120
+const DEFAULT_CATEGORY_LIMIT = 25
 const CHINESE_NUMBERS = [
   "零",
   "一",
@@ -67,7 +67,7 @@ export class GenshinAchievementService {
     }
   }
 
-  async buildCategory({ uid, query, limit = DEFAULT_CATEGORY_LIMIT } = {}) {
+  async buildCategory({ uid, query, offset = 0, limit = DEFAULT_CATEGORY_LIMIT } = {}) {
     const catalog = await this.loadCatalog()
     const category = this.resolveCategoryFromCatalog(catalog, query)
     if (!category) {
@@ -81,8 +81,16 @@ export class GenshinAchievementService {
     const progress = await this.loadProgress(uid)
     const summary = buildCategorySummary(category, progress.done)
     const groups = buildDisplayGroups(category, progress.done)
-    const visibleGroups = groups.slice(0, limit)
-    const hiddenCount = Math.max(0, groups.length - visibleGroups.length)
+    const pageLimit = normalizePositiveInteger(limit, DEFAULT_CATEGORY_LIMIT)
+    const pageOffset = Math.max(0, normalizePositiveInteger(offset, 0))
+    const visibleGroups = groups.slice(pageOffset, pageOffset + pageLimit)
+    const endIndex = pageOffset + visibleGroups.length
+    const hiddenCount = Math.max(0, groups.length - endIndex)
+    const totalPages = Math.max(1, Math.ceil(groups.length / pageLimit))
+    const pageIndex = groups.length ? Math.min(totalPages, Math.floor(pageOffset / pageLimit) + 1) : 1
+    const pageLabel = groups.length > visibleGroups.length
+      ? `第 ${pageIndex}/${totalPages} 张，显示 ${pageOffset + 1}-${endIndex}/${groups.length} 个分组。`
+      : ""
 
     return {
       ok: true,
@@ -92,17 +100,30 @@ export class GenshinAchievementService {
         title: category.name,
         subtitle: uid ? `UID ${uid}` : "未绑定 UID",
         badge: `${summary.completed}/${summary.total}`,
-        message: `未完成条目优先显示；同名多阶段成就会作为一个条目一起排序。原石 ${summary.pointsDone}/${summary.pointsTotal}。`,
+        message: [
+          `未完成条目优先显示；同名多阶段成就会作为一个条目一起排序。原石 ${summary.pointsDone}/${summary.pointsTotal}。`,
+          pageLabel,
+        ].filter(Boolean).join(" "),
         icon: category.icon,
         summary: [
           { label: "成就", value: `${summary.completed}/${summary.total}` },
           { label: "原石", value: `${summary.pointsDone}/${summary.pointsTotal}` },
           { label: "完成率", value: `${summary.percent}%` },
-          { label: "分组", value: hiddenCount ? `${visibleGroups.length}/${groups.length}` : String(groups.length) },
+          { label: "分组", value: groups.length > visibleGroups.length ? `${pageOffset + 1}-${endIndex}/${groups.length}` : String(groups.length) },
         ],
         groups: visibleGroups,
         hiddenCount,
         totalGroups: groups.length,
+        page: {
+          index: pageIndex,
+          total: totalPages,
+          offset: pageOffset,
+          limit: pageLimit,
+          start: visibleGroups.length ? pageOffset + 1 : 0,
+          end: endIndex,
+          hasNext: endIndex < groups.length,
+          hasPrev: pageOffset > 0,
+        },
         atlasRoot: catalog.dataRoot,
         source: "Nanoka Atlas / 椰羊成就 JSON",
       },
@@ -452,6 +473,12 @@ function isCompletedRecord(item = {}, format = "cocogoat") {
   if (format === "uiaf") return status === 2 || status === 3
   if (typeof status === "number") return status >= 2
   return Boolean(status)
+}
+
+function normalizePositiveInteger(value, fallback) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) return fallback
+  return Math.floor(number)
 }
 
 function addDoneRecord(done, id, item = {}, source = "cocogoat") {

@@ -1054,7 +1054,7 @@ class SkiaRenderer {
     if (this.data.hiddenCount > 0) {
       const y = this.y
       this.card(this.padding, y, this.innerWidth(), 58, ctx => {
-        this.text(ctx, `还有 ${this.data.hiddenCount} 个条目未展示，可后续补分页入口继续查看。`, this.padding + 18, y + 18, {
+        this.text(ctx, `还有 ${this.data.hiddenCount} 个条目，后续图片会继续展示。`, this.padding + 18, y + 18, {
           width: this.innerWidth() - 36,
           size: 16,
           weight: 820,
