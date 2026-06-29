@@ -6,36 +6,16 @@
 
 本项目为源码可见的专有软件（Source-Available Proprietary Software）。允许个人非商业原样使用；禁止二次修改发布、搬运、商用、售卖及去除署名。完整条款见 [LICENSE](LICENSE)。
 
-## 大功能
-
-- 米游社扫码登录与 cookie/stoken 刷新，兼容 genshin/miao。
-- 单 QQ 多 profile，`#扫码登录2`、`#刷新cookie2` 等后缀指令按 profile 生效。
-- 自动签到支持游戏签到、社区签到、签到前刷新和用户结果通知。
-- 签到调度支持随机/固定时间，并提前通知次日计划。
-- 验证码链按顺序尝试 `test_nine`、`ttocr`、`GT-Manual`。
-- 默认使用 Python venv，自动准备 `MihoyoBBSTools`、`test_nine`、模型和工具链。
-- 内置设备绑定，为社区签到和米游社请求提供设备信息。
-- 体力、面板、抽卡按 profile 和 UID 处理原神、星铁、绝区零数据。
-- 本地图鉴接入 nanoka atlas，首次全量抓取，后续增量更新。
-- 原神成就目录接入本地图鉴，支持椰羊 JSON 导入和分类完成状态渲染。
-- B 站支持长链、短链、BV、av、QQ 分享卡片；视频走 BBDown，直播发播放器链接。
-- 远程 spawn、上传、下载需要 master 权限、2FA、审计和脱敏。
-- scope 权限系统替代旧黑白名单。
-- 支持锅巴面板修改全局配置。
-
 ## 文档
 
-- [安装与部署](docs/installation.md)
-- [初始化](docs/initialization.md)
-- [登录与多 profile](docs/profile-login.md)
-- [签到与调度](docs/checkin.md)
-- [验证码链](docs/captcha.md)
-- [图鉴](docs/atlas.md)
-- [体力、面板、抽卡](docs/daily-note.md)
-- [B 站模块](docs/bilibili.md)
-- [远程 spawn](docs/remote-spawn.md)
-- [权限系统](docs/permissions.md)
-- [指令索引](docs/commands.md)
+完整使用说明请从 [文档目录](docs/README.md) 进入。常用入口：
+
+- 安装与运行：[安装与部署](docs/installation.md)、[初始化](docs/initialization.md)
+- 账号与安全：[登录与多 profile](docs/profile-login.md)、[验证码链](docs/captcha.md)、[权限系统](docs/permissions.md)
+- 签到：[签到与调度](docs/checkin.md)
+- 查询与图鉴：[个人查询](docs/daily-note.md)、[图鉴与成就](docs/atlas.md)
+- 媒体与管理：[B 站模块](docs/bilibili.md)、[远程 spawn](docs/remote-spawn.md)
+- 快速查命令：[指令索引](docs/commands.md)
 
 ## 鸣谢
 
@@ -54,6 +34,7 @@
 - [MOPELotus/calendar-plugin](https://github.com/MOPELotus/calendar-plugin)
 - [MOPELotus/nanoka-atlas-backend](https://github.com/MOPELotus/nanoka-atlas-backend)
 - [zolay-poi/achievements-plugin](https://gitee.com/zolay-poi/achievements-plugin)
+- [AFanSKyQs/FanSky_Qs](https://github.com/AFanSKyQs/FanSky_Qs)
 - [TimeRainStarSky/Yunzai](https://github.com/TimeRainStarSky/Yunzai)
 - [yoimiya-kokomi/miao-plugin](https://github.com/yoimiya-kokomi/miao-plugin)
 - [guoba-yunzai/guoba-plugin](https://github.com/guoba-yunzai/guoba-plugin)
