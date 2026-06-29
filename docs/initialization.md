@@ -44,3 +44,7 @@
 ```
 
 会按系统和架构准备 BBDown、ffmpeg、aria2。B 站下载只保留 BBDown 路径，不再提供“是否使用 BBDown”的开关。
+
+ffmpeg 会下载完整编译包，而不是只拷贝 `ffmpeg` 一个文件；Windows 会识别 `.exe`，Linux/macOS 会识别无后缀可执行文件。解压后会把 BBDown、ffmpeg、ffprobe、ffplay、aria2c 等可执行文件加入插件工具目录，并在非 Windows 系统上自动补 `chmod +x`。
+
+如果下载目录里存在不完整 shared 包、损坏压缩包或 `.part` 临时文件，初始化会按损坏状态重新下载并修复。

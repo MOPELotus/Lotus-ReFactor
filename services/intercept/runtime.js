@@ -1,6 +1,11 @@
+import { createReadStream, createWriteStream } from "node:fs"
 import fs from "node:fs/promises"
+import crypto from "node:crypto"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
+import { Readable } from "node:stream"
+import { pipeline } from "node:stream/promises"
+import { createGunzip } from "node:zlib"
 import YAML from "yaml"
 import { isCookieRefreshableResponse } from "../../core/captcha/mysHandler.js"
 
@@ -12,8 +17,18 @@ import {
   LOTUS_RUNTIME_DISABLED_PLUGIN_NAMES,
 } from "../../core/intercept/priority.js"
 
+const IMAGE_SUMMARY_RELEASE_URL = "https://api.github.com/repos/palemoky/chinese-poetry-api/releases/latest"
+const IMAGE_SUMMARY_FALLBACK_RELEASE_URL = "https://api.github.com/repos/palemoky/chinese-poetry-api/releases/tags/v0.5.0"
+const IMAGE_SUMMARY_ASSET_NAME = "poetry.db.gz"
+const IMAGE_SUMMARY_CACHE_DIR = path.join("temp", "Lotus-Plugin", "poetry")
+const IMAGE_SUMMARY_LINE_LIMIT = 4096
+const IMAGE_SUMMARY_RETRY_MS = 5 * 60 * 1000
+
 let runtimeInstalled = false
 let handlerPatchInstalled = false
+let imageSummaryLines = []
+let imageSummaryPreparing = null
+let imageSummaryNextPrepareAt = 0
 
 export async function installLotusRuntimeInterception() {
   if (runtimeInstalled) return { ok: true, already: true }
@@ -24,6 +39,7 @@ export async function installLotusRuntimeInterception() {
     patchRuntimeDisableConfig(),
     patchPluginsLoader(),
     patchGenshinMysInfoCookieRefresh(),
+    installGlobalImageSummary(),
   ])
 
   return {
@@ -64,6 +80,17 @@ export async function installLotusCaptchaHandlerOverride(handlerModule = null) {
   }
 
   return { ok: true }
+}
+
+export async function installGlobalImageSummary() {
+  const patched = patchSegmentImageSummary()
+  for (const delay of [0, 1000, 5000]) {
+    setTimeout(() => patchSegmentImageSummary(), delay).unref?.()
+  }
+  void prepareImageSummaryCache()
+  return patched
+    ? { ok: true }
+    : { ok: true, skipped: true, reason: "segment.image unavailable" }
 }
 
 export async function ensureYunzaiConflictDisableConfig(options = {}) {
@@ -188,6 +215,409 @@ async function patchGenshinMysInfoCookieRefresh() {
   MysInfo.prototype.__lotusCookieRefreshPatch = true
   logDebug("genshin MysInfo cookie refresh patch installed")
   return { ok: true }
+}
+
+function patchSegmentImageSummary() {
+  const segment = globalThis.segment
+  if (!segment || typeof segment.image !== "function") return false
+  if (segment.__lotusImageSummaryPatch) {
+    return true
+  }
+
+  const originalImage = segment.image.bind(segment)
+  segment.image = (...args) => {
+    const image = originalImage(...args)
+    const summary = pickImageSummary()
+    if (summary) attachImageSummary(image, summary)
+    if (!summary && Date.now() >= imageSummaryNextPrepareAt) void prepareImageSummaryCache()
+    return image
+  }
+  segment.__lotusImageSummaryPatch = true
+  return true
+}
+
+function pickImageSummary() {
+  if (!imageSummaryLines.length) return ""
+  return imageSummaryLines[Math.floor(Math.random() * imageSummaryLines.length)] || ""
+}
+
+async function prepareImageSummaryCache() {
+  if (imageSummaryPreparing) return imageSummaryPreparing
+
+  imageSummaryPreparing = doPrepareImageSummaryCache()
+    .catch(() => null)
+    .finally(() => {
+      imageSummaryPreparing = null
+      imageSummaryNextPrepareAt = Date.now() + IMAGE_SUMMARY_RETRY_MS
+    })
+
+  return imageSummaryPreparing
+}
+
+async function doPrepareImageSummaryCache() {
+  await loadCachedImageSummaryLines()
+
+  const cacheDir = getImageSummaryCacheDir()
+  const dbFile = path.join(cacheDir, "poetry.db")
+  const release = await fetchPoetryRelease().catch(() => null)
+  const manifest = await readJsonFile(path.join(cacheDir, "manifest.json")).catch(() => null)
+  const hasDb = await fileExists(dbFile)
+  const hasLines = imageSummaryLines.length > 0
+
+  if (release && (!hasDb || !hasLines || manifest?.releaseKey !== release.releaseKey)) {
+    const ok = await updatePoetryDbCache(cacheDir, release).catch(() => false)
+    if (ok) await rebuildImageSummaryLines(dbFile, release.releaseKey)
+    return
+  }
+
+  if (hasDb && !hasLines) await rebuildImageSummaryLines(dbFile, manifest?.releaseKey || "")
+}
+
+async function fetchPoetryRelease() {
+  if (typeof fetch !== "function") return null
+  const release = await fetchJson(IMAGE_SUMMARY_RELEASE_URL).catch(() => fetchJson(IMAGE_SUMMARY_FALLBACK_RELEASE_URL))
+  const assets = Array.isArray(release?.assets) ? release.assets : []
+  const asset = assets.find(item => item?.name === IMAGE_SUMMARY_ASSET_NAME)
+  if (!asset?.browser_download_url) return null
+
+  const checksums = assets.find(item => /checksums\.txt$/i.test(item?.name || ""))
+  const sha256 = checksums?.browser_download_url
+    ? await fetchText(checksums.browser_download_url).then(text => parseChecksum(text, IMAGE_SUMMARY_ASSET_NAME)).catch(() => "")
+    : ""
+  const releaseKey = [
+    release.tag_name || release.name || "",
+    asset.name || "",
+    asset.size || "",
+    asset.updated_at || "",
+    sha256 || "",
+  ].join("|")
+
+  return {
+    releaseKey,
+    tag: release.tag_name || "",
+    assetUrl: asset.browser_download_url,
+    assetName: asset.name,
+    assetSize: Number(asset.size || 0),
+    assetUpdatedAt: asset.updated_at || "",
+    sha256,
+  }
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      accept: "application/vnd.github+json",
+      "user-agent": "Lotus-Plugin",
+    },
+  })
+  if (!response.ok) throw new Error("release unavailable")
+  return response.json()
+}
+
+async function fetchText(url) {
+  const response = await fetch(url, {
+    headers: {
+      accept: "text/plain",
+      "user-agent": "Lotus-Plugin",
+    },
+  })
+  if (!response.ok) throw new Error("checksum unavailable")
+  return response.text()
+}
+
+async function updatePoetryDbCache(cacheDir, release) {
+  await fs.mkdir(cacheDir, { recursive: true })
+  const gzFile = path.join(cacheDir, IMAGE_SUMMARY_ASSET_NAME)
+  const dbFile = path.join(cacheDir, "poetry.db")
+  const manifestFile = path.join(cacheDir, "manifest.json")
+  const gzPart = `${gzFile}.part`
+  const dbPart = `${dbFile}.part`
+
+  await downloadFile(release.assetUrl, gzPart)
+  if (release.sha256) {
+    const actual = await hashFile(gzPart, "sha256")
+    if (actual.toLowerCase() !== release.sha256.toLowerCase()) return false
+  }
+  await fs.rename(gzPart, gzFile)
+  await pipeline(createReadStream(gzFile), createGunzip(), createWriteStream(dbPart))
+  await fs.rename(dbPart, dbFile)
+  await writeJsonFile(manifestFile, {
+    releaseKey: release.releaseKey,
+    tag: release.tag,
+    assetName: release.assetName,
+    assetSize: release.assetSize,
+    assetUpdatedAt: release.assetUpdatedAt,
+    sha256: release.sha256,
+    updatedAt: new Date().toISOString(),
+  })
+  return true
+}
+
+async function downloadFile(url, target) {
+  const response = await fetch(url, {
+    headers: {
+      accept: "application/octet-stream",
+      "user-agent": "Lotus-Plugin",
+    },
+  })
+  if (!response.ok) throw new Error("download unavailable")
+
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  if (response.body) {
+    const body = typeof Readable.fromWeb === "function"
+      ? Readable.fromWeb(response.body)
+      : response.body
+    await pipeline(body, createWriteStream(target))
+    return
+  }
+  const buffer = Buffer.from(await response.arrayBuffer())
+  await fs.writeFile(target, buffer)
+}
+
+async function rebuildImageSummaryLines(dbFile, releaseKey = "") {
+  const lines = await generatePoetryLinesFromDb(dbFile).catch(() => [])
+  if (!lines.length) return
+  imageSummaryLines = lines
+  await writeJsonFile(path.join(getImageSummaryCacheDir(), "lines.json"), {
+    releaseKey,
+    generatedAt: new Date().toISOString(),
+    lines,
+  }).catch(() => null)
+}
+
+async function loadCachedImageSummaryLines() {
+  if (imageSummaryLines.length) return
+  const cache = await readJsonFile(path.join(getImageSummaryCacheDir(), "lines.json")).catch(() => null)
+  if (!Array.isArray(cache?.lines)) return
+  imageSummaryLines = cache.lines
+    .map(item => cleanSummaryPart(item))
+    .filter(Boolean)
+    .slice(0, IMAGE_SUMMARY_LINE_LIMIT)
+}
+
+async function generatePoetryLinesFromDb(dbFile) {
+  const major = Number(String(process.versions.node || "").split(".")[0] || 0)
+  if (major < 24) return generatePoetryLinesWithPython(dbFile)
+
+  let DatabaseSync
+  try {
+    ;({ DatabaseSync } = await import("node:sqlite"))
+  } catch {
+    return generatePoetryLinesWithPython(dbFile)
+  }
+
+  const db = new DatabaseSync(dbFile, { readOnly: true })
+  try {
+    const rows = db.prepare(`
+      SELECT p.title AS title, p.content AS content, a.name AS author, d.name AS dynasty
+      FROM poems_zh_hans p
+      LEFT JOIN authors_zh_hans a ON a.id = p.author_id
+      LEFT JOIN dynasties_zh_hans d ON d.id = p.dynasty_id
+      WHERE p.content IS NOT NULL AND p.content != ''
+      ORDER BY random()
+      LIMIT 1200
+    `).all()
+    const lines = []
+    for (const row of rows) {
+      lines.push(...formatPoetryRowLines(row))
+      if (lines.length >= IMAGE_SUMMARY_LINE_LIMIT) break
+    }
+    return shuffle(lines).slice(0, IMAGE_SUMMARY_LINE_LIMIT)
+  } finally {
+    db.close()
+  }
+}
+
+async function generatePoetryLinesWithPython(dbFile) {
+  const { spawn } = await import("node:child_process")
+  const candidates = process.platform === "win32"
+    ? [["py", ["-3"]], ["python", []], ["python3", []]]
+    : [["python3", []], ["python", []]]
+  const code = `
+import json
+import random
+import re
+import sqlite3
+import sys
+
+db_file = sys.argv[1]
+limit = int(sys.argv[2])
+con = sqlite3.connect(db_file)
+rows = con.execute("""
+  SELECT p.title AS title, p.content AS content, a.name AS author, d.name AS dynasty
+  FROM poems_zh_hans p
+  LEFT JOIN authors_zh_hans a ON a.id = p.author_id
+  LEFT JOIN dynasties_zh_hans d ON d.id = p.dynasty_id
+  WHERE p.content IS NOT NULL AND p.content != ''
+  ORDER BY random()
+  LIMIT 1200
+""").fetchall()
+lines = []
+for title, content, author, dynasty in rows:
+  try:
+    parts = json.loads(content)
+  except Exception:
+    parts = [content]
+  source = " ".join([part for part in [
+    f"[{dynasty}]" if dynasty else "",
+    author or "",
+    f"《{title}》" if title else "",
+  ] if part]).strip()
+  for part in parts:
+    for line in re.split(r"(?<=[。！？!?；;])\\s*|\\n+", str(part or "")):
+      line = re.sub(r"<[^>]+>", "", line)
+      line = re.sub(r"\\s+", " ", line).strip()
+      if line:
+        lines.append(f"{line} —— {source}" if source else line)
+random.shuffle(lines)
+sys.stdout.buffer.write(json.dumps(lines[:limit], ensure_ascii=False).encode("utf-8"))
+`
+
+  for (const [command, args] of candidates) {
+    const lines = await runPythonLineExtractor(command, [...args, "-c", code, dbFile, String(IMAGE_SUMMARY_LINE_LIMIT)])
+    if (lines.length) return lines
+  }
+  return []
+}
+
+function runPythonLineExtractor(command, args) {
+  return new Promise(resolve => {
+    let settled = false
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    })
+    const chunks = []
+    const done = value => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(() => {
+      child.kill()
+      done([])
+    }, 30 * 1000)
+
+    child.stdout.on("data", chunk => chunks.push(chunk))
+    child.on("error", () => done([]))
+    child.on("close", code => {
+      if (code !== 0) return done([])
+      try {
+        const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+        done(Array.isArray(parsed) ? parsed.map(item => cleanSummaryPart(item)).filter(Boolean) : [])
+      } catch {
+        done([])
+      }
+    })
+  })
+}
+
+function formatPoetryRowLines(row) {
+  const content = parsePoetryContent(row.content)
+  const source = [
+    row.dynasty ? `[${cleanSummaryPart(row.dynasty)}]` : "",
+    cleanSummaryPart(row.author),
+    row.title ? `《${cleanSummaryPart(row.title)}》` : "",
+  ].filter(Boolean).join(" ")
+  return content
+    .flatMap(line => splitPoetrySentences(line))
+    .map(line => cleanSummaryPart(line))
+    .filter(Boolean)
+    .map(line => source ? `${line} —— ${source}` : line)
+}
+
+function parsePoetryContent(content) {
+  if (Array.isArray(content)) return content
+  const text = String(content || "").trim()
+  if (!text) return []
+  try {
+    const parsed = JSON.parse(text)
+    if (Array.isArray(parsed)) return parsed
+  } catch {}
+  return [text]
+}
+
+function parseChecksum(text = "", fileName = "") {
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const [hash, name] = line.trim().split(/\s+/, 2)
+    if (name === fileName && /^[a-f0-9]{64}$/i.test(hash)) return hash
+  }
+  return ""
+}
+
+function getImageSummaryCacheDir() {
+  return path.join(process.cwd(), IMAGE_SUMMARY_CACHE_DIR)
+}
+
+async function readJsonFile(file) {
+  return JSON.parse(await fs.readFile(file, "utf8"))
+}
+
+async function writeJsonFile(file, value) {
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  await fs.writeFile(file, JSON.stringify(value), "utf8")
+}
+
+async function fileExists(file) {
+  return fs.access(file).then(() => true, () => false)
+}
+
+async function hashFile(file, algorithm) {
+  const hash = crypto.createHash(algorithm)
+  for await (const chunk of createReadStream(file)) {
+    hash.update(chunk)
+  }
+  return hash.digest("hex")
+}
+
+function shuffle(values) {
+  const list = [...values]
+  for (let i = list.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[list[i], list[j]] = [list[j], list[i]]
+  }
+  return list
+}
+
+function splitPoetrySentences(value = "") {
+  return String(value || "")
+    .replace(/\r/g, "\n")
+    .split(/(?<=[。！？!?；;])\s*|\n+/u)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function cleanSummaryPart(value = "") {
+  return String(value || "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function attachImageSummary(payload, summary) {
+  if (!payload) return
+  if (Array.isArray(payload)) {
+    for (const item of payload) attachImageSummary(item, summary)
+    return
+  }
+  if (!isObjectPayload(payload)) return
+
+  const type = String(payload.type || payload.data?.type || "").toLowerCase()
+  const hasImageFile = Boolean(payload.file || payload.url || payload.data?.file || payload.data?.url)
+  if (type === "image" || hasImageFile) {
+    if (!payload.summary) payload.summary = summary
+    if (isObjectPayload(payload.data) && !payload.data.summary) payload.data.summary = summary
+  }
+}
+
+function isObjectPayload(value) {
+  return Boolean(value)
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && !Buffer.isBuffer(value)
+    && !(value instanceof ArrayBuffer)
+    && !ArrayBuffer.isView(value)
 }
 
 function patchLoaderMethod(loader, name) {
