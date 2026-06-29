@@ -112,10 +112,11 @@ export class GenshinAchievementService {
   async importCocogoatJson({ uid, json } = {}) {
     if (!uid) throw new Error("缺少原神 UID，无法保存成就进度。")
     if (!json || typeof json !== "object") throw new Error("发送的 JSON 内容为空或格式不正确。")
-    if (json.source !== COCOGOAT_SOURCE) throw new Error("只支持椰羊导出的 JSON。")
+    const exportData = normalizeCocogoatExport(json)
+    if (!exportData) throw new Error("只支持椰羊导出的 JSON。")
 
     const catalog = await this.loadCatalog()
-    const list = Array.isArray(json.value?.achievements) ? json.value.achievements : []
+    const list = exportData.achievements
     const progress = await this.loadProgress(uid)
     const touched = new Map()
     let added = 0
@@ -126,7 +127,7 @@ export class GenshinAchievementService {
 
     for (const item of list) {
       const id = normalizeAchievementId(item?.id)
-      if (!id || !item?.status) continue
+      if (!id || !isCompletedRecord(item, exportData.format)) continue
       completedInput += 1
       const achievement = catalog.achievementsById.get(id)
       if (!achievement) {
@@ -134,7 +135,8 @@ export class GenshinAchievementService {
         continue
       }
 
-      const result = addDoneRecord(progress.done, id, item, "cocogoat")
+      const source = exportData.format === "uiaf" ? "cocogoat-uiaf" : "cocogoat"
+      const result = addDoneRecord(progress.done, id, item, source)
       if (result.added) added += 1
       else duplicate += 1
       touched.set(achievement.categoryId, true)
@@ -420,6 +422,36 @@ function groupedSeriesIds(entries) {
   return [...map.values()]
     .filter(items => items.length > 1)
     .map(items => items.sort((a, b) => a.order - b.order || a.id - b.id).map(item => item.id))
+}
+
+function normalizeCocogoatExport(json = {}) {
+  const legacy = Array.isArray(json?.value?.achievements) ? json.value.achievements : null
+  if (json?.source === COCOGOAT_SOURCE && legacy) {
+    return {
+      format: "cocogoat",
+      achievements: legacy,
+    }
+  }
+
+  const info = json?.info && typeof json.info === "object" ? json.info : {}
+  const exportApp = String(info.export_app || "").toLowerCase()
+  const isCocogoatUiaf = Array.isArray(json?.list)
+    && (exportApp === "cocogoat" || Boolean(info.cocogoat_ext))
+  if (isCocogoatUiaf) {
+    return {
+      format: "uiaf",
+      achievements: json.list,
+    }
+  }
+
+  return null
+}
+
+function isCompletedRecord(item = {}, format = "cocogoat") {
+  const status = item?.status
+  if (format === "uiaf") return status === 2 || status === 3
+  if (typeof status === "number") return status >= 2
+  return Boolean(status)
 }
 
 function addDoneRecord(done, id, item = {}, source = "cocogoat") {
