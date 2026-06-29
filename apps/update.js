@@ -90,6 +90,9 @@ function updateItems(result) {
   for (const line of result.dirty || []) {
     items.push({ label: "未提交", value: line.slice(0, 80) })
   }
+  for (const line of result.ignoredDirty || []) {
+    items.push({ label: "已忽略", value: line.slice(0, 80) })
+  }
   if (result.detail) items.push({ label: "详情", value: String(result.detail).slice(0, 80) })
   return items.slice(0, 14)
 }

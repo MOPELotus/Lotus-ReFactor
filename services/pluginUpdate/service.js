@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { rootPath } from "../../core/path.js"
 
 const DEFAULT_OUTPUT_LIMIT = 12000
+const GIT_STATUS_ARGS = ["status", "--short", "--ignore-submodules=dirty"]
 
 export async function checkPluginUpdate(options = {}) {
   const {
@@ -12,14 +13,16 @@ export async function checkPluginUpdate(options = {}) {
     runner = runGit,
   } = options
 
-  const status = await runner(["status", "--short"], { cwd, outputLimit })
-  const dirtyLines = splitLines(status.stdout)
+  const status = await runner(GIT_STATUS_ARGS, { cwd, outputLimit })
+  const dirtyState = partitionDirtyStatus(splitStatusLines(status.stdout))
+  const dirtyLines = dirtyState.blocking
   if (dirtyLines.length) {
     return {
       ok: false,
       action: "blocked_dirty",
       message: "当前仓库存在未提交改动，已停止自动更新。",
       dirty: dirtyLines.slice(0, 12),
+      ignoredDirty: dirtyState.ignored.slice(0, 12),
     }
   }
 
@@ -79,6 +82,7 @@ export async function checkPluginUpdate(options = {}) {
       behind,
       commit: current,
       message: "本地分支领先上游，无需拉取。",
+      ignoredDirty: dirtyState.ignored.slice(0, 12),
     }
   }
   if (behind === 0) {
@@ -91,6 +95,7 @@ export async function checkPluginUpdate(options = {}) {
       behind,
       commit: current,
       message: "插件已是最新版本。",
+      ignoredDirty: dirtyState.ignored.slice(0, 12),
     }
   }
 
@@ -104,6 +109,7 @@ export async function checkPluginUpdate(options = {}) {
       behind,
       commit: current,
       message: `检测到上游有 ${behind} 个新提交。`,
+      ignoredDirty: dirtyState.ignored.slice(0, 12),
     }
   }
 
@@ -128,6 +134,7 @@ export async function checkPluginUpdate(options = {}) {
     previousCommit: current,
     message: `已 fast-forward 更新 ${behind} 个提交，请按需重启机器人。`,
     output: pullResult.stdout || pullResult.stderr,
+    ignoredDirty: dirtyState.ignored.slice(0, 12),
   }
 }
 
@@ -186,6 +193,30 @@ function parseAheadBehind(output = "") {
 
 function splitLines(text = "") {
   return String(text || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+}
+
+function splitStatusLines(text = "") {
+  return String(text || "").split(/\r?\n/).filter(line => line.trim())
+}
+
+function partitionDirtyStatus(lines = []) {
+  const ignored = []
+  const blocking = []
+  for (const line of lines) {
+    if (isIgnoredDirtyStatus(line)) ignored.push(line.trim())
+    else blocking.push(line.trim())
+  }
+  return { blocking, ignored }
+}
+
+function isIgnoredDirtyStatus(line = "") {
+  const normalized = String(line || "").replace(/\\/g, "/")
+  const code = normalized.slice(0, 2)
+  const file = normalized.slice(3).trim()
+  if (file === "services/starRailTeamDamage/data/system-data.json") return true
+  if (file === "test_nine" && /[m?]/.test(code)) return true
+  if (file.startsWith("test_nine/") && code.includes("?")) return true
+  return false
 }
 
 function appendLimited(current, chunk, limit) {
