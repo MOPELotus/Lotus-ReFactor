@@ -170,7 +170,7 @@ export class NeteasePartnerService {
         }
         await this.sleep(randomDelay(delayMin, delayMax))
         const score = weightedScore()
-        const extraScore = buildExtraScore(work.dimensions)
+        const extraScore = buildExtraScore(resolveExtraScoreDimensions(item, work))
         const payload = {
           taskId,
           workId: songId,
@@ -317,6 +317,12 @@ export function buildExtraScore(dimensions = [], scorer = weightedScore) {
   return extraScore
 }
 
+export function resolveExtraScoreDimensions(item = {}, work = {}) {
+  const current = collectDimensionIds([work, item], ["supportExtraEvaTypes"])
+  if (current.length) return current
+  return collectDimensionIds([work, item], ["dimensions"])
+}
+
 export function normalizeCookie(rawCookie = "") {
   const skip = new Set(["path", "expires", "max-age", "domain", "httponly", "secure", "samesite"])
   const pairs = new Map()
@@ -370,7 +376,21 @@ function dimensionId(dimension) {
   if (dimension === null || dimension === undefined) return ""
   if (typeof dimension === "string" || typeof dimension === "number") return String(dimension)
   if (typeof dimension !== "object") return ""
-  return String(dimension.id || dimension.dimensionId || dimension.key || dimension.name || "")
+  return String(dimension.id ?? dimension.dimensionId ?? dimension.key ?? dimension.name ?? "")
+}
+
+function collectDimensionIds(sources, fields) {
+  const ids = new Set()
+  for (const source of sources) {
+    if (!source || typeof source !== "object") continue
+    for (const field of fields) {
+      for (const dimension of normalizeDimensions(source[field])) {
+        const id = dimensionId(dimension)
+        if (id) ids.add(id)
+      }
+    }
+  }
+  return [...ids]
 }
 
 function formatSubScores(extraScore = {}) {
