@@ -268,7 +268,6 @@ async function runZzzPanelRefresh(panel, { uid, refreshPanelFunction } = {}) {
 
   try {
     const { api, deviceFp } = await panel.getAPI()
-    await originalReply("正在更新面板列表，请稍候...")
     if (typeof panel.getPlayerInfo === "function") await panel.getPlayerInfo()
     await globalThis.redis?.set?.(`ZZZ:PANEL:${uid}:LASTTIME`, Date.now())
     result = await refreshPanelFunction(api, deviceFp)

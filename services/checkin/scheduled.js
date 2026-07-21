@@ -1,5 +1,5 @@
 import { loadGlobalConfig } from "../../core/config/global.js"
-import { isUserVisibleCaptchaEvent } from "../../core/captcha/events.js"
+import { createCaptchaEventReporter } from "../../core/captcha/notify.js"
 import { loadProfile } from "../../core/config/profile.js"
 import { renderTemplate } from "../../core/render/service.js"
 import { SchedulerService, dateString, nextDateString } from "../../core/scheduler/service.js"
@@ -140,6 +140,18 @@ export class ScheduledSigninService {
   async runEntry(entry, options = {}) {
     let profile = await loadProfile(entry.qq, entry.profileId).catch(() => null)
     try {
+      const captchaReporter = createCaptchaEventReporter({
+        send: async message => {
+          if (!profile) return false
+          const result = await this.notify(profile, message, { bot: options.bot || this.bot })
+          return result.ok
+        },
+        sendForward: async messages => {
+          if (!profile) return false
+          const result = await this.notify(profile, messages.join("\n"), { bot: options.bot || this.bot })
+          return result.ok
+        },
+      })
       const outcome = await this.signin.run({
         qq: entry.qq,
         profileId: entry.profileId,
@@ -147,11 +159,9 @@ export class ScheduledSigninService {
         refresh: true,
         installRequirements: false,
         onCaptchaEvent: async event => {
-          if (isUserVisibleCaptchaEvent(event) && event?.message && profile) {
-            await this.notify(profile, event.message, { bot: options.bot || this.bot }).catch(error => {
-              logger?.warn?.(`[Lotus-Plugin] captcha notify failed: ${error.message}`)
-            })
-          }
+          await captchaReporter(event).catch(error => {
+            logger?.warn?.(`[Lotus-Plugin] captcha notify failed: ${error.message}`)
+          })
         },
       })
       profile = outcome.profile || profile

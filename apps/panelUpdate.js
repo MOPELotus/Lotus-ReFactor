@@ -71,6 +71,9 @@ export class LotusPanelUpdate extends BasePlugin {
     const profileId = parseProfileIdFromMessage(this.e.msg)
     try {
       const loadedProfile = await loadProfile(userId, profileId)
+      if (game === "zzz") {
+        await replyText(this, "[荷花插件]正在更新绝区零面板，请稍候。")
+      }
       const profile = await refreshProfileBeforePanel(userId, profileId, loadedProfile)
       const result = await panelBridgeForGame(game).updatePanel({
         e: this.e,
