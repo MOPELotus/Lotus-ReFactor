@@ -138,6 +138,57 @@ export async function checkPluginUpdate(options = {}) {
   }
 }
 
+export async function syncTrackedSubmodules(options = {}) {
+  const {
+    cwd = rootPath,
+    outputLimit = DEFAULT_OUTPUT_LIMIT,
+    runner = runGit,
+  } = options
+  const status = await runner(["submodule", "status", "--recursive"], {
+    cwd,
+    outputLimit,
+    allowFailure: true,
+  })
+  if (status.code !== 0) {
+    return {
+      ok: false,
+      action: "submodule_status_failed",
+      message: "无法读取子模块状态。",
+      detail: status.stderr || status.stdout,
+    }
+  }
+
+  const pending = splitLines(status.stdout).filter(line => /^[+\-U]/.test(line))
+  if (!pending.length) {
+    return {
+      ok: true,
+      action: "submodules_up_to_date",
+      message: "子模块提交已同步。",
+    }
+  }
+
+  const update = await runner(["submodule", "update", "--init", "--recursive"], {
+    cwd,
+    outputLimit,
+    allowFailure: true,
+  })
+  if (update.code !== 0) {
+    return {
+      ok: false,
+      action: "submodule_update_failed",
+      message: "子模块提交不匹配，但自动更新失败。",
+      pending,
+      detail: update.stderr || update.stdout,
+    }
+  }
+  return {
+    ok: true,
+    action: "submodules_updated",
+    message: "已同步子模块追踪的提交。",
+    pending,
+  }
+}
+
 export function runGit(args, options = {}) {
   const {
     cwd = rootPath,

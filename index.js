@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import { installLotusRuntimeInterception } from "./services/intercept/runtime.js"
 import { ensureGlobalConfig } from "./core/config/global.js"
 import { autoStartTestNineServer } from "./services/testNine/server.js"
+import { syncTrackedSubmodules } from "./services/pluginUpdate/service.js"
 
 const pluginName = "Lotus-Plugin"
 const appsDir = new URL("./apps/", import.meta.url)
@@ -16,6 +17,16 @@ await ensureGlobalConfig().then(result => {
 
 await installLotusRuntimeInterception().catch(error => {
   logger?.debug?.(`[${pluginName}] runtime interception skipped: ${error.message}`)
+})
+
+await syncTrackedSubmodules().then(result => {
+  if (result.action === "submodules_updated") {
+    logger?.mark?.("[" + pluginName + "] " + result.message)
+  } else if (!result.ok) {
+    logger?.warn?.("[" + pluginName + "] submodule sync skipped: " + result.message)
+  }
+}).catch(error => {
+  logger?.debug?.("[" + pluginName + "] submodule sync skipped: " + error.message)
 })
 
 autoStartTestNineServer().catch(error => {

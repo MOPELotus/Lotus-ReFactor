@@ -1,4 +1,20 @@
-export const CURRENT_GLOBAL_CONFIG_VERSION = 1
+export const CURRENT_GLOBAL_CONFIG_VERSION = 2
+
+const ATLAS_BASE_SCOPE_ARGS = Object.freeze([
+  "--game", "gi,hsr,zzz",
+  "--locale", "zh",
+  "--page", "gi=character,weapon,artifact,achievement/achievement,monster,tower,rolecombat,leyline",
+  "--page", "hsr=character,lightcone,relicset,achievement/achievement,monster,monstervalue,EliteGroup,HardLevelGroup,InfiniteEliteGroup,maze,maze_peak,maze_boss,maze_extra",
+  "--page", "zzz=character,weapon,equipment,bangboo,achievement/achievement,monster,shiyu,boss",
+])
+
+const ATLAS_CHALLENGE_SCOPE_ARGS = Object.freeze([
+  "--game", "gi,hsr,zzz",
+  "--locale", "zh",
+  "--page", "gi=monster,tower,rolecombat,leyline",
+  "--page", "hsr=monster,monstervalue,EliteGroup,HardLevelGroup,InfiniteEliteGroup,maze,maze_peak,maze_boss,maze_extra",
+  "--page", "zzz=monster,shiyu,boss",
+])
 
 export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
   version: CURRENT_GLOBAL_CONFIG_VERSION,
@@ -181,16 +197,18 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     sync_after_update: true,
     sync_gallery: true,
     initial_command: "node",
-    initial_args: ["src/scrape.mjs", "--mode", "full"],
+    initial_args: ["src/scrape.mjs", "--mode", "full", ...ATLAS_BASE_SCOPE_ARGS],
     update_command: "node",
-    update_args: ["src/scrape.mjs", "--mode", "incremental"],
+    update_args: ["src/scrape.mjs", "--mode", "incremental", ...ATLAS_BASE_SCOPE_ARGS],
+    challenge_args: ["src/scrape.mjs", "--mode", "incremental", ...ATLAS_CHALLENGE_SCOPE_ARGS],
     version_command: "node",
-    version_args: ["src/scrape.mjs", "--list-versions"],
+    version_args: ["src/scrape.mjs", "--list-versions", "--game", "gi,hsr,zzz"],
     update_timeout_ms: 1800000,
     update_output_limit: 12000,
     auto_update: {
       enable: true,
       check_cron: "0 0 */6 * * ? *",
+      challenge_cron: "0 15 */2 * * ? *",
       run_on_missing_data: true,
     },
   },

@@ -19,13 +19,19 @@ export class AtlasUpdateService {
       }
     }
 
-    const mode = options.mode === "initial" ? "initial" : "incremental"
+    const mode = options.mode === "initial"
+      ? "initial"
+      : options.mode === "challenge"
+        ? "challenge"
+        : "incremental"
     const command = mode === "initial"
       ? config.initial_command || config.update_command || "node"
       : config.update_command || "node"
     const args = mode === "initial"
       ? Array.isArray(config.initial_args) ? config.initial_args : ["src/scrape.mjs", "--mode", "full"]
-      : Array.isArray(config.update_args) ? config.update_args : ["src/scrape.mjs", "--mode", "incremental"]
+      : mode === "challenge"
+        ? Array.isArray(config.challenge_args) ? config.challenge_args : ["src/scrape.mjs", "--mode", "incremental"]
+        : Array.isArray(config.update_args) ? config.update_args : ["src/scrape.mjs", "--mode", "incremental"]
     const result = await runSpawn(this.spawn, command, args, {
       cwd: root,
       timeoutMs: Number(config.update_timeout_ms || 1800000),
@@ -114,6 +120,17 @@ export class AtlasUpdateService {
         remote,
         diff,
       },
+    }
+  }
+
+  async reset(config = {}) {
+    const root = resolveAtlasDataRoot(config.data_root)
+    await this.fs.rm(root, { recursive: true, force: true })
+    return {
+      ok: true,
+      mode: "reset",
+      root,
+      message: "已清理插件图鉴缓存，后端数据未删除。",
     }
   }
 

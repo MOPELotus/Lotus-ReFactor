@@ -460,7 +460,7 @@ function validateAtlasConfig(atlas = {}, errors) {
     if (typeof atlas[field] !== "boolean") errors.push(`atlas.${field} must be boolean`)
   }
   if (!isPositiveInteger(atlas.max_results)) errors.push("atlas.max_results must be a positive integer")
-  for (const field of ["initial_args", "update_args", "version_args"]) {
+  for (const field of ["initial_args", "update_args", "challenge_args", "version_args"]) {
     if (!Array.isArray(atlas[field]) || !atlas[field].every(isString)) {
       errors.push(`atlas.${field} must be an array of strings`)
     }
@@ -472,6 +472,7 @@ function validateAtlasConfig(atlas = {}, errors) {
   } else {
     if (typeof atlas.auto_update.enable !== "boolean") errors.push("atlas.auto_update.enable must be boolean")
     if (!isString(atlas.auto_update.check_cron)) errors.push("atlas.auto_update.check_cron must be a string")
+    if (!isString(atlas.auto_update.challenge_cron)) errors.push("atlas.auto_update.challenge_cron must be a string")
     if (typeof atlas.auto_update.run_on_missing_data !== "boolean") {
       errors.push("atlas.auto_update.run_on_missing_data must be boolean")
     }

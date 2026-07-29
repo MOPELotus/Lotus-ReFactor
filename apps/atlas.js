@@ -12,7 +12,7 @@ import {
   parseAtlasShortcutMessage,
   selectAtlasTemplate,
 } from "../services/nanokaAtlas/service.js"
-import { AtlasUpdateService } from "../services/nanokaAtlas/update.js"
+import { AtlasUpdateService, readLocalVersionSnapshot } from "../services/nanokaAtlas/update.js"
 
 export class LotusAtlas extends BasePlugin {
   constructor() {
@@ -34,6 +34,7 @@ export class LotusAtlas extends BasePlugin {
       const globalConfig = await loadGlobalConfig()
       await this.refreshShortcutRoutes()
       this.task = this.buildAtlasTasks(globalConfig)
+      void this.runAtlasChallengeAutoUpdate({ startup: true }).catch(() => {})
     } catch (error) {
       logger?.warn?.(`[Lotus-Plugin] load atlas cron failed, fallback default: ${error.message}`)
     }
@@ -51,6 +52,12 @@ export class LotusAtlas extends BasePlugin {
         name: "荷花插件图鉴快捷路由刷新",
         cron: "0 0 0 * * ? *",
         fnc: this.refreshShortcutRoutes.bind(this),
+        log: false,
+      },
+      {
+        name: "荷花插件图鉴挑战刷新",
+        cron: globalConfig.atlas?.auto_update?.challenge_cron || "0 15 */2 * * ? *",
+        fnc: this.runAtlasChallengeAutoUpdate.bind(this),
         log: false,
       },
     ]
@@ -126,6 +133,30 @@ export class LotusAtlas extends BasePlugin {
     return true
   }
 
+  async resetAtlas() {
+    const permission = await this.assertUpdatePermission("图鉴重置")
+    if (!permission) return true
+
+    const globalConfig = await loadGlobalConfig()
+    const result = await new AtlasUpdateService().reset(globalConfig.atlas || {})
+    await this.refreshShortcutRoutes()
+    const image = await renderStatusCard({
+      title: "图鉴重置",
+      subtitle: "Nanoka Atlas",
+      badge: result.ok ? "DONE" : "STOP",
+      message: result.message || "图鉴缓存清理失败。",
+      userId: this.e.user_id,
+      items: [
+        { label: "目录", value: result.root || "未知" },
+        { label: "后续", value: "执行 #全量更新图鉴 重新初始化" },
+      ],
+    }, {
+      saveId: "lotus-atlas-reset-" + (this.e.user_id || "master"),
+    })
+    await replyImage(this, image, result.ok ? "[荷花插件]图鉴缓存已重置。" : "[荷花插件]图鉴重置失败。")
+    return true
+  }
+
   async assertUpdatePermission(title) {
     const globalConfig = await loadGlobalConfig()
     const permission = new PermissionService({ permissions: globalConfig.permissions })
@@ -160,6 +191,26 @@ export class LotusAtlas extends BasePlugin {
       logger?.mark?.(`[Lotus-Plugin] atlas ${result.mode || "update"} completed`)
     } else if (!result.ok) {
       logger?.warn?.(`[Lotus-Plugin] atlas update failed: ${result.reason}`)
+    }
+    return result
+  }
+
+  async runAtlasChallengeAutoUpdate({ startup = false } = {}) {
+    const globalConfig = await loadGlobalConfig()
+    const config = globalConfig.atlas || {}
+    if (config.auto_update?.enable === false) {
+      return { ok: true, skipped: true, reason: "auto_update_disabled" }
+    }
+    const local = await readLocalVersionSnapshot(config)
+    if (!local.ready) {
+      return { ok: true, skipped: true, reason: "base_atlas_missing" }
+    }
+    const result = await new AtlasUpdateService().run(config, { mode: "challenge" })
+    if (result.ok) {
+      await this.refreshRoutesAfterAtlasUpdate(result)
+      if (!startup) logger?.mark?.("[Lotus-Plugin] atlas challenge refresh completed")
+    } else {
+      logger?.warn?.("[Lotus-Plugin] atlas challenge refresh failed: " + (result.reason || "unknown"))
     }
     return result
   }
@@ -243,6 +294,7 @@ export class LotusAtlas extends BasePlugin {
         { label: "状态", value: "#图鉴状态" },
         { label: "更新", value: "#更新图鉴" },
         { label: "全量", value: "#全量更新图鉴" },
+        { label: "重置", value: "#重置图鉴（只清插件缓存）" },
         { label: "数据目录", value: "global.yaml: atlas.data_root" },
         { label: "后端目录", value: "global.yaml: atlas.backend_root" },
       ],
@@ -271,6 +323,10 @@ function composeAtlasRules(shortcutRules = []) {
     {
       reg: "^#?(Lotus|lotus|荷花)?(全量更新图鉴|图鉴全量更新)$",
       fnc: "fullUpdateAtlas",
+    },
+    {
+      reg: "^#?(Lotus|lotus|荷花)?(重置图鉴|图鉴重置|清空图鉴)$",
+      fnc: "resetAtlas",
     },
     {
       reg: "^#?(Lotus|lotus|荷花)?图鉴帮助$",

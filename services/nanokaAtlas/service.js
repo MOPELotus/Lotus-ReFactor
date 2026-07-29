@@ -1023,7 +1023,7 @@ function prepareChallengeItems(items, challenge) {
   return items
     .filter(item => isSelectableChallengeItem(item, schedule))
     .map(item => {
-      const dateRange = synthesizeChallengeDateRange(item, schedule) || extractDateRange(item.raw)
+      const dateRange = extractDateRange(item.raw) || synthesizeChallengeDateRange(item, schedule)
       return { ...item, dateRange }
     })
     .filter(item => hasSelectableChallengeDuration(item, schedule))
@@ -1537,10 +1537,10 @@ function atlasMiaoAliasFiles() {
     files.push(
       { path: path.join(base, "resources", "meta-gs", "character", "alias.js"), exports: ["alias"], game: "原神" },
       { path: path.join(base, "resources", "meta-gs", "weapon", "alias.js"), exports: ["alias", "abbr"], game: "原神" },
-      { path: path.join(base, "resources", "meta-gs", "artifact", "alias.js"), exports: ["alias", "abbr", "setAbbr"], game: "原神" },
-      { path: path.join(base, "resources", "meta-sr", "character", "alias.js"), exports: ["alias"], game: "星铁" },
-      { path: path.join(base, "resources", "meta-sr", "weapon", "alias.js"), exports: ["alias", "abbr"], game: "星铁" },
-      { path: path.join(base, "resources", "meta-sr", "artifact", "alias.js"), exports: ["alias", "abbr", "setAbbr"], game: "星铁" },
+      { path: path.join(base, "resources", "meta-gs", "artifact", "alias.js"), exports: ["setAlias", "setAbbr"], game: "原神" },
+      { path: path.join(base, "resources", "meta-sr", "character", "alias.js"), exports: ["alias", "abbr"], game: "星铁" },
+      { path: path.join(base, "resources", "meta-sr", "weapon", "alias.js"), exports: ["aliasCfg", "abbr"], game: "星铁" },
+      { path: path.join(base, "resources", "meta-sr", "artifact", "alias.js"), exports: ["aliasCfg", "artiAbbr", "artiSetAbbr"], game: "星铁" },
     )
   }
   return uniqueExistingFiles(files)

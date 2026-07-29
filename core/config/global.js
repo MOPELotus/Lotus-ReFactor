@@ -117,6 +117,7 @@ export function normalizeLegacyGlobalShape(config = {}) {
     next.netease_partner = normalizeLegacyNetease(next.neteasePartner)
   }
 
+  migrateAtlasScope(next)
   normalizeCronFields(next)
 
   if (looksLikeLoveMysCaptcha(next)) {
@@ -218,6 +219,24 @@ function normalizeCronFields(config = {}) {
   }
   if (config.atlas?.auto_update) {
     config.atlas.auto_update.check_cron = normalizeQuartzCron(config.atlas.auto_update.check_cron)
+    config.atlas.auto_update.challenge_cron = normalizeQuartzCron(config.atlas.auto_update.challenge_cron)
+  }
+}
+
+function migrateAtlasScope(config = {}) {
+  if (!config.atlas || typeof config.atlas !== "object") return
+
+  const defaults = createDefaultGlobalConfig().atlas
+  const legacyArgs = {
+    initial_args: ["src/scrape.mjs", "--mode", "full"],
+    update_args: ["src/scrape.mjs", "--mode", "incremental"],
+    version_args: ["src/scrape.mjs", "--list-versions"],
+  }
+
+  for (const [field, legacy] of Object.entries(legacyArgs)) {
+    if (sameStringArray(config.atlas[field], legacy)) {
+      config.atlas[field] = [...defaults[field]]
+    }
   }
 }
 
@@ -276,6 +295,12 @@ function mergeLegacyPermissionLists(current = {}, legacy = {}) {
 
 function unique(values = []) {
   return [...new Set(values.map(String).filter(Boolean))]
+}
+
+function sameStringArray(left, right) {
+  return Array.isArray(left)
+    && left.length === right.length
+    && left.every((value, index) => value === right[index])
 }
 
 function mergeConfig(base, patch) {
