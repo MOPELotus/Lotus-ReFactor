@@ -768,6 +768,7 @@ export function parseAtlasShortcutMessage(message = "") {
   if (isPanelShortcutQuery(originalText)) return { ok: false, reason: "panel_query" }
   if (isRankingShortcutQuery(originalText)) return { ok: false, reason: "ranking_query" }
   if (isExtremeBuildShortcutQuery(originalText)) return { ok: false, reason: "extreme_build_query" }
+  if (isGuideOrProficiencyShortcutQuery(originalText)) return { ok: false, reason: "reserved_query" }
   if (isProfilePersonalShortcutQuery(originalText)) return { ok: false, reason: "profile_personal_query" }
   if (!explicitSuffix && isPersonalChallengeQuery(text)) return { ok: false, reason: "personal_challenge" }
 
@@ -839,6 +840,10 @@ function isRankingShortcutQuery(text = "") {
 function isExtremeBuildShortcutQuery(text = "") {
   const normalized = normalizeShortcutText(text)
   return /^(?:最强|极限)[\s\S]{1,}$/.test(normalized)
+}
+
+function isGuideOrProficiencyShortcutQuery(text = "") {
+  return /(?:攻略|练度统计)/.test(normalizeShortcutText(text))
 }
 
 function isProfilePersonalShortcutQuery(text = "") {
