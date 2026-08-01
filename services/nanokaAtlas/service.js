@@ -550,11 +550,11 @@ export async function buildAtlasShortcutRules(options = {}) {
     for (const name of list) allRoleNames.add(name)
     if (prefix && suffixes.length) {
       for (const routePrefix of shortcutRoutePrefixes(prefix)) {
-        rules.push(...buildNameShortcutRules(routePrefix, list, `(?:${suffixes.map(escapeRegExp).join("|")})`))
+        rules.push(...buildNameShortcutRules(routePrefix, list, `(?:${suffixes.map(escapeRegExp).join("|")})(?:图鉴)?`))
       }
     }
   }
-  rules.push(...buildNameShortcutRules("", [...allRoleNames].sort(shortcutNameSort), "(?:命座|星魂|影画|天赋)"))
+  rules.push(...buildNameShortcutRules("", [...allRoleNames].sort(shortcutNameSort), "(?:命座|星魂|影画|天赋)(?:图鉴)?"))
 
   stats.rules = rules.length
   return {

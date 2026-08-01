@@ -407,16 +407,18 @@ export class ZzzGachaService {
 
   async saveLog(qq, uid, data) {
     const file = this.logFile(qq, uid)
-    const pluginFile = this.mirrorZzzPlugin ? await this.zzzPluginLogFile(uid) : ""
+    const pluginFiles = this.mirrorZzzPlugin ? await this.zzzPluginLogFiles(uid) : []
     const previous = mergeLogs(
       await readJsonFile(file),
-      pluginFile ? await readJsonFile(pluginFile) : {},
+      ...await Promise.all(pluginFiles.map(pluginFile => readJsonFile(pluginFile))),
     )
     const safeData = mergeLogs(previous, data)
 
     await backupExistingLogFile(file, { uid, source: "lotus" })
-    if (pluginFile && path.resolve(pluginFile) !== path.resolve(file)) {
-      await backupExistingLogFile(pluginFile, { uid, source: "zzz-plugin" })
+    for (const pluginFile of pluginFiles) {
+      if (path.resolve(pluginFile) !== path.resolve(file)) {
+        await backupExistingLogFile(pluginFile, { uid, source: "zzz-plugin" })
+      }
     }
 
     await fs.mkdir(path.dirname(file), { recursive: true })
@@ -434,24 +436,40 @@ export class ZzzGachaService {
 
   async saveZzzPluginLog(uid, data, options = {}) {
     if (!this.mirrorZzzPlugin) return ""
-    const file = await this.zzzPluginLogFile(uid)
-    if (!file) return ""
-    if (!options.skipBackup) await backupExistingLogFile(file, { uid, source: "zzz-plugin" })
-    const safeData = options.skipMerge ? data : mergeLogs(await readJsonFile(file), data)
-    await fs.mkdir(path.dirname(file), { recursive: true })
-    await fs.writeFile(file, JSON.stringify(safeData, null, 2), "utf8")
-    return file
+    const files = await this.zzzPluginLogFiles(uid)
+    if (!files.length) return ""
+
+    for (const file of files) {
+      if (!options.skipBackup) await backupExistingLogFile(file, { uid, source: "zzz-plugin" })
+      const safeData = options.skipMerge ? data : mergeLogs(await readJsonFile(file), data)
+      await fs.mkdir(path.dirname(file), { recursive: true })
+      await fs.writeFile(file, JSON.stringify(safeData, null, 2), "utf8")
+    }
+    return files[0]
   }
 
   async loadZzzPluginLog(uid) {
-    const file = await this.zzzPluginLogFile(uid)
-    if (!file) return {}
-    return readJsonFile(file)
+    const files = await this.zzzPluginLogFiles(uid)
+    if (!files.length) return {}
+    return mergeLogs(...await Promise.all(files.map(file => readJsonFile(file))))
   }
 
   async zzzPluginLogFile(uid) {
+    return (await this.zzzPluginLogFiles(uid))[0] || ""
+  }
+
+  async zzzPluginLogFiles(uid) {
     const pluginDir = await this.resolveZzzPluginDir()
-    return pluginDir ? path.join(pluginDir, "data", "gacha", `${uid}.json`) : ""
+    if (!pluginDir) return []
+
+    const pluginName = path.basename(path.resolve(pluginDir)) || "ZZZ-Plugin"
+    const yunzaiRoot = path.resolve(pluginDir, "..", "..")
+    return uniquePaths([
+      // ZZZ-Plugin 新版使用 Yunzai 根目录 data/<pluginName> 作为运行时数据目录。
+      path.join(yunzaiRoot, "data", pluginName, "gacha", `${uid}.json`),
+      // 旧版仍从插件自身 data 目录读取，保留镜像以兼容未升级实例。
+      path.join(pluginDir, "data", "gacha", `${uid}.json`),
+    ])
   }
 
   async resolveZzzPluginDir() {
@@ -704,6 +722,16 @@ async function backupExistingLogFile(file, { uid, source } = {}) {
 
 function safeFilePart(value = "") {
   return String(value).replace(/[^\w.-]+/g, "_").slice(0, 64) || "log"
+}
+
+function uniquePaths(files = []) {
+  const seen = new Set()
+  return files.filter(file => {
+    const key = path.resolve(file)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function formatCkDate(date = {}) {
