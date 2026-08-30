@@ -389,6 +389,22 @@ function validateBilibiliConfig(bilibili = {}, errors) {
   if (!Array.isArray(bilibili.download.extra_args) || !bilibili.download.extra_args.every(isString)) {
     errors.push("bilibili.download.extra_args must be an array of strings")
   }
+
+  if (!isObject(bilibili.cleanup)) {
+    errors.push("bilibili.cleanup must be an object")
+    return
+  }
+  for (const field of ["enable", "startup", "delete_after_send"]) {
+    if (typeof bilibili.cleanup[field] !== "boolean") {
+      errors.push(`bilibili.cleanup.${field} must be boolean`)
+    }
+  }
+  if (!isString(bilibili.cleanup.cron)) errors.push("bilibili.cleanup.cron must be a string")
+  for (const field of ["retention_days", "tmp_retention_hours", "max_total_size_mb"]) {
+    if (!isNonNegativeInteger(bilibili.cleanup[field])) {
+      errors.push(`bilibili.cleanup.${field} must be a non-negative integer`)
+    }
+  }
 }
 
 function validateGroupsConfig(groups = {}, errors) {

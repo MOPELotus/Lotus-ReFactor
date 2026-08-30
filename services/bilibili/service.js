@@ -40,6 +40,8 @@ export class BilibiliService {
     this.wbiCache = null
     this.accountFile = options.accountFile || resolveData("bilibili", "account.yaml")
     this.cacheFile = options.cacheFile || resolveData("bilibili", "cache.yaml")
+    this.tmpDir = options.tmpDir || resolveData("bilibili", "tmp")
+    this.outputDir = options.outputDir || resolveData("bilibili", "downloads")
   }
 
   extractTarget(message = "") {
@@ -221,8 +223,8 @@ export class BilibiliService {
       message: `开始下载 ${plan.info.bvid}，方式：${plan.downloader}，分P策略：${plan.policy}。`,
     })
 
-    const workDir = resolveData("bilibili", "tmp", `${plan.cacheKey}-${Date.now()}`)
-    const outputDir = resolveData("bilibili", "downloads")
+    const workDir = path.join(this.tmpDir, `${plan.cacheKey}-${Date.now()}`)
+    const outputDir = this.outputDir
     await fs.rm(workDir, { recursive: true, force: true })
     await fs.mkdir(workDir, { recursive: true })
     await fs.mkdir(outputDir, { recursive: true })
@@ -428,32 +430,57 @@ export class BilibiliService {
 
   async cleanupDownloads(config = {}) {
     const download = normalizeDownloadConfig(config)
-    const tmpDir = resolveData("bilibili", "tmp")
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => null)
+    const cleanup = normalizeCleanupConfig(config)
+    const tmpDir = this.tmpDir
+    const outputDir = this.outputDir
+    if (!cleanup.enable) {
+      return { ok: true, skipped: true, tmpDir, outputDir, removedFiles: 0, removedEntries: 0, freedBytes: 0 }
+    }
+
+    let removedFiles = 0
+    let freedBytes = 0
+    const tmpCutoff = cleanup.tmp_retention_hours > 0
+      ? this.now().getTime() - cleanup.tmp_retention_hours * 60 * 60 * 1000
+      : Number.POSITIVE_INFINITY
+    const tmpResult = await removeDirectoryEntriesOlderThan(tmpDir, tmpCutoff)
+    removedFiles += tmpResult.removedFiles
+    freedBytes += tmpResult.freedBytes
 
     const cache = await this.readCache()
     const nowMs = this.now().getTime()
+    const retentionCutoff = cleanup.retention_days > 0
+      ? nowMs - cleanup.retention_days * 24 * 60 * 60 * 1000
+      : Number.NEGATIVE_INFINITY
     let changed = false
-    let removedFiles = 0
     let removedEntries = 0
     for (const [key, item] of Object.entries(cache)) {
-      const files = Array.isArray(item.files) ? item.files : []
+      const rawFiles = Array.isArray(item.files) ? item.files : []
+      const files = rawFiles
+        .filter(file => isPathInside(outputDir, file))
       const expired = Boolean(item.expires_at && Date.parse(item.expires_at) < nowMs)
       const existing = []
       for (const file of files) {
-        if (await exists(file)) existing.push(file)
-      }
-      if (expired) {
-        for (const file of existing) {
-          await fs.rm(file, { force: true }).catch(() => null)
-          removedFiles += 1
+        const stat = await statFile(file)
+        if (!stat) continue
+        const tooOld = cleanup.retention_days > 0 && stat.mtimeMs < retentionCutoff
+        if (expired || tooOld) {
+          if (await removeFile(file)) {
+            removedFiles += 1
+            freedBytes += stat.size
+          } else {
+            existing.push(file)
+          }
+        } else {
+          existing.push(file)
         }
+      }
+      if (!existing.length) {
         delete cache[key]
         removedEntries += 1
         changed = true
         continue
       }
-      if (existing.length !== files.length) {
+      if (existing.length !== rawFiles.length) {
         if (existing.length) cache[key] = { ...item, files: existing }
         else {
           delete cache[key]
@@ -462,13 +489,82 @@ export class BilibiliService {
         changed = true
       }
     }
-    if (changed && download.cache_enable !== false) await this.writeCache(cache)
+
+    const referenced = new Set(Object.values(cache)
+      .flatMap(item => Array.isArray(item?.files) ? item.files : [])
+      .filter(file => isPathInside(outputDir, file))
+      .map(file => path.resolve(file)))
+    const outputFiles = await listFiles(outputDir)
+    for (const entry of outputFiles) {
+      if (entry.mtimeMs < retentionCutoff && !referenced.has(path.resolve(entry.file))) {
+        if (await removeFile(entry.file)) {
+          removedFiles += 1
+          freedBytes += entry.size
+        }
+      }
+    }
+
+    const remaining = await listFiles(outputDir)
+    const maxBytes = cleanup.max_total_size_mb * 1024 * 1024
+    let totalBytes = remaining.reduce((sum, entry) => sum + entry.size, 0)
+    if (maxBytes > 0 && totalBytes > maxBytes) {
+      for (const entry of remaining.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
+        if (totalBytes <= maxBytes) break
+        if (await removeFile(entry.file)) {
+          removedFiles += 1
+          freedBytes += entry.size
+          totalBytes -= entry.size
+          for (const [key, item] of Object.entries(cache)) {
+            const nextFiles = (item.files || []).filter(file => path.resolve(file) !== path.resolve(entry.file))
+            if (nextFiles.length) cache[key] = { ...item, files: nextFiles }
+            else {
+              delete cache[key]
+              removedEntries += 1
+            }
+          }
+          changed = true
+        }
+      }
+    }
+
+    if (changed || download.cache_enable === false) await this.writeCache(cache)
     return {
       ok: true,
       tmpDir,
+      outputDir,
       removedFiles,
       removedEntries,
+      freedBytes,
     }
+  }
+
+  async releaseDownloadedFiles(files = []) {
+    const outputDir = this.outputDir
+    const targets = [...new Set(files.filter(file => isPathInside(outputDir, file)).map(file => path.resolve(file)))]
+    let removedFiles = 0
+    let freedBytes = 0
+    for (const file of targets) {
+      const stat = await statFile(file)
+      if (!stat) continue
+      if (await removeFile(file)) {
+        removedFiles += 1
+        freedBytes += stat.size
+      }
+    }
+
+    if (targets.length) {
+      const cache = await this.readCache()
+      let changed = false
+      for (const [key, item] of Object.entries(cache)) {
+        const nextFiles = (Array.isArray(item.files) ? item.files : [])
+          .filter(file => !targets.includes(path.resolve(file)))
+        if (nextFiles.length !== (item.files || []).length) changed = true
+        if (nextFiles.length) cache[key] = { ...item, files: nextFiles }
+        else if (changed) delete cache[key]
+      }
+      if (changed) await this.writeCache(cache)
+    }
+    return { removedFiles, freedBytes }
   }
 
   async createQrLogin() {
@@ -676,6 +772,19 @@ export function normalizeDownloadConfig(config = {}) {
   }
 }
 
+export function normalizeCleanupConfig(config = {}) {
+  const source = config.cleanup || {}
+  return {
+    enable: source.enable !== false,
+    startup: source.startup !== false,
+    delete_after_send: source.delete_after_send !== false,
+    cron: String(source.cron || "0 10 4 * * ? *"),
+    retention_days: Math.max(0, Number(source.retention_days ?? 1) || 0),
+    tmp_retention_hours: Math.max(0, Number(source.tmp_retention_hours ?? 6) || 0),
+    max_total_size_mb: Math.max(0, Number(source.max_total_size_mb ?? 1024) || 0),
+  }
+}
+
 export function buildToolProcessEnv(pathDirs = [], baseEnv = process.env) {
   const env = { ...baseEnv }
   const pathKey = Object.prototype.hasOwnProperty.call(env, "Path") ? "Path" : "PATH"
@@ -879,6 +988,81 @@ async function findMediaFiles(root) {
     }
   }
   return files.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+}
+
+async function listFiles(root) {
+  const files = []
+  const queue = [root]
+  while (queue.length) {
+    const dir = queue.shift()
+    let entries
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch (error) {
+      if (error?.code === "ENOENT") continue
+      throw error
+    }
+    for (const entry of entries) {
+      const file = path.join(dir, entry.name)
+      if (entry.isDirectory()) queue.push(file)
+      else if (entry.isFile()) {
+        const stat = await statFile(file)
+        if (stat) files.push({ file, size: stat.size, mtimeMs: stat.mtimeMs })
+      }
+    }
+  }
+  return files
+}
+
+async function removeDirectoryEntriesOlderThan(root, cutoffMs) {
+  let removedFiles = 0
+  let freedBytes = 0
+  let entries
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true })
+  } catch (error) {
+    if (error?.code === "ENOENT") return { removedFiles, freedBytes }
+    throw error
+  }
+  for (const entry of entries) {
+    const target = path.join(root, entry.name)
+    const stat = await fs.stat(target).catch(() => null)
+    if (!stat || stat.mtimeMs >= cutoffMs) continue
+    const nested = entry.isDirectory() ? await listFiles(target) : []
+    const size = entry.isFile() ? stat.size : nested.reduce((sum, item) => sum + item.size, 0)
+    try {
+      await fs.rm(target, { recursive: entry.isDirectory(), force: true, maxRetries: 3, retryDelay: 200 })
+      removedFiles += entry.isFile() ? 1 : nested.length
+      freedBytes += size
+    } catch {
+      // Windows may still have an active BBDown/ffmpeg handle; retry on the next cleanup pass.
+    }
+  }
+  return { removedFiles, freedBytes }
+}
+
+async function statFile(file) {
+  try {
+    const stat = await fs.stat(file)
+    return stat.isFile() ? stat : null
+  } catch {
+    return null
+  }
+}
+
+async function removeFile(file) {
+  try {
+    await fs.rm(file, { force: true, maxRetries: 3, retryDelay: 200 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function isPathInside(root, candidate) {
+  if (!candidate) return false
+  const relative = path.relative(path.resolve(root), path.resolve(String(candidate)))
+  return relative !== "" && !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative)
 }
 
 function runSpawn(command, args = [], options = {}) {

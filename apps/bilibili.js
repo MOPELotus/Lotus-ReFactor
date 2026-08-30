@@ -10,6 +10,7 @@ import { replyImage, replyText } from "../core/transport/reply.js"
 import {
   BilibiliService,
   formatNumber,
+  normalizeCleanupConfig,
   normalizeDownloadConfig,
 } from "../services/bilibili/service.js"
 import { ToolInstallerService } from "../services/tools/installer.js"
@@ -36,7 +37,7 @@ export class LotusBilibili extends BasePlugin {
     this.task = [
       {
         name: "荷花插件B站下载清理",
-        cron: "0 30 3 * * ? *",
+        cron: "0 10 4 * * ? *",
         fnc: this.cleanupDownloads.bind(this),
         log: false,
       },
@@ -44,6 +45,8 @@ export class LotusBilibili extends BasePlugin {
   }
 
   async init() {
+    const globalConfig = await loadGlobalConfig()
+    if (!normalizeCleanupConfig(globalConfig.bilibili).startup) return
     const timer = setTimeout(() => {
       this.cleanupDownloads({ trigger: "startup" }).catch(error => {
         logger?.warn?.(`[Lotus-Plugin] Bilibili cleanup failed: ${error.message}`)
@@ -276,6 +279,7 @@ export class LotusBilibili extends BasePlugin {
     }
 
     const service = options.service || await createService()
+    let result
     try {
       const installPermission = new PermissionService({ permissions: globalConfig.permissions })
         .explain(this.e, "tools.install")
@@ -285,7 +289,7 @@ export class LotusBilibili extends BasePlugin {
           throw new Error(`工具链初始化失败：${tools.items?.filter(item => !item.ok).map(item => `${item.name}:${item.reason}`).join(" / ") || "unknown"}`)
         }
       }
-      const result = await service.download(target, {
+      result = await service.download(target, {
         ...(globalConfig.bilibili || {}),
         ...(globalConfig.bilibili?.download || {}),
       }, {
@@ -306,6 +310,17 @@ export class LotusBilibili extends BasePlugin {
       }
     } catch (error) {
       await this.renderError(options.title || "B站下载", error)
+    } finally {
+      const cleanupConfig = normalizeCleanupConfig(globalConfig.bilibili)
+      if (cleanupConfig.enable && cleanupConfig.delete_after_send && result?.files?.length) {
+        const released = await service.releaseDownloadedFiles(result.files).catch(error => {
+          logger?.warn?.(`[Lotus-Plugin] Bilibili post-send cleanup failed: ${error.message}`)
+          return null
+        })
+        if (released?.removedFiles) {
+          logger?.mark?.(`[Lotus-Plugin] Bilibili post-send cleanup removed ${released.removedFiles} files, freed ${released.freedBytes} bytes`)
+        }
+      }
     }
     return true
   }
@@ -317,7 +332,7 @@ export class LotusBilibili extends BasePlugin {
       ...(globalConfig.bilibili || {}),
       ...(globalConfig.bilibili?.download || {}),
     })
-    logger?.mark?.(`[Lotus-Plugin] Bilibili cleanup finished: ${result.removedEntries} cache entries, ${result.removedFiles} files, trigger=${options.trigger || "schedule"}`)
+    logger?.mark?.(`[Lotus-Plugin] Bilibili cleanup finished: ${result.removedEntries} cache entries, ${result.removedFiles} files, freed=${result.freedBytes || 0} bytes, trigger=${options.trigger || "schedule"}`)
     return result
   }
 

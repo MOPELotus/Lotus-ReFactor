@@ -217,6 +217,9 @@ function normalizeCronFields(config = {}) {
   if (config.netease_partner) {
     config.netease_partner.schedule = normalizeQuartzCron(config.netease_partner.schedule)
   }
+  if (config.bilibili?.cleanup) {
+    config.bilibili.cleanup.cron = normalizeQuartzCron(config.bilibili.cleanup.cron)
+  }
   if (config.atlas?.auto_update) {
     config.atlas.auto_update.check_cron = normalizeQuartzCron(config.atlas.auto_update.check_cron)
     config.atlas.auto_update.challenge_cron = normalizeQuartzCron(config.atlas.auto_update.challenge_cron)

@@ -47,6 +47,9 @@ const NUMBER_FIELDS = new Set([
   "bilibili.download.max_estimated_size_mb",
   "bilibili.download.cache_ttl_seconds",
   "bilibili.download.timeout_ms",
+  "bilibili.cleanup.retention_days",
+  "bilibili.cleanup.tmp_retention_hours",
+  "bilibili.cleanup.max_total_size_mb",
   "netease_partner.login_timeout_ms",
   "netease_partner.login_poll_ms",
   "netease_partner.delay_ms_min",
@@ -61,6 +64,7 @@ const CRON_FIELDS = new Set([
   "scheduler.plan_generate_cron",
   "scheduler.run_due_cron",
   "netease_partner.schedule",
+  "bilibili.cleanup.cron",
   "atlas.auto_update.check_cron",
 ])
 
@@ -211,6 +215,15 @@ const GUOBA_SCHEMAS = [
   number("bilibili.download.cache_ttl_seconds", "缓存保留时间", "0 表示不自动过期。"),
   number("bilibili.download.timeout_ms", "下载超时", "单位毫秒。"),
   textArea("bilibili.download.extra_args", "BBDown 附加参数", "每行一个参数。"),
+
+  group("B站磁盘清理"),
+  sw("bilibili.cleanup.enable", "启用自动清理", "清理 B站临时文件和过期成品。"),
+  sw("bilibili.cleanup.startup", "启动时清理", "插件启动后立即执行一次磁盘清理。"),
+  sw("bilibili.cleanup.delete_after_send", "发送后删除", "推荐开启；文件发送完成或失败后立即删除本地成品。"),
+  cron("bilibili.cleanup.cron", "清理时间", "定时兜底清理 cron。"),
+  number("bilibili.cleanup.retention_days", "成品保留天数", "0 表示不按文件年龄清理。"),
+  number("bilibili.cleanup.tmp_retention_hours", "临时文件保留小时", "0 表示清空所有临时目录。"),
+  number("bilibili.cleanup.max_total_size_mb", "成品容量上限", "超过后从最旧文件开始删除；0 表示不限。"),
 
   group("群数据清理"),
   sw("groups.cleanup.enable", "启用退群清理", "机器人或成员退群时清理记录。"),
