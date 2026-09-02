@@ -19,6 +19,7 @@ import {
   getServer,
 } from "../services/mihoyoAuthKey/service.js"
 import { ZzzGachaBridge } from "../services/pluginBridge/zzzGacha.js"
+import { StarRailGachaService } from "../services/starRailGacha/service.js"
 
 export class LotusGachaLog extends BasePlugin {
   constructor() {
@@ -61,7 +62,53 @@ export class LotusGachaLog extends BasePlugin {
   }
 
   async starRailGachaLog() {
-    return this.updateGachaLog("sr")
+    const userId = String(this.e.user_id)
+    const profileId = parseProfileIdFromMessage(this.e.msg)
+    try {
+      await replyText(this, `[荷花插件]正在为 profile ${profileId} 更新星铁五星与垫抽记录。`)
+      const result = await this.runStarRailGachaLog({ userId, profileId })
+      if (result.skipped) {
+        await replyText(this, `[荷花插件]profile ${profileId} 没有同步星铁 UID。`)
+        return true
+      }
+      const visiblePools = result.pools.filter(pool => pool.total || pool.totalDraws)
+      const image = await renderStatusCard({
+        title: "星铁抽卡记录",
+        subtitle: `QQ ${userId} · Profile ${profileId} · UID ${result.uid}`,
+        badge: result.added ? `新增 ${result.added}` : "已是最新",
+        message: "已通过官方小程序接口更新五星和抽数；重复更新会按记录 ID 合并，不会叠加。",
+        userId,
+        items: visiblePools.length
+          ? visiblePools.map(pool => ({
+            label: pool.name,
+            value: `五星 ${pool.total}（新增 ${pool.added}）· 已抽 ${pool.totalDraws} · 当前垫 ${pool.pity}`,
+          }))
+          : [{ label: "记录", value: "当前没有可用抽卡数据" }],
+      }, {
+        saveId: `lotus-gacha-${userId}-${profileId}-sr`,
+      })
+      await replyImage(this, image, "[荷花插件]星铁抽卡记录更新完成。")
+    } catch (error) {
+      if (isMissingProfileError(error)) {
+        await replyText(this, `[荷花插件]${profileLoginRequiredMessage(profileId)}`)
+        return true
+      }
+      const message = translateGachaError(error)
+      logger?.error?.(`[Lotus-Plugin] star rail gacha update failed: ${error.stack || error.message}`)
+      const image = await renderStatusCard({
+        title: "星铁抽卡记录",
+        subtitle: `QQ ${userId} · Profile ${profileId}`,
+        badge: "失败",
+        message,
+        userId,
+        items: [
+          { label: "阶段", value: "profile Cookie / 星铁官方活动接口" },
+          { label: "建议", value: "检查 profile 登录状态与星铁 UID；无需 authkey。" },
+        ],
+      }, { saveId: `lotus-gacha-error-${userId}-${profileId}-sr` })
+      await replyImage(this, image, `[荷花插件]星铁抽卡记录更新失败：${message}`)
+    }
+    return true
   }
 
   async zzzGachaLog() {
@@ -179,12 +226,15 @@ export class LotusGachaLog extends BasePlugin {
     await replyText(this, "[荷花插件]开始批量更新所有 profile 的原神/星铁/绝区零抽卡记录。")
     const results = []
     for (const profileId of profileIds) {
-      for (const game of ["gs", "sr"]) {
-        try {
-          results.push(await this.runGenshinGachaLog({ userId, profileId, game }))
-        } catch (error) {
-          results.push({ ok: false, profileId, game, error: error.message })
-        }
+      try {
+        results.push(await this.runGenshinGachaLog({ userId, profileId, game: "gs" }))
+      } catch (error) {
+        results.push({ ok: false, profileId, game: "gs", error: error.message })
+      }
+      try {
+        results.push(await this.runStarRailGachaLog({ userId, profileId }))
+      } catch (error) {
+        results.push({ ok: false, profileId, game: "sr", error: error.message })
       }
       try {
         results.push(await this.runZzzGachaLog({ userId, profileId }))
@@ -256,6 +306,17 @@ export class LotusGachaLog extends BasePlugin {
       region: auth.region,
       messages,
     }
+  }
+
+  async runStarRailGachaLog({ userId, profileId }) {
+    const profile = await loadProfile(userId, profileId)
+    const role = pickRole(profile, "sr")
+    if (!role) return { ok: false, skipped: true, profileId, game: "sr" }
+    return new StarRailGachaService().updateByProfile({
+      qq: userId,
+      profile,
+      profileId,
+    })
   }
 
   async runZzzGachaLog({ userId, profileId }) {

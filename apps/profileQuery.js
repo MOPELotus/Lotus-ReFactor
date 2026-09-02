@@ -15,7 +15,9 @@ import { MiaoProfileQueryBridge } from "../services/pluginBridge/miaoProfileQuer
 import { ZzzProfileQueryBridge } from "../services/pluginBridge/zzzPanel.js"
 import { StarRailChallengeService } from "../services/starRailChallenge/service.js"
 
-const P = PROFILE_ID_REQUIRED_SUFFIX_PATTERN
+// 个人查询的无后缀形式也由 Lotus 接管，并与显式 profile 1 走同一条路径。
+// 无后缀分支要求命令不以数字结尾，避免把游戏 UID 误判成 profile 指令。
+const P = `(?:(?:${PROFILE_ID_REQUIRED_SUFFIX_PATTERN})|(?<!\\d))`
 const Z = "(?:[%％]|#绝区零)"
 const SR_CHALLENGE_WORDS = "(?:深渊|忘却|忘却之庭|混沌|混沌回忆|虚构|虚构叙事|末日|末日幻影|异乡|异相|异向|仲裁|异相仲裁)"
 
@@ -35,7 +37,7 @@ export class LotusProfileQuery extends BasePlugin {
         { reg: `^\\*(?:面板|喵喵)?练度统计\\s*${P}$`, fnc: "miaoProfileStat" },
         { reg: `^#(?:我的)?(?:风|岩|雷|草|水|火|冰)*(?:武器|角色|练度|五|四|5|4|星)+(?:汇总|统计|列表)(?:force|五|四|5|4|星)*\\s*${P}$`, fnc: "miaoProfileStat" },
         { reg: `^#(?:喵喵)?(?:角色|查询|查询角色|角色查询|人物)\\s*${P}$`, fnc: "miaoAvatarList" },
-        { reg: `^#(?:我的)?(?:今日|今天|明日|明天|周(?:[1-6]|一|二|三|四|五|六))*(?:[五四54]星)?(?:技能|天赋)+(?:汇总|统计|列表)?\\s*${P}$`, fnc: "miaoTalentStat" },
+        { reg: `^#(?!(?:今日|今天|明日|明天|周(?:[1-6]|一|二|三|四|五|六))(?:技能|天赋)$)(?:我的)?(?:今日|今天|明日|明天|周(?:[1-6]|一|二|三|四|五|六))*(?:[五四54]星)?(?:技能|天赋)+(?:汇总|统计|列表)?\\s*${P}$`, fnc: "miaoTalentStat" },
         { reg: `^#202\\d{3}(?:幻想|真境|剧诗|幻想真境剧诗)(?:角色|练度)?(?:汇总|统计|列表)?\\s*${P}$`, fnc: "miaoRoleCombatStat" },
         { reg: `^#(?:喵喵|上传|本期)*(?:深渊|深境|深境螺旋)[ |0-9]*(?:数据)?\\s*${P}$`, fnc: "miaoAbyssSummary" },
         { reg: `^#(?:喵喵)*(?:本期|上期)?(?:幻想|幻境|剧诗|幻想真境剧诗)[ |0-9]*(?:数据)?\\s*${P}$`, fnc: "miaoRoleCombatSummary" },
@@ -91,7 +93,6 @@ export class LotusProfileQuery extends BasePlugin {
 
   async runMiao(method, fixedGame = "") {
     const parsed = splitProfileSuffix(this.e.msg)
-    if (!parsed.hasProfileSuffix) return false
     const userId = String(this.e.user_id)
     const game = fixedGame || miaoGameFromMessage(parsed.message)
     return this.runProfileQuery({
@@ -113,7 +114,6 @@ export class LotusProfileQuery extends BasePlugin {
 
   async runZzz(method) {
     const parsed = splitProfileSuffix(this.e.msg)
-    if (!parsed.hasProfileSuffix) return false
     const userId = String(this.e.user_id)
     const command = normalizeZzzCommand(parsed.message)
     return this.runProfileQuery({
