@@ -19,6 +19,8 @@ import {
   getServer,
 } from "../services/mihoyoAuthKey/service.js"
 import { ZzzGachaBridge } from "../services/pluginBridge/zzzGacha.js"
+import { GenshinGachaDisplayBridge } from "../services/pluginBridge/genshinGacha.js"
+import { StarRailGachaDisplayBridge } from "../services/pluginBridge/starRailGacha.js"
 import { StarRailGachaService } from "../services/starRailGacha/service.js"
 
 export class LotusGachaLog extends BasePlugin {
@@ -38,12 +40,20 @@ export class LotusGachaLog extends BasePlugin {
           fnc: "genshinGachaLog",
         },
         {
+          reg: `^#(原神)?(全部)?(抽卡|抽奖|角色|武器|集录|常驻|up|新手|全部)池*(记录|祈愿|分析)${PROFILE_ID_SUFFIX_PATTERN}$`,
+          fnc: "genshinGachaView",
+        },
+        {
           reg: `^\\*更新抽卡记录${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "starRailGachaLog",
         },
         {
           reg: `^#星铁更新抽卡记录${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "starRailGachaLog",
+        },
+        {
+          reg: `^\\*(星铁)?(全部)?(抽卡|抽奖|角色|角色联动|光锥|光锥联动|常驻|新手|全部)池*(记录|祈愿|分析)${PROFILE_ID_SUFFIX_PATTERN}$`,
+          fnc: "starRailGachaView",
         },
         {
           reg: `^%更新抽卡记录${PROFILE_ID_SUFFIX_PATTERN}$`,
@@ -61,6 +71,35 @@ export class LotusGachaLog extends BasePlugin {
     return this.updateGachaLog("gs")
   }
 
+  async genshinGachaView() {
+    const userId = String(this.e.user_id)
+    const profileId = parseProfileIdFromMessage(this.e.msg)
+    try {
+      const profile = await loadProfile(userId, profileId)
+      const role = pickRole(profile, "gs")
+      if (!role) {
+        await replyText(this, `[荷花插件]profile ${profileId} 没有同步原神 UID。`)
+        return true
+      }
+      const uid = String(role.uid || role.game_uid)
+      const display = await new GenshinGachaDisplayBridge().render({
+        e: this.e,
+        qq: userId,
+        uid,
+        viewMessage: viewMessageForGenshin(this.e.msg),
+      })
+      await this.reply(display.button ? [display.image, display.button] : display.image)
+    } catch (error) {
+      if (isMissingProfileError(error)) {
+        await replyText(this, `[荷花插件]${profileLoginRequiredMessage(profileId)}`)
+        return true
+      }
+      logger?.error?.(`[Lotus-Plugin] genshin gacha view failed: ${error.stack || error.message}`)
+      await replyText(this, `[荷花插件]原神抽卡记录读取失败：${error.message}`)
+    }
+    return true
+  }
+
   async starRailGachaLog() {
     const userId = String(this.e.user_id)
     const profileId = parseProfileIdFromMessage(this.e.msg)
@@ -71,6 +110,12 @@ export class LotusGachaLog extends BasePlugin {
         await replyText(this, `[荷花插件]profile ${profileId} 没有同步星铁 UID。`)
         return true
       }
+      const canonical = await new StarRailGachaService().loadLog(userId, result.uid)
+      await new StarRailGachaDisplayBridge().syncLegacy({
+        qq: userId,
+        uid: result.uid,
+        data: canonical || result.data,
+      })
       const visiblePools = result.pools.filter(pool => pool.total || pool.totalDraws)
       const image = await renderStatusCard({
         title: "星铁抽卡记录",
@@ -107,6 +152,40 @@ export class LotusGachaLog extends BasePlugin {
         ],
       }, { saveId: `lotus-gacha-error-${userId}-${profileId}-sr` })
       await replyImage(this, image, `[荷花插件]星铁抽卡记录更新失败：${message}`)
+    }
+    return true
+  }
+
+  async starRailGachaView() {
+    const userId = String(this.e.user_id)
+    const profileId = parseProfileIdFromMessage(this.e.msg)
+    try {
+      const profile = await loadProfile(userId, profileId)
+      const role = pickRole(profile, "sr")
+      if (!role) {
+        await replyText(this, `[荷花插件]profile ${profileId} 没有同步星铁 UID。`)
+        return true
+      }
+      const uid = String(role.uid || role.game_uid)
+      const data = await new StarRailGachaService().loadLog(userId, uid)
+      if (!data) {
+        await replyText(this, `[荷花插件]profile ${profileId} 暂无星铁抽卡记录，请先使用 *更新抽卡记录${profileId === 1 ? "" : profileId}。`)
+        return true
+      }
+      const display = await new StarRailGachaDisplayBridge().render({
+        e: this.e,
+        uid,
+        data,
+        viewMessage: viewMessageForStarRail(this.e.msg),
+      })
+      await this.reply(display.button ? [display.image, display.button] : display.image)
+    } catch (error) {
+      if (isMissingProfileError(error)) {
+        await replyText(this, `[荷花插件]${profileLoginRequiredMessage(profileId)}`)
+        return true
+      }
+      logger?.error?.(`[Lotus-Plugin] star rail gacha view failed: ${error.stack || error.message}`)
+      await replyText(this, `[荷花插件]星铁抽卡记录读取失败：${error.message}`)
     }
     return true
   }
@@ -377,6 +456,27 @@ function gameLabel(game) {
   if (game === "sr") return "星铁"
   if (game === "zzz") return "绝区零"
   return game || "-"
+}
+
+function viewMessageForStarRail(message = "") {
+  const text = String(message).replace(/\\d+$/, "")
+  if (/全部/.test(text)) return "#星铁全部记录"
+  if (/角色联动/.test(text)) return "#星铁角色联动记录"
+  if (/光锥联动/.test(text)) return "#星铁光锥联动记录"
+  if (/光锥/.test(text)) return "#星铁光锥记录"
+  if (/常驻/.test(text)) return "#星铁常驻记录"
+  if (/新手/.test(text)) return "#星铁新手记录"
+  return "#星铁角色记录"
+}
+
+function viewMessageForGenshin(message = "") {
+  const text = String(message).replace(/\d+$/, "")
+  if (/全部/.test(text)) return "#原神全部记录"
+  if (/武器/.test(text)) return "#原神武器记录"
+  if (/集录/.test(text)) return "#原神集录记录"
+  if (/常驻/.test(text)) return "#原神常驻记录"
+  if (/新手/.test(text)) return "#原神新手记录"
+  return "#原神角色记录"
 }
 
 export function translateGachaError(error) {

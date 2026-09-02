@@ -18,12 +18,12 @@ export class StarRailGachaDisplayBridge {
     this.storageRoot = options.storageRoot || path.resolve(process.cwd(), "data", "srJson")
   }
 
-  async render({ e, uid, data } = {}) {
+  async render({ e, uid, data, viewMessage = "#星铁角色记录" } = {}) {
     const renderUserId = `lotus-render-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     try {
       await this.mirror({ qq: renderUserId, uid, data })
       const [GachaLog, GcLogApp] = await Promise.all([this.loadGachaLog(), this.loadGcLogApp()])
-      const event = createRenderEvent(e, uid, renderUserId)
+      const event = createRenderEvent(e, uid, renderUserId, viewMessage)
       const model = new GachaLog(event)
       model.uid = String(uid)
       model.isLogUrl = true
@@ -46,15 +46,23 @@ export class StarRailGachaDisplayBridge {
     }
   }
 
-  async mirror({ qq, uid, data } = {}) {
+  async mirror({ qq, uid, data, storageRoot = this.storageRoot } = {}) {
     if (!qq || !uid) throw new Error("miao 星铁抽卡镜像缺少 QQ 或 UID")
-    const directory = path.join(this.storageRoot, String(qq), String(uid))
+    const directory = path.join(storageRoot, String(qq), String(uid))
     await fs.mkdir(directory, { recursive: true })
     for (const [poolType, numericType] of Object.entries(MIAO_POOL_TYPES)) {
       const records = buildMiaoPoolRecords(data?.pools?.[poolType], numericType, uid)
       await writeJsonAtomic(path.join(directory, `${numericType}.json`), records)
     }
     return directory
+  }
+
+  async syncLegacy({ qq, uid, data } = {}) {
+    if (!qq || !uid) throw new Error("miao 星铁抽卡同步缺少 QQ 或 UID")
+    const root = path.resolve(this.storageRoot)
+    const directory = path.join(root, String(qq), String(uid))
+    await backupLegacyDirectory(root, directory, qq, uid)
+    return this.mirror({ qq, uid, data, storageRoot: root })
   }
 
   async cleanupRender(renderUserId) {
@@ -65,6 +73,24 @@ export class StarRailGachaDisplayBridge {
     }
     await fs.rm(target, { recursive: true, force: true })
   }
+}
+
+async function backupLegacyDirectory(root, directory, qq, uid) {
+  try {
+    await fs.access(directory)
+  } catch {
+    return
+  }
+  const backupRoot = path.resolve(`${root}.backup`)
+  const backupDirectory = path.join(backupRoot, String(qq), String(uid))
+  try {
+    await fs.access(backupDirectory)
+    return
+  } catch {
+    // first-seen legacy data: preserve a cold copy before Lotus overwrites it
+  }
+  await fs.mkdir(path.dirname(backupDirectory), { recursive: true })
+  await fs.cp(directory, backupDirectory, { recursive: true, errorOnExist: false })
 }
 
 export function buildMiaoPoolRecords(pool = {}, numericType, uid) {
@@ -118,11 +144,13 @@ async function writeJsonAtomic(file, data) {
   }
 }
 
-function createRenderEvent(e, uid, renderUserId) {
+function createRenderEvent(e, uid, renderUserId, viewMessage) {
+  const isAll = /全部/.test(String(viewMessage))
   return {
     ...e,
-    msg: "#星铁角色记录",
-    original_msg: "#星铁角色记录",
+    msg: viewMessage,
+    original_msg: viewMessage,
+    isAll,
     isSr: true,
     game: "sr",
     uid: String(uid),
