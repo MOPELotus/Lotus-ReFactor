@@ -222,9 +222,13 @@ function normalizeMiaoCommand(message = "", game = "gs") {
 }
 
 function normalizeZzzCommand(message = "") {
-  return String(message || "").trim()
+  const text = String(message || "").trim()
     .replace(/^％/, "%")
     .replace(/^#绝区零/, "%")
+  // ZZZ-Plugin 的 rulePrefix 要求命令带 zzz/绝区零 标识；Lotus 对外
+  // 兼容简写 `%蕾米面板`，这里补成上游实际能匹配的 `%zzz蕾米面板`。
+  if (/^%(?:zzz|绝区零)/i.test(text)) return text
+  return text.startsWith("%") ? `%zzz${text.slice(1)}` : text
 }
 
 function normalizeStarRailCommand(message = "") {
