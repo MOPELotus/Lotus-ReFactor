@@ -164,7 +164,37 @@ export class ZzzProfileQueryBridge {
     const context = await createZzzProfilePluginInstance({ PluginClass: panel.constructor, e, profile, profileId, command, forwardReplies, registerProfile: this.registerProfile, syncDevice: this.syncDevice, loadMysApiClass: this.loadMysApiClass })
     context.instance.e = context.event
     context.instance.reply = context.event.reply.bind(context.event)
-    await context.instance.e.runtime.render("Lotus-Plugin", "zzz-rank/index.html", { title: `${character}${mode === "weighted" ? "排名" : "面板排名"}`, list: rows, general: {} })
+      // Runtime.render 的基础实现不会自动填充 ZZZ 模板依赖的 sys.currentPath；
+      // 原 ZZZ Plugin 是在自己的 render() 中通过 beforeRender 注入这些路径的。
+      // 这里沿用同一套路径约定，但模板仍由 Lotus-Plugin 提供，避免 CSS 变成裸 HTML。
+      const rankRenderPath = "zzz-rank/index.html"
+      const zzzLayoutPath = path.join(process.cwd(), "plugins", "ZZZ-Plugin", "resources", "common", "layout")
+      await context.instance.e.runtime.render("Lotus-Plugin", rankRenderPath, {
+        title: `${character}${mode === "weighted" ? "排名" : "面板排名"}`,
+        list: rows,
+        general: {},
+      }, {
+        beforeRender({ data }) {
+          const renderPathDir = rankRenderPath.substring(0, rankRenderPath.lastIndexOf("/") + 1)
+          // 以 Runtime 按实际安装路径计算出的资源根为准，避免开发目录名/部署目录名不一致。
+          const rankResPath = data.pluResPath || data._res_path
+          const zzzResPath = rankResPath?.replace(/plugins[\\/]Lotus-Plugin[\\/]resources[\\/]?$/, "plugins/ZZZ-Plugin/resources/") || rankResPath
+          return {
+            ...data,
+            _res_path: rankResPath,
+            pluResPath: rankResPath,
+            defaultLayout: path.join(zzzLayoutPath, "index.html"),
+            sys: {
+              ...(data.sys || {}),
+              scale: data.sys?.scale || 1,
+              // defaultLayout 是 ZZZ 原布局，公共 style 也必须从 ZZZ-Plugin 资源根加载。
+              resourcesPath: zzzResPath,
+              currentPath: `${rankResPath}${renderPathDir}`,
+              createdby: "Created By ZZZ-Plugin",
+            },
+          }
+        },
+      })
     context.forwarded.push("[图片]")
     return { ok: true, uid: "", profileId, messages: context.messages, forwarded: context.forwarded }
   }
