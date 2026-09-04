@@ -3,7 +3,7 @@
   font-size: 0.9em;
 }
 .rank-title { margin: 1em 2em; font-size: 1.35em; font-weight: 700; text-align: center; }
-.rank-user { width: 7em; margin-left: .6em; align-self: center; font-size: .72em; color: #ddd; word-break: break-all; }
+.rank-user { position: absolute; top: 1.35em; left: .7em; z-index: 2; font-size: .48em; color: #ddd; white-space: nowrap; }
 
 .general-info {
   border-image: url("./images/BgFrame.png");

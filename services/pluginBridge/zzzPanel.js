@@ -155,7 +155,8 @@ export class ZzzProfileQueryBridge {
       if (item.weapon?.get_assets) await item.weapon.get_assets().catch(() => {})
       item.qq_avatar = await memberAvatar(e, qq)
       item.uid = String(uid)
-      item.score_label = mode === "weighted" ? `加权分 ${weightedScore(item).toFixed(2)}` : `面板分 ${Number(item.equip_score || 0).toFixed(2)}`
+      item.score_label = mode === "weighted" ? "加权分" : "面板分"
+      item.score_value = (mode === "weighted" ? weightedScore(item) : Number(item.equip_score || 0)).toFixed(2)
       item._rankValue = mode === "weighted" ? weightedScore(item) : Number(item.equip_score || 0)
       rows.push(item)
     }

@@ -13,6 +13,7 @@
         <div class="tag skew ranks r{{item.rank}}">
           <div class="content">{{item.rank}}影</div>
         </div>
+        <div class="rank-user">UID {{item.uid}}</div>
         <div class="tag skew level r{{item.level_rank}}">
           <div class="content">Lv{{item.level}}</div>
         </div>
@@ -22,7 +23,6 @@
             <img src="{{item.qq_avatar || item.small_square_icon}}" alt="">
           </div>
         </div>
-        <div class="rank-user">{{item.uid}}</div>
         <div class="skills">
           <div class="skill">{{item.skills[0].level}}</div>
           <div class="skill">{{item.skills[2].level}}</div>
@@ -61,8 +61,8 @@
         <div class="equip skew">
           <div class="content {{item.equip_comment}}">
             <div>{{item.score_label}}</div>
-            {{if item.equip_comment}}
-            <div class="comment">{{item.equip_comment}}</div>
+            {{if item.score_value}}
+            <div class="comment">{{item.score_value}}</div>
             {{/if}}
           </div>
         </div>
