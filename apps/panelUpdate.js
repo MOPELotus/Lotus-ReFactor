@@ -83,7 +83,9 @@ export class LotusPanelUpdate extends BasePlugin {
         forwardReplies: true,
       })
 
-      if (!result.forwarded.length) {
+      const hasImage = result.forwarded.length > 0
+        || result.messages.some(message => String(message).includes("[图片]"))
+      if (!hasImage) {
         const message = pickMessage(result.messages) || "面板更新已执行，但外部插件没有返回图片。"
         await replyText(this, `[荷花插件]${message}`)
       }

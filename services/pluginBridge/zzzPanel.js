@@ -1,7 +1,7 @@
 import { registerProfileWithGenshin } from "../genshinBridge/profile.js"
 import { resolveServer } from "../../core/mihoyo/regions.js"
 import { parseAccountCookie } from "../../core/mihoyo/cookies.js"
-import { createIsolatedEvent, getRoleUid, importRuntimeModule, pickRole } from "./common.js"
+import { createIsolatedEvent, getRoleUid, importRuntimeModule, pickRole, shouldForwardReply } from "./common.js"
 
 export class ZzzPanelBridge {
   constructor(options = {}) {
@@ -27,17 +27,22 @@ export class ZzzPanelBridge {
     })
     const { instance: panel, event, messages, forwarded, uid } = context
 
-    await runZzzPanelRefresh(panel, {
+    const rendered = await runZzzPanelRefresh(panel, {
       uid,
       refreshPanelFunction: (await this.loadAvatarModule()).refreshPanel,
     })
+    if (!forwarded.length && shouldForwardReply(rendered)) {
+      await event.reply(rendered)
+    }
     return {
       ok: true,
       game: "zzz",
       uid,
       profileId,
       messages: messages.filter(Boolean),
-      forwarded,
+      forwarded: shouldForwardReply(rendered) && !forwarded.length
+        ? [...forwarded, "[图片]"]
+        : forwarded,
     }
   }
 
@@ -141,7 +146,11 @@ export class ZzzProfileQueryBridge {
     })
     const fn = context.instance?.[method]
     if (typeof fn !== "function") throw new Error(`ZZZ-Plugin ${method} 不可用`)
-    await fn.call(context.instance)
+    const returned = await fn.call(context.instance)
+    if (!context.forwarded.length && shouldForwardReply(returned)) {
+      await context.event.reply(returned)
+      context.forwarded.push("[图片]")
+    }
     return {
       ok: true,
       game: "zzz",
