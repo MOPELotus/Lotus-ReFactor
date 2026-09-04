@@ -67,6 +67,7 @@ export class ZzzPanelBridge {
 export class ZzzProfileQueryBridge {
   constructor(options = {}) {
     this.loadPanelClass = options.loadPanelClass || loadPanelClass
+    this.loadAvatarModule = options.loadAvatarModule || loadAvatarModule
     this.loadDamageClass = options.loadDamageClass || (() => loadZzzAppClass("damage.js", "Damage"))
     this.loadCardClass = options.loadCardClass || (() => loadZzzAppClass("card.js", "Card"))
     this.loadAbyssClass = options.loadAbyssClass || (() => loadZzzAppClass("abyss.js", "Abyss"))
@@ -79,6 +80,7 @@ export class ZzzProfileQueryBridge {
     this.loadMysApiClass = options.loadMysApiClass || loadMysApiClass
     this.registerProfile = options.registerProfile || registerProfileWithGenshin
     this.syncDevice = options.syncDevice || syncZzzDeviceWithRedis
+    this.loadRankModule = options.loadRankModule || loadRankModule
   }
 
   async panel(options = {}) {
@@ -133,6 +135,36 @@ export class ZzzProfileQueryBridge {
 
   async explorationDetail(options = {}) {
     return this.run({ ...options, PluginClass: await this.loadExplorationDetailClass(), method: "explorationDetail" })
+  }
+
+  async groupRank({ e, profile, profileId = 1, command, mode = "weighted", character, forwardReplies = true } = {}) {
+    if (!e?.group_id) return { ok: false, messages: ["请在群聊中使用该命令。"], forwarded: [] }
+    const avatar = await this.loadAvatarModule()
+    const rank = await this.loadRankModule()
+    const uid2qqs = await rank.getUid2QQsMapping(String(e.group_id))
+    const members = await e.group?.getMemberMap?.() || new Map()
+    const memberIds = new Set([...members.keys()].map(String))
+    const rows = []
+    for (const [uid, qqs] of Object.entries(uid2qqs || {})) {
+      const qq = qqs.find(id => memberIds.has(String(id)))
+      if (!qq) continue
+      const item = avatar.getPanel?.(uid, character)
+      if (!item) continue
+      if (item.weapon?.get_assets) await item.weapon.get_assets().catch(() => {})
+      item.qq_avatar = await memberAvatar(e, qq)
+      item.uid = String(uid)
+      item.score_label = mode === "weighted" ? `加权分 ${weightedScore(item).toFixed(2)}` : `面板分 ${Number(item.equip_score || 0).toFixed(2)}`
+      item._rankValue = mode === "weighted" ? weightedScore(item) : Number(item.equip_score || 0)
+      rows.push(item)
+    }
+    rows.sort((a, b) => b._rankValue - a._rankValue)
+    const panel = new (await this.loadPanelClass())()
+    const context = await createZzzProfilePluginInstance({ PluginClass: panel.constructor, e, profile, profileId, command, forwardReplies, registerProfile: this.registerProfile, syncDevice: this.syncDevice, loadMysApiClass: this.loadMysApiClass })
+    context.instance.e = context.event
+    context.instance.reply = context.event.reply.bind(context.event)
+    await context.instance.e.runtime.render("Lotus-Plugin", "zzz-rank/index.html", { title: `${character}${mode === "weighted" ? "排名" : "面板排名"}`, list: rows, general: {} })
+    context.forwarded.push("[图片]")
+    return { ok: true, uid: "", profileId, messages: context.messages, forwarded: context.forwarded }
   }
 
   async run({ e, profile, profileId = 1, command, forwardReplies = true, PluginClass, method } = {}) {
@@ -273,6 +305,30 @@ async function loadAvatarModule() {
     }
     return importRuntimeModule("ZZZ-Plugin", "lib", "avatar.js")
   }
+}
+
+async function loadRankModule() {
+  return importRuntimeModule("ZZZ-Plugin", "dist", "lib", "rank.js")
+}
+
+async function memberAvatar(e, qq) {
+  try {
+    const member = e.group?.pickMember?.(qq)
+    return await member?.getAvatarUrl?.() || ""
+  } catch { return "" }
+}
+
+function weightedScore(item) {
+  const drive = Number(item.equip_score || 0)
+  const weapon = item.weapon
+  if (!weapon) return drive
+  const rarity = weapon.rarity === "S" ? 10 : weapon.rarity === "A" ? 4 : 0
+  const level = Math.floor(Number(weapon.level || 0) / 10)
+  const refine = Math.max(0, Number(weapon.star || 1) - 1)
+  const profession = weapon.profession && item.avatar_profession && weapon.profession === item.avatar_profession ? 6 : 0
+  const suits = new Set((item.equip || []).flatMap(equip => Array.isArray(equip.equip_suit) ? equip.equip_suit.map(s => s.suit_id || s.id) : []))
+  const suitBonus = Math.min(3, suits.size) * 2
+  return drive + rarity + level + refine + profession + suitBonus
 }
 
 async function loadMysApiClass() {

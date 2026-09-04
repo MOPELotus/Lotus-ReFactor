@@ -1,0 +1,73 @@
+{{extend defaultLayout}}
+
+{{block 'css'}}
+<link rel="stylesheet" href="{{@sys.currentPath}}/index.css">
+{{/block}}
+
+{{block 'main'}}
+<div class="rank-title">{{title}}</div>
+  <div class="list">
+    {{each list item}}
+    <div class="item skew {{item.rarity}}">
+      <div class="content">
+        <div class="tag skew ranks r{{item.rank}}">
+          <div class="content">{{item.rank}}影</div>
+        </div>
+        <div class="tag skew level r{{item.level_rank}}">
+          <div class="content">Lv{{item.level}}</div>
+        </div>
+        <div class="element-icon {{item.sub_element_str}}"></div>
+        <div class="avatar skew">
+          <div class="content">
+            <img src="{{item.qq_avatar || item.small_square_icon}}" alt="">
+          </div>
+        </div>
+        <div class="rank-user">{{item.uid}}</div>
+        <div class="skills">
+          <div class="skill">{{item.skills[0].level}}</div>
+          <div class="skill">{{item.skills[2].level}}</div>
+          <div class="skill">{{item.skills[5].level}}</div>
+          <div class="skill">{{item.skills[1].level}}</div>
+          <div class="skill">{{item.skills[3].level}}</div>
+          <div class="skill">{{item.skills[4].level}}</div>
+        </div>
+        <div class="weapon skew">
+          <div class="content">
+            {{if item.weapon}}
+            <img src="{{item.weapon.square_icon}}" alt="">
+            {{/if}}
+          </div>
+        </div>
+        <div class="weapon_info">
+          {{if item.weapon}}
+          <div class="base">
+            <div class="rarity-icon {{item.weapon.rarity}}"></div>
+            <div class="name">{{item.weapon.name}}</div>
+          </div>
+          <div class="tags">
+            <div class="tag skew r{{item.weapon.star}}">
+              <div class="content">{{item.weapon.star}}精</div>
+            </div>
+            <div class="tag skew r{{item.weapon.level_rank}}">
+              <div class="content">Lv{{item.weapon.level}}</div>
+            </div>
+          </div>
+          {{else}}
+            <div class="empty">
+              未装配
+            </div>
+            {{/if}}
+        </div>
+        <div class="equip skew">
+          <div class="content {{item.equip_comment}}">
+            <div>{{item.score_label}}</div>
+            {{if item.equip_comment}}
+            <div class="comment">{{item.equip_comment}}</div>
+            {{/if}}
+          </div>
+        </div>
+      </div>
+    </div>
+    {{/each}}
+  </div>
+  {{/block}}
