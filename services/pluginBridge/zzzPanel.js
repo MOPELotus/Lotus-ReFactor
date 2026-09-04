@@ -141,6 +141,8 @@ export class ZzzProfileQueryBridge {
     if (!e?.group_id) return { ok: false, messages: ["请在群聊中使用该命令。"], forwarded: [] }
     const avatar = await this.loadAvatarModule()
     const rank = await this.loadRankModule()
+    const ownUid = getRoleUid(pickRole(profile, "zzz"))
+    if (ownUid && rank.setUidAndQQ) await rank.setUidAndQQ(String(e.group_id), ownUid, String(e.user_id))
     const uid2qqs = await rank.getUid2QQsMapping(String(e.group_id))
     const members = await e.group?.getMemberMap?.() || new Map()
     const memberIds = new Set([...members.keys()].map(String))
