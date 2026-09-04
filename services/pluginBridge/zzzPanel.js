@@ -1,4 +1,6 @@
 import { registerProfileWithGenshin } from "../genshinBridge/profile.js"
+import path from "node:path"
+import { pathToFileURL } from "node:url"
 import { resolveServer } from "../../core/mihoyo/regions.js"
 import { parseAccountCookie } from "../../core/mihoyo/cookies.js"
 import { createIsolatedEvent, getRoleUid, importRuntimeModule, pickRole, shouldForwardReply } from "./common.js"
@@ -34,13 +36,14 @@ export class ZzzPanelBridge {
     if (!forwarded.length && shouldForwardReply(rendered)) {
       await event.reply(rendered)
     }
+    const renderedImage = rendered?.rendered === true || shouldForwardReply(rendered)
     return {
       ok: true,
       game: "zzz",
       uid,
       profileId,
       messages: messages.filter(Boolean),
-      forwarded: shouldForwardReply(rendered) && !forwarded.length
+      forwarded: renderedImage && !forwarded.length
         ? [...forwarded, "[图片]"]
         : forwarded,
     }
@@ -190,6 +193,8 @@ export async function createZzzProfilePluginInstance({ PluginClass, e, profile, 
     forwardReplies,
   })
 
+  await ensureRuntimeRender(event)
+
   const instance = new PluginClass()
   instance.e = event
   instance.reply = event.reply.bind(event)
@@ -203,19 +208,24 @@ export async function createZzzProfilePluginInstance({ PluginClass, e, profile, 
   const handler = runtime.handler || {}
   const originalHas = typeof handler.has === "function" ? handler.has.bind(handler) : () => false
   const originalCall = typeof handler.call === "function" ? handler.call.bind(handler) : async () => false
-  event.runtime = {
-    ...runtime,
-    handler: {
-      ...handler,
-      has: key => key === "zzz.tool.panel" || originalHas(key),
-      call: async (key, targetEvent, payload) => {
-        if (key === "zzz.tool.panel" && typeof instance.getCharPanelTool === "function") {
-          return instance.getCharPanelTool(targetEvent, payload)
-        }
-        return originalCall(key, targetEvent, payload)
-      },
+  // 保留 Runtime 原型方法（尤其是 render）。直接对象展开会丢失原型方法，
+  // 上游面板随后调用 e.runtime.render() 就会变成 “不是函数”。
+  const scopedRuntime = runtime && typeof runtime === "object"
+    ? Object.create(Object.getPrototypeOf(runtime))
+    : {}
+  Object.assign(scopedRuntime, runtime)
+  scopedRuntime.e = event
+  scopedRuntime.handler = {
+    ...handler,
+    has: key => key === "zzz.tool.panel" || originalHas(key),
+    call: async (key, targetEvent, payload) => {
+      if (key === "zzz.tool.panel" && typeof instance.getCharPanelTool === "function") {
+        return instance.getCharPanelTool(targetEvent, payload)
+      }
+      return originalCall(key, targetEvent, payload)
     },
   }
+  event.runtime = scopedRuntime
 
   return {
     instance,
@@ -224,6 +234,23 @@ export async function createZzzProfilePluginInstance({ PluginClass, e, profile, 
     forwarded,
     uid,
   }
+}
+
+async function ensureRuntimeRender(event) {
+  if (typeof event?.runtime?.render === "function") return event.runtime
+  try {
+    const file = path.join(process.cwd(), "lib", "plugins", "runtime.js")
+    const mod = await import(pathToFileURL(file).href)
+    const Runtime = mod.default || mod.Runtime
+    if (typeof Runtime === "function") {
+      const runtime = new Runtime(event)
+      event.runtime = runtime
+      return runtime
+    }
+  } catch (error) {
+    globalThis.logger?.debug?.(`[Lotus-Plugin] ZZZ runtime render init skipped: ${error.message}`)
+  }
+  return event.runtime
 }
 
 async function loadPanelClass() {
@@ -317,7 +344,10 @@ async function runZzzPanelRefresh(panel, { uid, refreshPanelFunction } = {}) {
     newChar: newChar.length,
     list: result,
   }
-  if (typeof panel.render === "function") return panel.render("panel/refresh.html", finalData)
+  if (typeof panel.render === "function") {
+    await panel.render("panel/refresh.html", finalData)
+    return { rendered: true }
+  }
   return panel.reply({ type: "image", file: "zzz-panel.png" })
 }
 
