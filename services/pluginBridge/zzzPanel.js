@@ -197,6 +197,26 @@ export async function createZzzProfilePluginInstance({ PluginClass, e, profile, 
   instance.getLtuid = async () => profile.account?.ltuid || profile.account?.stuid || parseAccountCookie(profile.account?.cookie).ltuid
   instance.getAPI = async () => createZzzApiContext({ uid, profile, event, loadMysApiClass: loadMysApiClassImpl })
 
+  // ZZZ 角色面板查询通过运行时 handler 调用 getCharPanelTool。
+  // Lotus 隔离实例未必经过 ZZZ loader 注册工具，因此补一个仅作用于本次事件的 fallback。
+  const runtime = event.runtime || {}
+  const handler = runtime.handler || {}
+  const originalHas = typeof handler.has === "function" ? handler.has.bind(handler) : () => false
+  const originalCall = typeof handler.call === "function" ? handler.call.bind(handler) : async () => false
+  event.runtime = {
+    ...runtime,
+    handler: {
+      ...handler,
+      has: key => key === "zzz.tool.panel" || originalHas(key),
+      call: async (key, targetEvent, payload) => {
+        if (key === "zzz.tool.panel" && typeof instance.getCharPanelTool === "function") {
+          return instance.getCharPanelTool(targetEvent, payload)
+        }
+        return originalCall(key, targetEvent, payload)
+      },
+    },
+  }
+
   return {
     instance,
     event,
