@@ -179,7 +179,9 @@ export class ZzzProfileQueryBridge {
         general: {},
       }, {
         // 对齐 ZZZ-Plugin 自身渲染参数，避免默认 1x/低质量截图导致头像和图标发糊。
-        scale: 2,
+        // ZZZ 渲染器内部还会乘以自身的 scaleCfgValue；这里设为 4，
+        // 让最终截图尺寸明显放大，减少缩放后字体和细节发糊。
+        scale: 4,
         quality: 100,
         beforeRender({ data }) {
           const renderPathDir = rankRenderPath.substring(0, rankRenderPath.lastIndexOf("/") + 1)
