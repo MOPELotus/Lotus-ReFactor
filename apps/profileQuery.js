@@ -47,7 +47,7 @@ export class LotusProfileQuery extends BasePlugin {
         { reg: `^\\*(?:简易)?${SR_CHALLENGE_WORDS}\\s*$`, fnc: "starRailChallenge" },
         { reg: `^#星铁(?:简易)?${SR_CHALLENGE_WORDS}\\s*$`, fnc: "starRailChallenge" },
         { reg: `^${Z}(?![\\s\\S]*(?:更新|刷新))[\\s\\S]*(?:面板)(?:列表)?\\s*${P}$`, fnc: "zzzPanel" },
-        { reg: `^${Z}[^\\d]*(?:排名|排行)\\s*${P}$`, fnc: "zzzRank" },
+        { reg: `^${Z}[^\\d]*(?:(?:排名|排行|综合榜)|(?:面板|圣遗物|驱动盘))\\s*${P}$`, fnc: "zzzRank" },
         { reg: `^${Z}[\\s\\S]+伤害\\s*${P}$`, fnc: "zzzDamage" },
         { reg: `^${Z}练度(?:统计)?\\s*${P}$`, fnc: "zzzProficiency" },
         { reg: `^${Z}(?:card|卡片|个人信息|角色)\\s*${P}$`, fnc: "zzzCard" },
@@ -94,8 +94,13 @@ export class LotusProfileQuery extends BasePlugin {
   async zzzRank() {
     const parsed = splitProfileSuffix(this.e.msg)
     const text = parsed.message.replace(/^[%％]|^#绝区零/, "").trim()
-    const character = text.replace(/(?:面板)?(?:排名|排行).*$/, "").trim()
-    const mode = /面板|圣遗物|驱动盘/.test(text) ? "panel" : "weighted"
+    // 默认“排名”是纯面板分；明确写“综合榜”才使用加权分。
+    // 兼容“面板/圣遗物/驱动盘”别名，并从角色名中剥离关键词。
+    const character = text
+      .replace(/(?:面板|圣遗物|驱动盘|综合)?(?:排名|排行|榜).*$/, "")
+      .replace(/(?:面板|圣遗物|驱动盘|综合)$/, "")
+      .trim()
+    const mode = /综合/.test(text) ? "weighted" : "panel"
     return this.runProfileQuery({
       userId: String(this.e.user_id), profileId: parsed.profileId, game: "zzz", command: parsed.message,
       runner: profile => this.zzz.groupRank({ e: this.e, profile, profileId: parsed.profileId, command: parsed.message, character, mode, forwardReplies: true }),

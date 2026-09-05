@@ -145,7 +145,9 @@ export class ZzzProfileQueryBridge {
     if (ownUid && rank.setUidAndQQ) await rank.setUidAndQQ(String(e.group_id), ownUid, String(e.user_id))
     const uid2qqs = await rank.getUid2QQsMapping(String(e.group_id))
     const members = await e.group?.getMemberMap?.() || new Map()
-    const memberIds = new Set([...members.keys()].map(String))
+    const memberIds = new Set(
+      (members instanceof Map ? [...members.keys()] : Object.keys(members || {})).map(String),
+    )
     const rows = []
     for (const [uid, qqs] of Object.entries(uid2qqs || {})) {
       const qq = qqs.find(id => memberIds.has(String(id)))
@@ -155,9 +157,10 @@ export class ZzzProfileQueryBridge {
       if (item.weapon?.get_assets) await item.weapon.get_assets().catch(() => {})
       item.qq_avatar = await memberAvatar(e, qq)
       item.uid = String(uid)
+      const rankValue = mode === "weighted" ? weightedScore(item) : Number(item.equip_score || 0)
       item.score_label = mode === "weighted" ? "加权分" : "面板分"
-      item.score_value = (mode === "weighted" ? weightedScore(item) : Number(item.equip_score || 0)).toFixed(2)
-      item._rankValue = mode === "weighted" ? weightedScore(item) : Number(item.equip_score || 0)
+      item.score_value = rankValue.toFixed(2)
+      item._rankValue = rankValue
       rows.push(item)
     }
     rows.sort((a, b) => b._rankValue - a._rankValue)
@@ -171,7 +174,7 @@ export class ZzzProfileQueryBridge {
       const rankRenderPath = "zzz-rank/index.html"
       const zzzLayoutPath = path.join(process.cwd(), "plugins", "ZZZ-Plugin", "resources", "common", "layout")
       await context.instance.e.runtime.render("Lotus-Plugin", rankRenderPath, {
-        title: `${character}${mode === "weighted" ? "排名" : "面板排名"}`,
+        title: `${character}${mode === "weighted" ? "综合榜" : "排名"}`,
         list: rows,
         general: {},
       }, {
