@@ -178,6 +178,9 @@ export class ZzzProfileQueryBridge {
         list: rows,
         general: {},
       }, {
+        // 对齐 ZZZ-Plugin 自身渲染参数，避免默认 1x/低质量截图导致头像和图标发糊。
+        scale: 2,
+        quality: 100,
         beforeRender({ data }) {
           const renderPathDir = rankRenderPath.substring(0, rankRenderPath.lastIndexOf("/") + 1)
           // 以 Runtime 按实际安装路径计算出的资源根为准，避免开发目录名/部署目录名不一致。
@@ -194,7 +197,7 @@ export class ZzzProfileQueryBridge {
               // defaultLayout 是 ZZZ 原布局，公共 style 也必须从 ZZZ-Plugin 资源根加载。
               resourcesPath: zzzResPath,
               currentPath: `${rankResPath}${renderPathDir}`,
-              createdby: "Created By ZZZ-Plugin",
+              createdby: "Created By ZZZ-Plugin & Lotus-Plugin",
             },
           }
         },
