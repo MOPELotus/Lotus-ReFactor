@@ -47,7 +47,7 @@ export class LotusProfileQuery extends BasePlugin {
         { reg: `^\\*(?:简易)?${SR_CHALLENGE_WORDS}\\s*$`, fnc: "starRailChallenge" },
         { reg: `^#星铁(?:简易)?${SR_CHALLENGE_WORDS}\\s*$`, fnc: "starRailChallenge" },
         { reg: `^${Z}(?![\\s\\S]*(?:更新|刷新))[\\s\\S]*(?:面板)(?:列表)?\\s*${P}$`, fnc: "zzzPanel" },
-        { reg: `^${Z}[^\\d]*(?:(?:排名|排行|综合榜)|(?:面板|圣遗物|驱动盘))(?!\\d)\\s*${P}$`, fnc: "zzzRank" },
+        { reg: `^(?![^\\n]*\\d{4,}\\s*$)${Z}[^\\d]*(?:(?:排名|排行|综合榜)|(?:面板|圣遗物|驱动盘))\\s*${P}$`, fnc: "zzzRank" },
         { reg: `^${Z}[\\s\\S]+伤害\\s*${P}$`, fnc: "zzzDamage" },
         { reg: `^${Z}练度(?:统计)?\\s*${P}$`, fnc: "zzzProficiency" },
         { reg: `^${Z}(?:card|卡片|个人信息|角色)\\s*${P}$`, fnc: "zzzCard" },
