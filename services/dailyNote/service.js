@@ -351,7 +351,7 @@ function formatSeconds(seconds) {
 }
 
 async function loadGenshinMysApi() {
-  const file = path.join(process.cwd(), "plugins", "genshin", "model", "mys", "MysApi.js")
+  const file = path.join(process.cwd(), "plugins", "genshin", "model", "mys", "mysApi.js")
   return (await import(pathToFileURL(file).href)).default
 }
 
