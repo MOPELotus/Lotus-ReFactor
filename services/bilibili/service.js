@@ -6,6 +6,8 @@ import QRCode from "qrcode"
 import YAML from "yaml"
 import { resolveData, rootPath } from "../../core/path.js"
 import { formatLocalIso } from "../../core/time.js"
+import { createMediaTask, releaseMediaTask, recoverMediaTasks } from "../media/tasks.js"
+import { packMediaFiles, runMediaProcess, mediaLimitFailure } from "../media/files.js"
 
 const NAV_API = "https://api.bilibili.com/x/web-interface/nav"
 const QR_GENERATE_API = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
@@ -39,9 +41,8 @@ export class BilibiliService {
     this.now = options.now || (() => new Date())
     this.wbiCache = null
     this.accountFile = options.accountFile || resolveData("bilibili", "account.yaml")
-    this.cacheFile = options.cacheFile || resolveData("bilibili", "cache.yaml")
-    this.tmpDir = options.tmpDir || resolveData("bilibili", "tmp")
-    this.outputDir = options.outputDir || resolveData("bilibili", "downloads")
+    this.tasksDir = options.tasksDir || resolveData("bilibili", "tasks")
+    this.spawn = options.spawn || spawn
   }
 
   extractTarget(message = "") {
@@ -164,14 +165,8 @@ export class BilibiliService {
     }
 
     const download = normalizeDownloadConfig(config)
-    if (download.duration_limit_seconds > 0 && info.duration > download.duration_limit_seconds) {
-      return {
-        ok: false,
-        reason: "duration_limit",
-        info,
-        limitSeconds: download.duration_limit_seconds,
-      }
-    }
+    const limitFailure = mediaLimitFailure(info, download)
+    if (limitFailure) return limitFailure
 
     const estimatedSizeMb = estimateVideoSizeMb(info)
     if (download.max_estimated_size_mb > 0 && estimatedSizeMb > download.max_estimated_size_mb) {
@@ -185,14 +180,10 @@ export class BilibiliService {
     }
 
     const pages = selectPages(info.pages, download.multi_page_policy)
-    const cacheKey = downloadCacheKey(info, download)
-    const cached = await this.getCachedDownload(cacheKey, download).catch(() => null)
     return {
       ok: true,
       info,
       pages,
-      cacheKey,
-      cached,
       policy: download.multi_page_policy,
       downloader: "bbdown",
       estimatedSizeMb,
@@ -203,52 +194,21 @@ export class BilibiliService {
     const download = normalizeDownloadConfig(config)
     const plan = await this.buildDownloadPlan(input, download)
     if (!plan.ok) return plan
-
-    if (plan.cached?.files?.length) {
-      await emitBiliEvent(hooks, {
-        type: "cache-hit",
-        message: "命中 B站下载缓存，准备发送已缓存文件。",
-        files: plan.cached.files,
-      })
-      return {
-        ...plan,
-        ok: true,
-        fromCache: true,
-        files: plan.cached.files,
-      }
-    }
-
-    await emitBiliEvent(hooks, {
-      type: "download-start",
-      message: `开始下载 ${plan.info.bvid}，方式：${plan.downloader}，分P策略：${plan.policy}。`,
-    })
-
-    const workDir = path.join(this.tmpDir, `${plan.cacheKey}-${Date.now()}`)
-    const outputDir = this.outputDir
-    await fs.rm(workDir, { recursive: true, force: true })
-    await fs.mkdir(workDir, { recursive: true })
-    await fs.mkdir(outputDir, { recursive: true })
-
+    const task = await createMediaTask(this.tasksDir)
     try {
-      let files = await this.downloadWithBBDown(plan, download, workDir, hooks)
-
+      await emitBiliEvent(hooks, { type: "download-start", message: `开始下载 ${plan.info.bvid}，分P策略：${plan.policy}。` })
+      let files = await this.downloadWithBBDown(plan, download, task.dir, hooks)
       if (download.multi_page_policy === "zip" && files.length > 1) {
-        const zipPath = path.join(outputDir, `${safeFileName(plan.info.title || plan.info.bvid)}-${plan.info.bvid}.zip`)
-        await compressFiles(files, zipPath, this.spawn || spawn, download.timeout_ms)
-        files = [zipPath]
-      } else {
-        files = await moveFilesToOutput(files, outputDir)
+        const target = path.join(task.dir, `${safeFileName(plan.info.title || plan.info.bvid)}-${plan.info.bvid}.zip`)
+        await packMediaFiles(files, target, { timeoutMs: download.timeout_ms, spawnImpl: this.spawn, cwd: task.dir })
+        files = [target]
       }
-
-      await this.setCachedDownload(plan.cacheKey, files, download)
-      return {
-        ...plan,
-        ok: true,
-        fromCache: false,
-        files,
-      }
-    } finally {
-      await fs.rm(workDir, { recursive: true, force: true }).catch(() => null)
+      return { ...plan, ok: true, taskDir: task.dir, taskId: task.id, files }
+    } catch (error) {
+      await releaseMediaTask(this.tasksDir, task.dir).catch(cleanupError => {
+        globalThis.logger?.warn?.(`[Lotus-Plugin] Bilibili task cleanup: ${cleanupError.message}`)
+      })
+      throw error
     }
   }
 
@@ -285,10 +245,11 @@ export class BilibiliService {
     if (sessdata) args.push("-c", `SESSDATA=${sessdata}`)
     if (Array.isArray(config.extra_args) && config.extra_args.length) args.push(...config.extra_args)
 
-    return runSpawn(bbdownPath, args, {
+    return runMediaProcess(bbdownPath, args, {
       cwd,
       timeoutMs: Number(config.timeout_ms || 600000),
-      pathDirs: toolPathDirs,
+      env: buildToolProcessEnv(toolPathDirs),
+      spawnImpl: this.spawn,
     })
   }
 
@@ -377,194 +338,12 @@ export class BilibiliService {
     })
   }
 
-  async getCachedDownload(key, config = {}) {
-    if (!config.cache_enable) return null
-    const cache = await this.readCache()
-    const item = cache[key]
-    if (!item) return null
-    if (item.expires_at && Date.parse(item.expires_at) < Date.now()) {
-      delete cache[key]
-      await this.writeCache(cache)
-      return null
-    }
-    const files = []
-    for (const file of item.files || []) {
-      if (await exists(file)) files.push(file)
-    }
-    if (!files.length) {
-      delete cache[key]
-      await this.writeCache(cache)
-      return null
-    }
-    return {
-      ...item,
-      files,
-    }
+  async recoverTasks() {
+    return recoverMediaTasks(this.tasksDir)
   }
 
-  async setCachedDownload(key, files, config = {}) {
-    if (!config.cache_enable) return
-    const cache = await this.readCache()
-    const ttl = Number(config.cache_ttl_seconds || 0)
-    cache[key] = {
-      files,
-      saved_at: formatLocalIso(this.now()),
-      expires_at: ttl > 0 ? formatLocalIso(new Date(this.now().getTime() + ttl * 1000)) : "",
-    }
-    await this.writeCache(cache)
-  }
-
-  async readCache() {
-    try {
-      return YAML.parse(await fs.readFile(this.cacheFile, "utf8")) || {}
-    } catch (error) {
-      if (error?.code === "ENOENT") return {}
-      throw error
-    }
-  }
-
-  async writeCache(cache) {
-    await fs.mkdir(path.dirname(this.cacheFile), { recursive: true })
-    await fs.writeFile(this.cacheFile, YAML.stringify(cache), "utf8")
-  }
-
-  async cleanupDownloads(config = {}) {
-    const download = normalizeDownloadConfig(config)
-    const cleanup = normalizeCleanupConfig(config)
-    const tmpDir = this.tmpDir
-    const outputDir = this.outputDir
-    if (!cleanup.enable) {
-      return { ok: true, skipped: true, tmpDir, outputDir, removedFiles: 0, removedEntries: 0, freedBytes: 0 }
-    }
-
-    let removedFiles = 0
-    let freedBytes = 0
-    const tmpCutoff = cleanup.tmp_retention_hours > 0
-      ? this.now().getTime() - cleanup.tmp_retention_hours * 60 * 60 * 1000
-      : Number.POSITIVE_INFINITY
-    const tmpResult = await removeDirectoryEntriesOlderThan(tmpDir, tmpCutoff)
-    removedFiles += tmpResult.removedFiles
-    freedBytes += tmpResult.freedBytes
-
-    const cache = await this.readCache()
-    const nowMs = this.now().getTime()
-    const retentionCutoff = cleanup.retention_days > 0
-      ? nowMs - cleanup.retention_days * 24 * 60 * 60 * 1000
-      : Number.NEGATIVE_INFINITY
-    let changed = false
-    let removedEntries = 0
-    for (const [key, item] of Object.entries(cache)) {
-      const rawFiles = Array.isArray(item.files) ? item.files : []
-      const files = rawFiles
-        .filter(file => isPathInside(outputDir, file))
-      const expired = Boolean(item.expires_at && Date.parse(item.expires_at) < nowMs)
-      const existing = []
-      for (const file of files) {
-        const stat = await statFile(file)
-        if (!stat) continue
-        const tooOld = cleanup.retention_days > 0 && stat.mtimeMs < retentionCutoff
-        if (expired || tooOld) {
-          if (await removeFile(file)) {
-            removedFiles += 1
-            freedBytes += stat.size
-          } else {
-            existing.push(file)
-          }
-        } else {
-          existing.push(file)
-        }
-      }
-      if (!existing.length) {
-        delete cache[key]
-        removedEntries += 1
-        changed = true
-        continue
-      }
-      if (existing.length !== rawFiles.length) {
-        if (existing.length) cache[key] = { ...item, files: existing }
-        else {
-          delete cache[key]
-          removedEntries += 1
-        }
-        changed = true
-      }
-    }
-
-    const referenced = new Set(Object.values(cache)
-      .flatMap(item => Array.isArray(item?.files) ? item.files : [])
-      .filter(file => isPathInside(outputDir, file))
-      .map(file => path.resolve(file)))
-    const outputFiles = await listFiles(outputDir)
-    for (const entry of outputFiles) {
-      if (entry.mtimeMs < retentionCutoff && !referenced.has(path.resolve(entry.file))) {
-        if (await removeFile(entry.file)) {
-          removedFiles += 1
-          freedBytes += entry.size
-        }
-      }
-    }
-
-    const remaining = await listFiles(outputDir)
-    const maxBytes = cleanup.max_total_size_mb * 1024 * 1024
-    let totalBytes = remaining.reduce((sum, entry) => sum + entry.size, 0)
-    if (maxBytes > 0 && totalBytes > maxBytes) {
-      for (const entry of remaining.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
-        if (totalBytes <= maxBytes) break
-        if (await removeFile(entry.file)) {
-          removedFiles += 1
-          freedBytes += entry.size
-          totalBytes -= entry.size
-          for (const [key, item] of Object.entries(cache)) {
-            const nextFiles = (item.files || []).filter(file => path.resolve(file) !== path.resolve(entry.file))
-            if (nextFiles.length) cache[key] = { ...item, files: nextFiles }
-            else {
-              delete cache[key]
-              removedEntries += 1
-            }
-          }
-          changed = true
-        }
-      }
-    }
-
-    if (changed || download.cache_enable === false) await this.writeCache(cache)
-    return {
-      ok: true,
-      tmpDir,
-      outputDir,
-      removedFiles,
-      removedEntries,
-      freedBytes,
-    }
-  }
-
-  async releaseDownloadedFiles(files = []) {
-    const outputDir = this.outputDir
-    const targets = [...new Set(files.filter(file => isPathInside(outputDir, file)).map(file => path.resolve(file)))]
-    let removedFiles = 0
-    let freedBytes = 0
-    for (const file of targets) {
-      const stat = await statFile(file)
-      if (!stat) continue
-      if (await removeFile(file)) {
-        removedFiles += 1
-        freedBytes += stat.size
-      }
-    }
-
-    if (targets.length) {
-      const cache = await this.readCache()
-      let changed = false
-      for (const [key, item] of Object.entries(cache)) {
-        const nextFiles = (Array.isArray(item.files) ? item.files : [])
-          .filter(file => !targets.includes(path.resolve(file)))
-        if (nextFiles.length !== (item.files || []).length) changed = true
-        if (nextFiles.length) cache[key] = { ...item, files: nextFiles }
-        else if (changed) delete cache[key]
-      }
-      if (changed) await this.writeCache(cache)
-    }
-    return { removedFiles, freedBytes }
+  async releaseTask(result) {
+    return releaseMediaTask(this.tasksDir, result?.taskDir)
   }
 
   async createQrLogin() {
@@ -764,24 +543,9 @@ export function normalizeDownloadConfig(config = {}) {
     video_size_limit_mb: Number(source.video_size_limit_mb || 100),
     max_estimated_size_mb: Number(source.max_estimated_size_mb || 0),
     multi_page_policy: ["zip", "all", "first"].includes(source.multi_page_policy) ? source.multi_page_policy : "zip",
-    cache_enable: source.cache_enable !== false,
-    cache_ttl_seconds: Number(source.cache_ttl_seconds || 0),
     timeout_ms: Number(source.timeout_ms || 600000),
     extra_args: Array.isArray(source.extra_args) ? source.extra_args.map(String) : [],
     cookie: config.cookie || config.sessdata || source.cookie || source.sessdata || "",
-  }
-}
-
-export function normalizeCleanupConfig(config = {}) {
-  const source = config.cleanup || {}
-  return {
-    enable: source.enable !== false,
-    startup: source.startup !== false,
-    delete_after_send: source.delete_after_send !== false,
-    cron: String(source.cron || "0 10 4 * * ? *"),
-    retention_days: Math.max(0, Number(source.retention_days ?? 1) || 0),
-    tmp_retention_hours: Math.max(0, Number(source.tmp_retention_hours ?? 6) || 0),
-    max_total_size_mb: Math.max(0, Number(source.max_total_size_mb ?? 1024) || 0),
   }
 }
 
@@ -833,7 +597,7 @@ export function selectPages(pages = [], policy = "zip") {
 }
 
 export function selectCompletedMediaFiles(files = []) {
-  return files.filter(file => !looksLikeBbdownStreamPart(file))
+  return files.filter(file => MEDIA_EXTENSIONS.has(path.extname(file).toLowerCase()) && !looksLikeBbdownStreamPart(file))
 }
 
 export function looksLikeBbdownStreamPart(file = "") {
@@ -841,15 +605,6 @@ export function looksLikeBbdownStreamPart(file = "") {
   const ext = parsed.ext.toLowerCase()
   if (!MEDIA_EXTENSIONS.has(ext)) return false
   return /^\d{6,}\.P\d+\.\d+$/i.test(parsed.name)
-}
-
-export function downloadCacheKey(info, config = {}) {
-  return [
-    info.bvid || info.aid,
-    "bbdown",
-    config.resolution || 64,
-    config.multi_page_policy || "zip",
-  ].join("-")
 }
 
 export function safeFileName(value = "bilibili") {
@@ -913,25 +668,6 @@ function estimateVideoSizeMb(info = {}) {
   return Math.round((bandwidth * info.duration) / 8 / 1024 / 1024)
 }
 
-async function compressFiles(files, zipPath, spawnImpl = spawn, timeoutMs = 600000) {
-  await fs.rm(zipPath, { force: true }).catch(() => null)
-  if (process.platform === "win32") {
-    const escaped = files.map(file => `'${file.replace(/'/g, "''")}'`).join(",")
-    const command = `Compress-Archive -LiteralPath ${escaped} -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`
-    await runSpawn("powershell.exe", ["-NoProfile", "-Command", command], {
-      spawnImpl,
-      timeoutMs,
-    })
-    return zipPath
-  }
-
-  await runSpawn("zip", ["-j", zipPath, ...files], {
-    spawnImpl,
-    timeoutMs,
-  })
-  return zipPath
-}
-
 function resolveToolsPath(value = "") {
   const text = String(value || "")
   if (!text) return ""
@@ -946,31 +682,6 @@ function collectToolPathDirs(bbdownPath = "", toolsPath = "") {
   if (bbdownPath) dirs.push(path.dirname(bbdownPath))
   if (toolsPath) dirs.push(resolveToolsPath(toolsPath))
   return dirs
-}
-
-async function moveFilesToOutput(files, outputDir) {
-  const result = []
-  for (const file of files) {
-    const target = await uniquePath(path.join(outputDir, path.basename(file)))
-    await fs.rename(file, target).catch(async error => {
-      if (error?.code !== "EXDEV") throw error
-      await fs.copyFile(file, target)
-      await fs.rm(file, { force: true })
-    })
-    result.push(target)
-  }
-  return result
-}
-
-async function uniquePath(file) {
-  const parsed = path.parse(file)
-  let candidate = file
-  let index = 1
-  while (await exists(candidate)) {
-    candidate = path.join(parsed.dir, `${parsed.name}-${index}${parsed.ext}`)
-    index += 1
-  }
-  return candidate
 }
 
 async function findMediaFiles(root) {
@@ -988,81 +699,6 @@ async function findMediaFiles(root) {
     }
   }
   return files.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-}
-
-async function listFiles(root) {
-  const files = []
-  const queue = [root]
-  while (queue.length) {
-    const dir = queue.shift()
-    let entries
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true })
-    } catch (error) {
-      if (error?.code === "ENOENT") continue
-      throw error
-    }
-    for (const entry of entries) {
-      const file = path.join(dir, entry.name)
-      if (entry.isDirectory()) queue.push(file)
-      else if (entry.isFile()) {
-        const stat = await statFile(file)
-        if (stat) files.push({ file, size: stat.size, mtimeMs: stat.mtimeMs })
-      }
-    }
-  }
-  return files
-}
-
-async function removeDirectoryEntriesOlderThan(root, cutoffMs) {
-  let removedFiles = 0
-  let freedBytes = 0
-  let entries
-  try {
-    entries = await fs.readdir(root, { withFileTypes: true })
-  } catch (error) {
-    if (error?.code === "ENOENT") return { removedFiles, freedBytes }
-    throw error
-  }
-  for (const entry of entries) {
-    const target = path.join(root, entry.name)
-    const stat = await fs.stat(target).catch(() => null)
-    if (!stat || stat.mtimeMs >= cutoffMs) continue
-    const nested = entry.isDirectory() ? await listFiles(target) : []
-    const size = entry.isFile() ? stat.size : nested.reduce((sum, item) => sum + item.size, 0)
-    try {
-      await fs.rm(target, { recursive: entry.isDirectory(), force: true, maxRetries: 3, retryDelay: 200 })
-      removedFiles += entry.isFile() ? 1 : nested.length
-      freedBytes += size
-    } catch {
-      // Windows may still have an active BBDown/ffmpeg handle; retry on the next cleanup pass.
-    }
-  }
-  return { removedFiles, freedBytes }
-}
-
-async function statFile(file) {
-  try {
-    const stat = await fs.stat(file)
-    return stat.isFile() ? stat : null
-  } catch {
-    return null
-  }
-}
-
-async function removeFile(file) {
-  try {
-    await fs.rm(file, { force: true, maxRetries: 3, retryDelay: 200 })
-    return true
-  } catch {
-    return false
-  }
-}
-
-function isPathInside(root, candidate) {
-  if (!candidate) return false
-  const relative = path.relative(path.resolve(root), path.resolve(String(candidate)))
-  return relative !== "" && !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative)
 }
 
 function runSpawn(command, args = [], options = {}) {

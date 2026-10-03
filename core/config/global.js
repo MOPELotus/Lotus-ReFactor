@@ -183,10 +183,10 @@ function normalizeLegacyBilibili(input = {}, externalTools = {}) {
   if (typeof input.videoSizeLimit !== "undefined") download.video_size_limit_mb = Number(input.videoSizeLimit)
   if (typeof input.maxSizeLimit !== "undefined") download.max_estimated_size_mb = Number(input.maxSizeLimit)
   if (typeof input.multiPagePolicy !== "undefined") download.multi_page_policy = String(input.multiPagePolicy)
-  if (typeof input.enableCache !== "undefined") download.cache_enable = Boolean(input.enableCache)
-  if (typeof input.cacheTTL !== "undefined") download.cache_ttl_seconds = Number(input.cacheTTL)
   if (typeof externalTools?.toolsPath !== "undefined") download.tools_path = String(externalTools.toolsPath || "")
 
+  for (const key of ["cache_enable", "cache_ttl_seconds"]) delete download[key]
+  for (const key of ["enableCache", "cacheTTL", "cache_enable", "cache_ttl_seconds", "cleanup"]) delete next[key]
   if (Object.keys(download).length) next.download = download
   return next
 }
@@ -216,9 +216,6 @@ function normalizeCronFields(config = {}) {
   }
   if (config.netease_partner) {
     config.netease_partner.schedule = normalizeQuartzCron(config.netease_partner.schedule)
-  }
-  if (config.bilibili?.cleanup) {
-    config.bilibili.cleanup.cron = normalizeQuartzCron(config.bilibili.cleanup.cron)
   }
   if (config.atlas?.auto_update) {
     config.atlas.auto_update.check_cron = normalizeQuartzCron(config.atlas.auto_update.check_cron)

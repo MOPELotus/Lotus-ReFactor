@@ -59,6 +59,7 @@ export function validateGlobalConfig(config) {
   validateToolsConfig(config.tools, errors)
   validateRemoteConfig(config.remote, errors)
   validateBilibiliConfig(config.bilibili, errors)
+  validateDouyinConfig(config.douyin, errors)
   validateGroupsConfig(config.groups, errors)
   validateNeteasePartnerConfig(config.netease_partner, errors)
   validateLoggingConfig(config.logging, errors)
@@ -360,7 +361,7 @@ function validateBilibiliConfig(bilibili = {}, errors) {
     errors.push("bilibili.download must be an object")
     return
   }
-  for (const field of ["enable", "use_aria2", "cache_enable"]) {
+  for (const field of ["enable", "use_aria2"]) {
     if (typeof bilibili.download[field] !== "boolean") {
       errors.push(`bilibili.download.${field} must be boolean`)
     }
@@ -378,7 +379,7 @@ function validateBilibiliConfig(bilibili = {}, errors) {
       errors.push(`bilibili.download.${field} must be a positive integer`)
     }
   }
-  for (const field of ["max_estimated_size_mb", "cache_ttl_seconds"]) {
+  for (const field of ["max_estimated_size_mb"]) {
     if (!isNonNegativeInteger(bilibili.download[field])) {
       errors.push(`bilibili.download.${field} must be a non-negative integer`)
     }
@@ -389,22 +390,22 @@ function validateBilibiliConfig(bilibili = {}, errors) {
   if (!Array.isArray(bilibili.download.extra_args) || !bilibili.download.extra_args.every(isString)) {
     errors.push("bilibili.download.extra_args must be an array of strings")
   }
+}
 
-  if (!isObject(bilibili.cleanup)) {
-    errors.push("bilibili.cleanup must be an object")
-    return
+function validateDouyinConfig(config = {}, errors) {
+  if (!isObject(config)) { errors.push("douyin must be an object"); return }
+  if (typeof config.enable !== "boolean") errors.push("douyin.enable must be boolean")
+  if (!isPositiveInteger(config.request_timeout_ms)) errors.push("douyin.request_timeout_ms must be a positive integer")
+  const download = config.download
+  if (!isObject(download)) { errors.push("douyin.download must be an object"); return }
+  if (typeof download.enable !== "boolean") errors.push("douyin.download.enable must be boolean")
+  if (!isString(download.tools_path)) errors.push("douyin.download.tools_path must be a string")
+  if (!["adapt", "4k", "2k", "1080p", "720p", "540p", "360p"].includes(download.quality)) errors.push("douyin.download.quality is invalid")
+  if (!["first", "all", "zip"].includes(download.multi_page_policy)) errors.push("douyin.download.multi_page_policy is invalid")
+  for (const field of ["duration_limit_seconds", "video_size_limit_mb", "timeout_ms"]) {
+    if (!isPositiveInteger(download[field])) errors.push(`douyin.download.${field} must be a positive integer`)
   }
-  for (const field of ["enable", "startup", "delete_after_send"]) {
-    if (typeof bilibili.cleanup[field] !== "boolean") {
-      errors.push(`bilibili.cleanup.${field} must be boolean`)
-    }
-  }
-  if (!isString(bilibili.cleanup.cron)) errors.push("bilibili.cleanup.cron must be a string")
-  for (const field of ["retention_days", "tmp_retention_hours", "max_total_size_mb"]) {
-    if (!isNonNegativeInteger(bilibili.cleanup[field])) {
-      errors.push(`bilibili.cleanup.${field} must be a non-negative integer`)
-    }
-  }
+  if (!isNonNegativeInteger(download.max_estimated_size_mb)) errors.push("douyin.download.max_estimated_size_mb must be a non-negative integer")
 }
 
 function validateGroupsConfig(groups = {}, errors) {

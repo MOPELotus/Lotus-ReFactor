@@ -43,6 +43,7 @@
 ## 媒体、外部任务与群管理
 
 - [B 站解析与下载](bilibili.md)
+- [抖音作品解析与下载](douyin.md)
 - [网易云合伙人-自动任务](features/netease-partner.md)
 - [群管理-成员导出与退群清理](features/group-manager.md)
 

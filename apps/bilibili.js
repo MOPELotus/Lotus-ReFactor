@@ -10,9 +10,10 @@ import { replyImage, replyText } from "../core/transport/reply.js"
 import {
   BilibiliService,
   formatNumber,
-  normalizeCleanupConfig,
   normalizeDownloadConfig,
 } from "../services/bilibili/service.js"
+import { buildMediaMessageText } from "../services/media/message.js"
+import { sendMediaFile, mediaFailureMessage } from "../services/media/files.js"
 import { ToolInstallerService } from "../services/tools/installer.js"
 
 const searchCache = new Map()
@@ -34,25 +35,12 @@ export class LotusBilibili extends BasePlugin {
         { reg: "(bilibili.com|b23.tv|bili2233.cn|live.bilibili.com|^[Bb][Vv][1-9A-Za-z]{10}$|^[Aa][Vv][0-9]+$)", fnc: "parse" },
       ],
     })
-    this.task = [
-      {
-        name: "荷花插件B站下载清理",
-        cron: "0 10 4 * * ? *",
-        fnc: this.cleanupDownloads.bind(this),
-        log: false,
-      },
-    ]
   }
 
   async init() {
-    const globalConfig = await loadGlobalConfig()
-    if (!normalizeCleanupConfig(globalConfig.bilibili).startup) return
-    const timer = setTimeout(() => {
-      this.cleanupDownloads({ trigger: "startup" }).catch(error => {
-        logger?.warn?.(`[Lotus-Plugin] Bilibili cleanup failed: ${error.message}`)
-      })
-    }, 60 * 1000)
-    if (typeof timer.unref === "function") timer.unref()
+    await (await createService()).recoverTasks().catch(error => {
+      globalThis.logger?.warn?.(`[Lotus-Plugin] Bilibili task recovery: ${error.message}`)
+    })
   }
 
   async parse() {
@@ -301,39 +289,23 @@ export class LotusBilibili extends BasePlugin {
         if (result.reason === "live_download_unsupported" && result.info) {
           return this.renderInfo(result.info, { download: false })
         }
-        await this.renderError(options.title || "B站下载", new Error(downloadFailureMessage(result)))
+        await this.renderError(options.title || "B站下载", new Error(mediaFailureMessage(result)))
         return true
       }
 
       for (const file of result.files || []) {
-        await sendBiliFile(this.e, file, downloadConfig)
+        await sendMediaFile(this.e, file, downloadConfig)
       }
     } catch (error) {
       await this.renderError(options.title || "B站下载", error)
     } finally {
-      const cleanupConfig = normalizeCleanupConfig(globalConfig.bilibili)
-      if (cleanupConfig.enable && cleanupConfig.delete_after_send && result?.files?.length) {
-        const released = await service.releaseDownloadedFiles(result.files).catch(error => {
-          logger?.warn?.(`[Lotus-Plugin] Bilibili post-send cleanup failed: ${error.message}`)
-          return null
+      if (result?.taskDir) {
+        await service.releaseTask(result).catch(error => {
+          globalThis.logger?.warn?.(`[Lotus-Plugin] Bilibili task cleanup failed: ${error.message}`)
         })
-        if (released?.removedFiles) {
-          logger?.mark?.(`[Lotus-Plugin] Bilibili post-send cleanup removed ${released.removedFiles} files, freed ${released.freedBytes} bytes`)
-        }
       }
     }
     return true
-  }
-
-  async cleanupDownloads(options = {}) {
-    const globalConfig = await loadGlobalConfig()
-    const service = await createService()
-    const result = await service.cleanupDownloads({
-      ...(globalConfig.bilibili || {}),
-      ...(globalConfig.bilibili?.download || {}),
-    })
-    logger?.mark?.(`[Lotus-Plugin] Bilibili cleanup finished: ${result.removedEntries} cache entries, ${result.removedFiles} files, freed=${result.freedBytes || 0} bytes, trigger=${options.trigger || "schedule"}`)
-    return result
   }
 
   async renderError(title, error) {
@@ -376,43 +348,4 @@ async function imageFileToDataUrl(file) {
   return `data:${mime};base64,${buffer.toString("base64")}`
 }
 
-async function sendBiliFile(e, file, config = {}) {
-  const stat = await fs.stat(file)
-  const sizeMb = stat.size / 1024 / 1024
-  const ext = path.extname(file).toLowerCase()
-  const segment = globalThis.segment
-  if ([".mp4", ".mkv", ".flv", ".mov", ".m4v"].includes(ext)
-    && sizeMb <= Number(config.video_size_limit_mb || 100)
-    && segment?.video) {
-    await e.reply(segment.video(file))
-    return
-  }
-
-  if (e.isGroup && e.group?.sendFile) return e.group.sendFile(file, path.basename(file))
-  if (e.friend?.sendFile) return e.friend.sendFile(file, path.basename(file))
-  throw new Error("当前适配器不支持发送文件")
-}
-
-function downloadFailureMessage(result = {}) {
-  if (result.reason === "duration_limit") {
-    return `视频时长超过 ${Math.round(result.limitSeconds / 60)} 分钟限制。`
-  }
-  if (result.reason === "estimated_size_limit") {
-    return `视频预估大小 ${result.estimatedSizeMb} MB 超过 ${result.limitMb} MB 限制。`
-  }
-  return result.reason || "下载失败"
-}
-
-export function buildBilibiliMessageText(e = {}) {
-  const chunks = [
-    e.raw_message,
-    e.msg,
-  ]
-  for (const item of e.message || []) {
-    if ((item?.type === "json" || item?.type === "xml") && item.data) {
-      chunks.push(typeof item.data === "string" ? item.data : JSON.stringify(item.data))
-    }
-    if (item?.type === "text" && item.text) chunks.push(item.text)
-  }
-  return chunks.filter(Boolean).join("\n")
-}
+export const buildBilibiliMessageText = buildMediaMessageText

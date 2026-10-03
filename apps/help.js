@@ -23,7 +23,7 @@ export class LotusHelp extends BasePlugin {
   }
 
   async help() {
-    await replyText(this, "[荷花插件]完整文档请查看 README.md 和 docs/README.md，里面按部署、初始化、登录、签到、图鉴、体力、B站、远程 spawn 等模块拆开说明。")
+    await replyText(this, "[荷花插件]完整文档请查看 README.md 和 docs/README.md，里面按部署、初始化、登录、签到、图鉴、体力、B站、抖音、远程 spawn 等模块拆开说明。")
     return true
   }
 }

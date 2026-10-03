@@ -78,9 +78,11 @@ class SkiaRenderer {
     ctx.imageSmoothingQuality = "high"
     await this.drawBackground(ctx, this.width, height)
     for (const command of this.commands) await command(ctx)
-    return canvas.toBuffer(this.options.imgType === "png" ? "png" : "jpeg", {
+    const buffer = await canvas.toBuffer(this.options.imgType === "png" ? "png" : "jpeg", {
       quality: Number(this.options.quality || 96) / 100,
     })
+    this.options.onRender?.({ gpu: canvas.gpu, ...canvas.engine, width: canvas.width, height: canvas.height })
+    return buffer
   }
 
   collectImages(value) {
@@ -108,6 +110,8 @@ class SkiaRenderer {
     if (this.templateName === "daily-note-summary") return this.buildDailyNote()
     if (this.templateName === "checkin-result") return this.buildCheckinResult()
     if (this.templateName === "schedule-notice") return this.buildScheduleNotice()
+    if (this.templateName === "douyin-info") return this.buildDouyinInfo()
+    if (this.templateName === "douyin-article") return this.buildDouyinArticle()
     if (this.templateName === "bilibili-info") return this.buildBilibiliInfo()
     if (this.templateName === "genshin-team-damage") return this.buildGenshinTeamDamage()
     if (this.templateName === "starrail-team-damage") return this.buildStarRailTeamDamage()
@@ -265,6 +269,42 @@ class SkiaRenderer {
     })
     this.sectionTitle("签到明细")
     this.checkinRows(this.data.games || [])
+    this.footer()
+  }
+
+  buildDouyinInfo() {
+    const work = this.data
+    const types = { video: "视频", gallery: work.isCollection ? "合辑" : "图集", live_photo: "动态图片", article: "文章" }
+    const number = value => value === undefined ? "-" : formatShortNumber(value)
+    this.hero({ title: `抖音${types[work.type] || "作品"}`, subtitle: work.id, badge: "DOUYIN", message: work.title, width: this.innerWidth() })
+    if (work.cover) this.mediaCover(work.cover)
+    this.sectionTitle("详情")
+    this.gridItems([
+      { label: "作者", value: work.owner || "未知" },
+      { label: "发布时间", value: work.createdAt ? new Date(work.createdAt * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : "-" },
+      { label: "时长", value: work.duration ? formatDuration(work.duration) : "-" },
+      { label: "媒体项数", value: String(work.media?.length || 0) },
+      { label: "点赞", value: number(work.stat?.like) },
+      { label: "评论", value: number(work.stat?.reply) },
+      { label: "收藏", value: number(work.stat?.favorite) },
+      { label: "分享", value: number(work.stat?.share) },
+    ], 2)
+    const details = []
+    if (work.desc) details.push({ title: "简介", body: work.desc })
+    if (work.music?.title) details.push({ title: "音乐", body: `${work.music.title} · ${work.music.author}` })
+    if (work.collection?.title) details.push({ title: "所属合集", body: work.collection.title })
+    if (work.sources?.length) details.push({ title: "可用视频源", body: work.sources.map(source => `${source.quality || "清晰度未知"} ${source.width && source.height ? `${source.width}×${source.height}` : ""} ${source.codec || ""}`).join(" / ") })
+    for (const warning of work.warnings || []) details.push({ title: "提示", body: warning })
+    if (details.length) this.drawTextCards(details, 1, "title", "body")
+    this.footer()
+  }
+
+  buildDouyinArticle() {
+    this.hero({ title: this.data.title || "抖音文章", subtitle: `${this.data.owner || "未知"} · 第 ${this.data.page} 页`, badge: "ARTICLE", width: this.innerWidth() })
+    for (const block of this.data.blocks || []) {
+      if (block.type === "image" && block.urls?.[0]) this.mediaCover(block.urls[0])
+      else if (block.text) this.drawTextCards([{ title: "正文", body: block.text }], 1, "title", "body")
+    }
     this.footer()
   }
 

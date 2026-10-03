@@ -1,4 +1,4 @@
-export const CURRENT_GLOBAL_CONFIG_VERSION = 2
+export const CURRENT_GLOBAL_CONFIG_VERSION = 3
 
 const ATLAS_BASE_SCOPE_ARGS = Object.freeze([
   "--game", "gi,hsr,zzz",
@@ -158,19 +158,22 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
       video_size_limit_mb: 100,
       max_estimated_size_mb: 0,
       multi_page_policy: "zip",
-      cache_enable: false,
-      cache_ttl_seconds: 0,
       timeout_ms: 600000,
       extra_args: [],
     },
-    cleanup: {
+  },
+  douyin: {
+    enable: true,
+    request_timeout_ms: 15000,
+    download: {
       enable: true,
-      startup: true,
-      cron: "0 10 4 * * ? *",
-      delete_after_send: true,
-      retention_days: 1,
-      tmp_retention_hours: 6,
-      max_total_size_mb: 1024,
+      tools_path: "data/tools/bin",
+      quality: "adapt",
+      duration_limit_seconds: 3600,
+      video_size_limit_mb: 100,
+      max_estimated_size_mb: 0,
+      multi_page_policy: "zip",
+      timeout_ms: 600000,
     },
   },
   groups: {
@@ -270,6 +273,9 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
       },
       "bilibili.login": {
         policy: "master_only",
+      },
+      "douyin.download": {
+        policy: "inherit",
       },
       "bilibili.download": {
         policy: "inherit",
