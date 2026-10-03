@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { spawn } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import { rootPath } from "../../core/path.js"
 
 export class AtlasUpdateService {
@@ -332,12 +333,26 @@ async function copyDir(source, target, fsImpl) {
     throw new Error(`atlas source missing: ${source}`)
   }
   await fsImpl.mkdir(path.dirname(target), { recursive: true })
-  await fsImpl.rm(target, { recursive: true, force: true })
-  if (typeof fsImpl.cp === "function") {
-    await fsImpl.cp(source, target, { recursive: true, force: true })
-    return
+  const staging = `${target}.lotus-staging-${randomUUID()}`
+  const previous = `${target}.lotus-previous-${randomUUID()}`
+  let moved = false
+  try {
+    if (typeof fsImpl.cp === "function") await fsImpl.cp(source, staging, { recursive: true, force: true })
+    else await copyDirFallback(source, staging, fsImpl)
+    if (await exists(target, fsImpl)) {
+      await fsImpl.rename(target, previous)
+      moved = true
+    }
+    try {
+      await fsImpl.rename(staging, target)
+    } catch (error) {
+      if (moved) await fsImpl.rename(previous, target)
+      throw error
+    }
+    if (moved) await fsImpl.rm(previous, { recursive: true, force: true })
+  } finally {
+    await fsImpl.rm(staging, { recursive: true, force: true })
   }
-  await copyDirFallback(source, target, fsImpl)
 }
 
 async function copyDirFallback(source, target, fsImpl) {
