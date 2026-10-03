@@ -5,11 +5,15 @@ export class DouyinError extends Error {
   }
 }
 
-export async function requestText(fetchImpl, url, options = {}, { timeoutMs = 15000, maxBytes = 4 * 1024 * 1024 } = {}) {
+export async function requestText(fetchImpl, url, options = {}, { timeoutMs = 15000, maxBytes = 4 * 1024 * 1024, headersOnly = false } = {}) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetchImpl(url, { ...options, signal: controller.signal })
+    if (headersOnly) {
+      await response.body?.cancel()
+      return { response, text: "" }
+    }
     if (Number(response.headers.get("content-length")) > maxBytes) throw new DouyinError("response_too_large", "抖音响应超过大小限制")
     const chunks = []
     let length = 0

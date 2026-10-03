@@ -1,5 +1,6 @@
 import { WEB_UA, generateABogus } from "./signature.js"
 import { requestText, DouyinError } from "./http.js"
+import { signVisitorUrl } from "./guest-signature.js"
 
 export function buildDetailUrl(id, { sign = generateABogus, now = Date.now() } = {}) {
   const params = new URLSearchParams({
@@ -15,8 +16,11 @@ export function buildDetailUrl(id, { sign = generateABogus, now = Date.now() } =
 }
 
 export async function fetchWebDetail(id, visitor, { fetch: fetchImpl = globalThis.fetch, timeoutMs = 15000, sign, now = Date.now() } = {}) {
-  const { response, text } = await requestText(fetchImpl, buildDetailUrl(id, { sign, now }), {
-    redirect: "error", headers: { "User-Agent": WEB_UA, Referer: "https://www.douyin.com/", "Accept-Language": "zh-CN,zh;q=0.9", Cookie: `ttwid=${visitor};` },
+  const session = typeof visitor === "string" ? { ttwid: visitor } : visitor
+  const detailUrl = buildDetailUrl(id, { sign, now })
+  const request = session?.uifid ? signVisitorUrl(detailUrl, session.uifid, { now }) : { url: detailUrl, headers: {} }
+  const { response, text } = await requestText(fetchImpl, request.url, {
+    redirect: "error", headers: { "User-Agent": WEB_UA, Referer: "https://www.douyin.com/", "Accept-Language": "zh-CN,zh;q=0.9", Cookie: `ttwid=${session?.ttwid || ""};`, ...request.headers },
   }, { timeoutMs })
   if (!response.ok) {
     if (/ArgusSecurityPlugin|Uifid Not Found/i.test(text)) throw new DouyinError("risk_control", "抖音风控要求额外游客校验")

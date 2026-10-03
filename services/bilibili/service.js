@@ -7,7 +7,7 @@ import YAML from "yaml"
 import { resolveData, rootPath } from "../../core/path.js"
 import { formatLocalIso } from "../../core/time.js"
 import { createMediaTask, releaseMediaTask, recoverMediaTasks } from "../media/tasks.js"
-import { packMediaFiles, runMediaProcess, mediaLimitFailure } from "../media/files.js"
+import { packMediaFiles, runMediaProcess, mediaLimitFailure, safeMediaName } from "../media/files.js"
 
 const NAV_API = "https://api.bilibili.com/x/web-interface/nav"
 const QR_GENERATE_API = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
@@ -608,11 +608,7 @@ export function looksLikeBbdownStreamPart(file = "") {
 }
 
 export function safeFileName(value = "bilibili") {
-  return String(value || "bilibili")
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120) || "bilibili"
+  return safeMediaName(value || "bilibili")
 }
 
 function extractFromJsonCard(raw) {

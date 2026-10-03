@@ -3,7 +3,13 @@ import path from "node:path"
 import { spawn } from "node:child_process"
 
 export function safeMediaName(value = "media") {
-  return String(value).replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "media"
+  const cleaned = String(value).replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim()
+  let output = ""
+  for (const character of cleaned) {
+    if (Buffer.byteLength(output + character, "utf8") > 180) break
+    output += character
+  }
+  return output || "media"
 }
 
 export async function sendMediaFile(e, file, config = {}) {

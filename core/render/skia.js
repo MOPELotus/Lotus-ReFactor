@@ -4,6 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { Canvas, FontLibrary, loadImage } from "skia-canvas"
 import { resourcesPath } from "../path.js"
+import { fetchImageBytes } from "./image.js"
 
 const FONT_FAMILY = "MiSans"
 const FONT_PATH = path.join(resourcesPath, "fonts", "MiSans-VF.ttf")
@@ -2036,7 +2037,7 @@ async function loadCachedImage(src, imageRoots = []) {
   const resolved = normalizeImageSource(src, imageRoots)
   const key = resolved
   if (IMAGE_CACHE.has(key)) return IMAGE_CACHE.get(key)
-  const promise = loadImage(resolved).catch(error => {
+  const promise = (async () => loadImage(/^https?:\/\//i.test(resolved) ? await fetchImageBytes(resolved) : resolved))().catch(error => {
     if (error?.code !== "ENOENT") {
       globalThis.logger?.warn?.(`[荷花插件渲染] 图片加载失败：${String(src).slice(0, 120)} ${error.message}`)
     }

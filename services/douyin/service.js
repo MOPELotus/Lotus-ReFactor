@@ -51,7 +51,8 @@ export class DouyinService {
     let primaryError
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        previous = await this.visitor.get({ refresh: attempt > 0, previous, timeoutMs: requestBudget() })
+        const getVisitor = this.visitor.getSession || this.visitor.get
+        previous = await getVisitor.call(this.visitor, { refresh: attempt > 0, previous, timeoutMs: requestBudget() })
         const detail = await fetchWebDetail(target.id, previous, { fetch: this.fetch, timeoutMs: requestBudget(), sign: this.sign, now: this.now() })
         return normalizeDouyinWork(detail, { source: "web", expectedId: target.id })
       } catch (error) {
