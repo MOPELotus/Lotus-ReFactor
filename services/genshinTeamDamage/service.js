@@ -355,6 +355,7 @@ export function buildTeamDamageRenderData({ uid, profileId, command, parsed, sel
     detail: parsed?.detail,
     team: selected.map(item => ({
       name: item.name,
+      icon: item.icon || item.face || "",
       elem: item.element,
       level: item.level,
       cons: item.cons,

@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url"
 import { resourcesPath } from "../path.js"
 import { formatLocalDateTime } from "../time.js"
 import { createRenderBackgroundProvider } from "./background.js"
+import { buildAtlasPages } from "./atlas-pages.js"
 
 const DEFAULT_RENDER_OPTIONS = Object.freeze({
   imgType: "jpeg",
@@ -14,11 +15,11 @@ let skiaRendererPromise = null
 export async function renderTemplate(templateName, data = {}, options = {}) {
   const saveId = sanitizeSaveId(options.saveId || templateName)
   const fontPath = toFileUrl(path.join(resourcesPath, "fonts", "MiSans-VF.ttf"))
-  const hasExplicitBackground = Boolean(data.bg || data.backgrounds || data.backgroundProvider)
-  const backgroundProvider = data.backgroundProvider || (hasExplicitBackground
+  const hasExplicitBackground = Boolean(data.bg || data.backgrounds || data.backgroundProvider || templateName === "atlas-page" || templateName === "atlas-item" && data.view)
+  const backgroundProvider = data.backgroundProvider || (hasExplicitBackground || options.randomBackground !== true
     ? null
     : await createRenderBackgroundProvider())
-  const bg = data.bg || firstBackground(data.backgrounds) || (backgroundProvider ? await backgroundProvider() : "")
+  const bg = data.bg || firstBackground(data.backgrounds) || (backgroundProvider ? await backgroundProvider() : path.join(resourcesPath, "miao-theme", "bg", "bg-sr.webp"))
   const payload = {
     pluginName: "荷花插件",
     generatedAt: formatLocalDateTime(),
@@ -58,6 +59,21 @@ async function loadSkiaRenderer() {
     })
   }
   return skiaRendererPromise
+}
+
+export async function renderAtlasBook(data, options = {}) {
+  const pages = buildAtlasPages(data)
+  const images = []
+  for (const page of pages) {
+    const pageOptions = { ...options, saveId: `${options.saveId || "atlas"}-${page.index}` }
+    if (options.path) {
+      const parsed = path.parse(options.path)
+      pageOptions.path = path.join(parsed.dir, `${parsed.name}-${page.index}${parsed.ext}`)
+    }
+    const image = await renderTemplate("atlas-page", { ...data, atlasPage: page }, pageOptions)
+    images.push({ image, section: page.section, page: page.index, total: page.total })
+  }
+  return images
 }
 
 function isSkiaCanvasLoadError(error) {

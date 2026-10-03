@@ -1,5 +1,6 @@
 import { registerProfileWithGenshin } from "../genshinBridge/profile.js"
 import path from "node:path"
+import { renderTemplate } from "../../core/render/service.js"
 import { pathToFileURL } from "node:url"
 import { resolveServer } from "../../core/mihoyo/regions.js"
 import { parseAccountCookie } from "../../core/mihoyo/cookies.js"
@@ -81,6 +82,7 @@ export class ZzzProfileQueryBridge {
     this.registerProfile = options.registerProfile || registerProfileWithGenshin
     this.syncDevice = options.syncDevice || syncZzzDeviceWithRedis
     this.loadRankModule = options.loadRankModule || loadRankModule
+    this.renderRank = options.renderRank || renderTemplate
   }
 
   async panel(options = {}) {
@@ -154,8 +156,8 @@ export class ZzzProfileQueryBridge {
       if (!qq) continue
       const item = avatar.getPanel?.(uid, character)
       if (!item) continue
+      await item.get_small_basic_assets?.()
       if (item.weapon?.get_assets) await item.weapon.get_assets().catch(() => {})
-      item.qq_avatar = await memberAvatar(e, qq)
       item.uid = String(uid)
       const rankValue = mode === "weighted" ? weightedScore(item) : Number(item.equip_score || 0)
       item.score_label = mode === "weighted" ? "加权分" : "面板分"
@@ -168,43 +170,26 @@ export class ZzzProfileQueryBridge {
     const context = await createZzzProfilePluginInstance({ PluginClass: panel.constructor, e, profile, profileId, command, forwardReplies, registerProfile: this.registerProfile, syncDevice: this.syncDevice, loadMysApiClass: this.loadMysApiClass })
     context.instance.e = context.event
     context.instance.reply = context.event.reply.bind(context.event)
-      // Runtime.render 的基础实现不会自动填充 ZZZ 模板依赖的 sys.currentPath；
-      // 原 ZZZ Plugin 是在自己的 render() 中通过 beforeRender 注入这些路径的。
-      // 这里沿用同一套路径约定，但模板仍由 Lotus-Plugin 提供，避免 CSS 变成裸 HTML。
-      const rankRenderPath = "zzz-rank/index.html"
-      const zzzLayoutPath = path.join(process.cwd(), "plugins", "ZZZ-Plugin", "resources", "common", "layout")
-      await context.instance.e.runtime.render("Lotus-Plugin", rankRenderPath, {
-        title: `${character}${mode === "weighted" ? "综合榜" : "排名"}`,
-        list: rows,
-        general: {},
-      }, {
-        // 对齐 ZZZ-Plugin 自身渲染参数，避免默认 1x/低质量截图导致头像和图标发糊。
-        // ZZZ 渲染器内部还会乘以自身的 scaleCfgValue；这里设为 4，
-        // 让最终截图尺寸明显放大，减少缩放后字体和细节发糊。
-        scale: 4,
-        quality: 100,
-        beforeRender({ data }) {
-          const renderPathDir = rankRenderPath.substring(0, rankRenderPath.lastIndexOf("/") + 1)
-          // 以 Runtime 按实际安装路径计算出的资源根为准，避免开发目录名/部署目录名不一致。
-          const rankResPath = data.pluResPath || data._res_path
-          const zzzResPath = rankResPath?.replace(/plugins[\\/]Lotus-Plugin[\\/]resources[\\/]?$/, "plugins/ZZZ-Plugin/resources/") || rankResPath
-          return {
-            ...data,
-            _res_path: rankResPath,
-            pluResPath: rankResPath,
-            defaultLayout: path.join(zzzLayoutPath, "index.html"),
-            sys: {
-              ...(data.sys || {}),
-              scale: data.sys?.scale || 1,
-              // defaultLayout 是 ZZZ 原布局，公共 style 也必须从 ZZZ-Plugin 资源根加载。
-              resourcesPath: zzzResPath,
-              currentPath: `${rankResPath}${renderPathDir}`,
-              createdby: "Created By ZZZ-Plugin & Lotus-Plugin",
-            },
-          }
-        },
-      })
-    context.forwarded.push("[图片]")
+    const image = await this.renderRank("zzz-rank", {
+      title: `${character}${mode === "weighted" ? "综合榜" : "排名"}`,
+      character,
+      list: rows.map(item => ({
+        name: item.name_mi18n || item.name || character,
+        uid: item.uid,
+        icon: item.small_square_icon,
+        level: item.level,
+        rank: item.rank,
+        score_label: item.score_label,
+        score_value: item.score_value,
+        skills: item.skills,
+        weapon: item.weapon ? {
+          name: item.weapon.name, icon: item.weapon.square_icon,
+          level: item.weapon.level, star: item.weapon.star,
+        } : null,
+      })),
+    })
+    await context.event.reply(image)
+    if (!forwardReplies) context.forwarded.push("[图片]")
     return { ok: true, uid: "", profileId, messages: context.messages, forwarded: context.forwarded }
   }
 
@@ -225,7 +210,7 @@ export class ZzzProfileQueryBridge {
     const returned = await fn.call(context.instance)
     if (!context.forwarded.length && shouldForwardReply(returned)) {
       await context.event.reply(returned)
-      context.forwarded.push("[图片]")
+      if (!forwardReplies) context.forwarded.push("[图片]")
     }
     return {
       ok: true,
@@ -350,13 +335,6 @@ async function loadAvatarModule() {
 
 async function loadRankModule() {
   return importRuntimeModule("ZZZ-Plugin", "dist", "lib", "rank.js")
-}
-
-async function memberAvatar(e, qq) {
-  try {
-    const member = e.group?.pickMember?.(qq)
-    return await member?.getAvatarUrl?.() || ""
-  } catch { return "" }
 }
 
 function weightedScore(item) {

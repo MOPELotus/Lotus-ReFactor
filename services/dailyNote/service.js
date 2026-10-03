@@ -204,12 +204,24 @@ export function formatDailyNoteDetails(game, data = {}) {
     const vhs = data.vhs_sale || data.vhs || {}
     return [
       detail("活跃度", valuePair(vitality.current, vitality.max), vitality.current !== undefined),
-      detail("录像店", vhs.sale_state || vhs.status || vhs.text, Boolean(vhs.sale_state || vhs.status || vhs.text)),
+      detail("录像店", videoStoreStatus(vhs.sale_state || vhs.status || vhs.text), Boolean(vhs.sale_state || vhs.status || vhs.text)),
       detail("刮刮乐", data.card_sign === true || data.card_sign?.status ? "已完成" : "未完成", data.card_sign !== undefined),
     ].filter(Boolean)
   }
 
   return []
+}
+
+function videoStoreStatus(value) {
+  const states = {
+    SaleStateDoing: "营业中",
+    SaleStateDone: "营业已结束",
+    SaleStateCanStart: "可以开始营业",
+    SaleStateNo: "未营业",
+    SaleStateNotStart: "未营业",
+    SaleStateFinished: "营业已结束",
+  }
+  return states[value] || (/^[\w.-]+$/.test(String(value)) ? "状态待确认" : String(value || ""))
 }
 
 export function dailyNoteGameName(game) {

@@ -5,26 +5,34 @@ import { fileURLToPath } from "node:url"
 import { Canvas, FontLibrary, loadImage } from "skia-canvas"
 import { resourcesPath } from "../path.js"
 import { fetchImageBytes } from "./image.js"
+import { renderStarRailAbyss, isStarRailAbyss } from "./starrail-abyss.js"
+import { renderAtlasPage } from "./atlas-pages.js"
 
-const FONT_FAMILY = "MiSans"
-const FONT_PATH = path.join(resourcesPath, "fonts", "MiSans-VF.ttf")
+const FONT_FAMILY = "MiaoWiki"
+const FONT_PATH = path.join(resourcesPath, "miao-theme", "fonts", "HYWH-65W.ttf")
 const IMAGE_CACHE = new Map()
 const GALLERY_INDEX_CACHE = new Map()
 let fontLoaded = false
 
 const COLOR = {
-  ink: "#1f2a33",
-  sub: "#60717c",
-  blue: "#24a9d8",
-  panel: "rgba(255,255,255,0.86)",
-  panelStrong: "rgba(255,255,255,0.94)",
+  ink: "#292b33",
+  sub: "#74777e",
+  blue: "#ad8e59",
+  panel: "rgba(245,242,235,0.90)",
+  panelStrong: "rgba(249,247,242,0.96)",
   darkGlass: "rgba(0,0,0,0.34)",
   line: "rgba(255,255,255,0.55)",
 }
 
 export async function renderWithSkia(templateName, data = {}, options = {}) {
+  if (templateName === "atlas-page" || templateName === "atlas-item" && data.view) return renderAtlasPage(data, options)
   await ensureFont()
   const normalized = normalizeData(data)
+  if (templateName === "starrail-challenge" && isStarRailAbyss(normalized)) {
+    const buffer = await renderStarRailAbyss(normalized, options)
+    if (options.path) await fs.writeFile(options.path, buffer)
+    return globalThis.segment?.image ? globalThis.segment.image(buffer) : buffer
+  }
   const renderer = new SkiaRenderer(templateName, normalized, options)
   const buffer = await renderer.render()
   if (options.path) await fs.writeFile(options.path, buffer)
@@ -58,6 +66,7 @@ class SkiaRenderer {
     this.commands = []
     this.y = this.padding
     this.imageRefs = new Set()
+    this.missingImages = new Set()
     this.imageRoots = [
       data.atlasRoot,
       process.env.LOTUS_ATLAS_DATA_ROOT,
@@ -68,7 +77,7 @@ class SkiaRenderer {
 
   async render() {
     this.collectImages(this.data)
-    await Promise.all([...this.imageRefs].map(src => this.loadImage(src)))
+    await Promise.all([...this.imageRefs].map(src => loadCachedImage(src, this.imageRoots)))
 
     this.build()
     const height = Math.max(420, Math.ceil(this.y + this.padding))
@@ -82,7 +91,7 @@ class SkiaRenderer {
     const buffer = await canvas.toBuffer(this.options.imgType === "png" ? "png" : "jpeg", {
       quality: Number(this.options.quality || 96) / 100,
     })
-    this.options.onRender?.({ gpu: canvas.gpu, ...canvas.engine, width: canvas.width, height: canvas.height })
+    this.options.onRender?.({ gpu: canvas.gpu, ...canvas.engine, width: canvas.width, height: canvas.height, missingImages: [...this.missingImages] })
     return buffer
   }
 
@@ -97,6 +106,7 @@ class SkiaRenderer {
     }
     if (typeof value !== "object") return
     for (const [key, item] of Object.entries(value)) {
+      if (/^(?:raw|modules)$/.test(key)) continue
       if (/^(?:bg|image|icon|portrait|qrDataUrl)$/i.test(key) && typeof item === "string" && looksLikeImage(item)) {
         this.imageRefs.add(item)
       } else {
@@ -108,6 +118,7 @@ class SkiaRenderer {
   build() {
     if (this.templateName === "qr-login") return this.buildQr()
     if (this.templateName === "profile-card") return this.buildProfile()
+    if (this.templateName === "zzz-rank") return this.buildZzzRank()
     if (this.templateName === "daily-note-summary") return this.buildDailyNote()
     if (this.templateName === "checkin-result") return this.buildCheckinResult()
     if (this.templateName === "schedule-notice") return this.buildScheduleNotice()
@@ -125,8 +136,10 @@ class SkiaRenderer {
     return this.buildStatus()
   }
 
-  loadImage(src) {
-    return loadCachedImage(src, this.imageRoots)
+  async loadImage(src) {
+    const image = await loadCachedImage(src, this.imageRoots)
+    if (src && !image) this.missingImages.add(src)
+    return image
   }
 
   async drawBackground(ctx, width, height) {
@@ -240,6 +253,34 @@ class SkiaRenderer {
         })
       }, { fill: "rgba(255,235,190,0.92)" })
       this.y += 66
+    }
+    this.footer()
+  }
+
+  buildZzzRank() {
+    const rows = this.data.list || []
+    this.hero({ title: this.data.title || "代理人群排名", subtitle: "绝区零 · 群成员面板", badge: `${rows.length} 人`, width: this.innerWidth() })
+    if (!rows.length) this.gridItems([{ label: "暂无面板", value: "群成员尚未保存该代理人的面板。" }], 1)
+    for (const [index, row] of rows.entries()) {
+      const y = this.y, x = this.padding, width = this.innerWidth()
+      this.card(x, y, width, 172, async ctx => {
+        this.text(ctx, String(index + 1).padStart(2, "0"), x + 14, y + 16, { width: 40, size: 24, color: COLOR.blue, align: "center" })
+        const portrait = await this.loadImage(row.icon)
+        if (portrait) ctx.drawImage(portrait, x + 66, y + 14, 82, 82)
+        this.text(ctx, row.name || this.data.character, x + 162, y + 15, { width: width - 292, size: 23, color: COLOR.ink, maxLines: 1 })
+        this.text(ctx, `UID ${row.uid} · Lv${row.level} · ${row.rank ?? 0} 影`, x + 162, y + 47, { width: width - 292, size: 13, color: COLOR.sub, maxLines: 1 })
+        this.text(ctx, row.score_label, x + width - 116, y + 18, { width: 100, size: 14, color: COLOR.sub, align: "center" })
+        this.text(ctx, row.score_value, x + width - 116, y + 45, { width: 100, size: 26, color: COLOR.blue, align: "center" })
+        const labels = ["普攻", "闪避", "支援", "特殊", "连携", "核心"]
+        const skillOrder = [0, 2, 5, 1, 3, 4]
+        const skills = labels.map((label, i) => `${label} ${row.skills?.[skillOrder[i]]?.level ?? "未记录"}`).join("   ")
+        this.text(ctx, skills, x + 18, y + 112, { width: width - 36, size: 14, color: COLOR.ink, maxLines: 1 })
+        const weapon = row.weapon
+        const icon = weapon?.icon ? await this.loadImage(weapon.icon) : null
+        if (icon) ctx.drawImage(icon, x + 18, y + 137, 26, 26)
+        this.text(ctx, weapon ? `${weapon.name} · Lv${weapon.level} · ${weapon.star} 星` : "音擎未装配", x + (icon ? 52 : 18), y + 141, { width: width - 72, size: 14, color: COLOR.sub, maxLines: 1 })
+      })
+      this.y += 186
     }
     this.footer()
   }
@@ -424,7 +465,7 @@ class SkiaRenderer {
         const barWidth = Math.max(4, Math.floor(barMaxWidth * pct))
         const color = row.color || COLOR.blue
         this.text(ctx, row.char || "未知", nameX, yy + 2, { width: nameWidth, size: 16, weight: 900, color: COLOR.ink, maxLines: 1 })
-        this.roundRect(ctx, barX, yy + 4, barMaxWidth, 12, 6, "rgba(102,204,255,0.14)")
+        this.roundRect(ctx, barX, yy + 4, barMaxWidth, 12, 6, "rgba(211,188,142,0.14)")
         this.roundRect(ctx, barX, yy + 4, barWidth, 12, 6, color)
         this.text(ctx, `${formatLargeNumber(row.damage)} · ${Math.round(pct * 1000) / 10}%`, valueX, yy - 1, {
           width: valueWidth,
@@ -453,9 +494,12 @@ class SkiaRenderer {
       row.forEach((member, offset) => {
         const x = this.padding + offset * (width + gap)
         const y = this.y
-        this.card(x, y, width, height, ctx => {
+        this.card(x, y, width, height, async ctx => {
           this.roundRect(ctx, x + 14, y + 18, 54, 54, 14, elementColor(member.elem))
-          this.text(ctx, member.name || "角色", x + 80, y + 17, { width: width - 96, size: 21, weight: 950, color: "#004466", maxLines: 1 })
+          const icon = await this.loadImage(member.icon)
+          if (icon) this.drawImageContain(ctx, icon, x + 17, y + 21, 48, 48)
+          else this.text(ctx, member.name, x + 14, y + 34, { width: 54, size: 12, color: "#fff", align: "center", maxLines: 1 })
+          this.text(ctx, member.name || "角色", x + 80, y + 17, { width: width - 96, size: 21, weight: 950, color: "#414555", maxLines: 1 })
           this.text(ctx, `${member.elem || "-"} · Lv${member.level || "-"} · ${member.cons ?? 0}命`, x + 80, y + 45, {
             width: width - 96,
             size: 13,
@@ -501,7 +545,7 @@ class SkiaRenderer {
           this.roundRect(ctx, x + 14, y + 16, 58, 58, 16, elementColor(member.elem))
           if (icon) this.drawImageContain(ctx, icon, x + 17, y + 19, 52, 52)
           else this.text(ctx, String(member.name || "?").slice(0, 1), x + 14, y + 30, { width: 58, size: 24, weight: 950, color: "#fff", align: "center" })
-          this.text(ctx, member.name || "角色", x + 82, y + 15, { width: width - 98, size: 20, weight: 950, color: "#004466", maxLines: 1 })
+          this.text(ctx, member.name || "角色", x + 82, y + 15, { width: width - 98, size: 20, weight: 950, color: "#414555", maxLines: 1 })
           this.text(ctx, `${member.elem || "-"} · ${member.path || "-"} · Lv${member.level || "-"} · ${member.rank ?? 0}魂`, x + 82, y + 43, {
             width: width - 98,
             size: 13,
@@ -524,7 +568,7 @@ class SkiaRenderer {
             `击 ${stats["击破"] ?? "-"}`,
           ].join(" · ")
           this.text(ctx, statText, x + 14, y + 106, { width: width - 28, size: 12, weight: 720, color: COLOR.sub, maxLines: 1 })
-          this.text(ctx, member.panelSource || "默认模板", x + 14, y + 126, { width: width - 28, size: 11, weight: 760, color: "#006699", maxLines: 1 })
+          this.text(ctx, member.panelSource || "默认模板", x + 14, y + 126, { width: width - 28, size: 11, weight: 760, color: "#8c7044", maxLines: 1 })
         })
       })
       this.y += height + 10
@@ -545,8 +589,8 @@ class SkiaRenderer {
         const line = Math.floor(index / 2)
         const x = this.padding + 18 + col * (colW + 10)
         const yy = y + 18 + line * 34
-        this.roundRect(ctx, x, yy, 28, 24, 12, "rgba(36,169,216,0.14)")
-        this.text(ctx, String(row.order || index + 1), x, yy + 5, { width: 28, size: 12, weight: 950, color: "#006699", align: "center", maxLines: 1 })
+        this.roundRect(ctx, x, yy, 28, 24, 12, "rgba(211,188,142,0.14)")
+        this.text(ctx, String(row.order || index + 1), x, yy + 5, { width: 28, size: 12, weight: 950, color: "#8c7044", align: "center", maxLines: 1 })
         this.text(ctx, `${row.name || "-"} · ${row.actionPoints ?? "-"} 行动值`, x + 36, yy + 4, {
           width: colW - 38,
           size: 13,
@@ -576,7 +620,7 @@ class SkiaRenderer {
       let yy = y + 16
       for (const [index, row] of visible.entries()) {
         const rowH = rowHeights[index]
-        this.roundRect(ctx, this.padding + 14, yy, this.innerWidth() - 28, rowH, 14, "rgba(232,248,255,0.72)")
+        this.roundRect(ctx, this.padding + 14, yy, this.innerWidth() - 28, rowH, 14, "rgba(240,235,226,0.72)")
         const badgeColor = row.color || COLOR.blue
         this.roundRect(ctx, this.padding + 28, yy + 14, 30, 24, 12, badgeColor)
         this.text(ctx, String(row.order || index + 1), this.padding + 28, yy + 19, {
@@ -592,7 +636,7 @@ class SkiaRenderer {
           width: bodyWidth - 12,
           size: 15,
           weight: 950,
-          color: "#004466",
+          color: "#414555",
           maxLines: 1,
         })
         let lineY = yy + 43
@@ -642,7 +686,7 @@ class SkiaRenderer {
     this.card(this.padding, y, this.innerWidth(), height, ctx => {
       let yy = y + 18
       for (const row of visible) {
-        this.text(ctx, String(row.order || ""), this.padding + 18, yy, { width: 32, size: 12, weight: 900, color: "#006699", align: "center", maxLines: 1 })
+        this.text(ctx, String(row.order || ""), this.padding + 18, yy, { width: 32, size: 12, weight: 900, color: "#8c7044", align: "center", maxLines: 1 })
         this.text(ctx, row.text || "-", this.padding + 58, yy, { width: this.innerWidth() - 76, size: 12, weight: 700, color: COLOR.ink, maxLines: 1 })
         yy += 27
       }
@@ -661,7 +705,7 @@ class SkiaRenderer {
       for (const row of visible) {
         const left = type === "buff" ? `${row.time || "-"}s ${row.name || ""}` : `${row.time || "-"}s ${row.action || ""}`
         const right = type === "buff" ? row.detail || "-" : (row.values || []).join(" / ") || "-"
-        this.text(ctx, left, this.padding + 18, yy, { width: 190, size: 13, weight: 850, color: "#004466", maxLines: 1 })
+        this.text(ctx, left, this.padding + 18, yy, { width: 190, size: 13, weight: 850, color: "#414555", maxLines: 1 })
         this.text(ctx, right, this.padding + 218, yy, { width: this.innerWidth() - 240, size: 13, weight: 700, color: COLOR.ink, maxLines: 1 })
         yy += 28
       }
@@ -770,7 +814,7 @@ class SkiaRenderer {
         floor.score ? `总分 ${floor.score}` : "",
         floor.stars !== "" && floor.stars !== undefined ? `星数 ${floor.stars}` : "",
       ].filter(Boolean).join(" · ")
-      this.text(ctx, floor.title || "关卡", x + 18, y + 16, { width: this.innerWidth() - 36, size: 22, weight: 950, color: "#004466" })
+      this.text(ctx, floor.title || "关卡", x + 18, y + 16, { width: this.innerWidth() - 36, size: 22, weight: 950, color: "#414555" })
       this.text(ctx, meta, x + 18, y + 44, { width: this.innerWidth() - 36, size: 14, weight: 780, color: COLOR.sub })
       let yy = y + 78
       for (const node of nodes) {
@@ -797,12 +841,12 @@ class SkiaRenderer {
 
   async starRailNode(ctx, node = {}, x, y, width) {
     const h = this.starRailNodeHeight(node, width)
-    this.roundRect(ctx, x, y, width, h, 14, "rgba(102,204,255,0.12)")
+    this.roundRect(ctx, x, y, width, h, 14, "rgba(211,188,142,0.12)")
     const textWidth = this.starRailNodeTextWidth(width)
     const title = [node.label || "节点", hasRenderValue(node.score) ? `积分 ${node.score}` : ""].filter(Boolean).join(" ")
     const time = node.time || (hasRenderValue(node.round) ? `轮次 ${node.round}` : "")
     const defeated = node.defeated === true ? "已击败首领" : node.defeated === false ? "未击败首领" : ""
-    this.text(ctx, title, x + 12, y + 12, { width: textWidth, size: 16, weight: 920, color: "#004466", maxLines: 1 })
+    this.text(ctx, title, x + 12, y + 12, { width: textWidth, size: 16, weight: 920, color: "#414555", maxLines: 1 })
     this.text(ctx, time || "-", x + 12, y + 38, { width: textWidth, size: 13, lineHeight: 18, weight: 760, color: COLOR.sub, maxLines: 1 })
     if (defeated) this.text(ctx, defeated, x + 12, y + 60, { width: textWidth, size: 13, lineHeight: 18, weight: 820, color: COLOR.blue, maxLines: 1 })
     let xx = x + textWidth + 30
@@ -855,7 +899,7 @@ class SkiaRenderer {
     const x = this.padding
     const y = this.y
     this.card(x, y, this.innerWidth(), h, async ctx => {
-      this.text(ctx, record.title || "异相仲裁", x + 18, y + 16, { width: this.innerWidth() - 36, size: 22, weight: 950, color: "#004466", align: "center" })
+      this.text(ctx, record.title || "异相仲裁", x + 18, y + 16, { width: this.innerWidth() - 36, size: 22, weight: 950, color: "#414555", align: "center" })
       const meta = [
         record.period,
         record.bossStars !== "" ? `王棋 ${record.bossStars} 星` : "",
@@ -879,7 +923,7 @@ class SkiaRenderer {
 
   async starRailPeakEntry(ctx, card = {}, x, y, width) {
     const h = this.starRailPeakEntryHeight(card)
-    this.roundRect(ctx, x, y, width, h, 14, "rgba(102,204,255,0.12)")
+    this.roundRect(ctx, x, y, width, h, 14, "rgba(211,188,142,0.12)")
     const icon = await this.loadImage(card.icon)
     if (icon) this.drawImageContain(ctx, icon, x + 10, y + 12, 70, 70)
     else this.iconPlaceholder(ctx, x + 10, y + 12, 70, 70, "敌")
@@ -889,7 +933,7 @@ class SkiaRenderer {
       card.round ? `轮 ${card.round}` : "",
       card.time || "",
     ].filter(Boolean).join(" · ")
-    this.text(ctx, card.title || "关卡", x + 92, y + 12, { width: width - 110, size: 16, weight: 920, color: "#004466" })
+    this.text(ctx, card.title || "关卡", x + 92, y + 12, { width: width - 110, size: 16, weight: 920, color: "#414555" })
     this.text(ctx, meta, x + 92, y + 36, { width: width - 110, size: 12, weight: 750, color: COLOR.sub })
     let xx = x + 92
     let yy = y + 58
@@ -962,7 +1006,7 @@ class SkiaRenderer {
         const img = await this.loadImage(item.image)
         if (img) this.drawImageContain(ctx, img, this.padding + 16, y + 16, 62, 62)
         else this.iconPlaceholder(ctx, this.padding + 16, y + 16, 62, 62, "图")
-        this.text(ctx, item.title || "", this.padding + 96, y + 16, { width: this.innerWidth() - 116, size: 22, weight: 900, color: "#004466" })
+        this.text(ctx, item.title || "", this.padding + 96, y + 16, { width: this.innerWidth() - 116, size: 22, weight: 900, color: "#414555" })
         this.text(ctx, item.meta || "", this.padding + 96, y + 44, { width: this.innerWidth() - 116, size: 14, weight: 750, color: COLOR.sub })
         this.text(ctx, item.desc || "", this.padding + 96, y + 66, { width: this.innerWidth() - 116, size: 16, lineHeight: 23, weight: 650, color: COLOR.ink })
       })
@@ -1122,7 +1166,7 @@ class SkiaRenderer {
         width: width - 104,
         size: 20,
         weight: 950,
-        color: "#004466",
+        color: "#414555",
         maxLines: 1,
       })
       this.text(ctx, `成就 ${completed}/${total} · 原石 ${category.pointsDone || 0}/${category.pointsTotal || 0} · ${category.percent || 0}%`, x + 86, y + 46, {
@@ -1132,7 +1176,7 @@ class SkiaRenderer {
         color: COLOR.sub,
         maxLines: 1,
       })
-      this.roundRect(ctx, x + 86, y + 76, width - 118, 12, 6, "rgba(102,204,255,0.16)")
+      this.roundRect(ctx, x + 86, y + 76, width - 118, 12, 6, "rgba(211,188,142,0.16)")
       this.roundRect(ctx, x + 86, y + 76, Math.max(4, (width - 118) * pct), 12, 6, statusColor)
       this.pill(ctx, x + width - 78, y + 72, 54, 24, completed >= total && total > 0 ? "完成" : "未完", statusColor)
     }, { fill: "rgba(255,255,255,0.9)", radius: 18 })
@@ -1162,7 +1206,7 @@ class SkiaRenderer {
         width: width - 250,
         size: 22,
         weight: 950,
-        color: "#004466",
+        color: "#414555",
         maxLines: 1,
       })
       this.pill(ctx, x + width - 164, y + 18, 132, 28, `${group.completed || 0}/${group.total || 0} · ${group.pointsDone || 0}/${group.pointsTotal || 0}`, statusColor)
@@ -1193,8 +1237,8 @@ class SkiaRenderer {
 
   achievementStageRow(ctx, stage = {}, x, y, width, height) {
     const statusColor = stage.done ? "#26b875" : COLOR.blue
-    this.roundRect(ctx, x, y, width, height, 14, stage.done ? "rgba(232,248,255,0.55)" : "rgba(232,248,255,0.9)")
-    this.roundRect(ctx, x + 12, y + 14, 28, 28, 14, stage.done ? "rgba(38,184,117,0.9)" : "rgba(36,169,216,0.22)")
+    this.roundRect(ctx, x, y, width, height, 14, stage.done ? "rgba(240,235,226,0.55)" : "rgba(240,235,226,0.9)")
+    this.roundRect(ctx, x + 12, y + 14, 28, 28, 14, stage.done ? "rgba(38,184,117,0.9)" : "rgba(211,188,142,0.22)")
     this.text(ctx, stage.done ? "✓" : "", x + 12, y + 18, {
       width: 28,
       size: 15,
@@ -1208,7 +1252,7 @@ class SkiaRenderer {
       width: 168,
       size: 13,
       weight: 900,
-      color: "#006699",
+      color: "#8c7044",
       maxLines: 1,
     })
     this.text(ctx, stage.desc || stage.name || "-", x + 222, y + 12, {
@@ -1232,20 +1276,25 @@ class SkiaRenderer {
   hero({ title, subtitle, badge, message, image, width, heroHeight = 198 }) {
     const x = this.padding
     const y = this.y
-    const textX = image ? x + 198 : x + 34
+    const textX = image ? x + 190 : x + 28
     const messageWidth = width - (textX - x) - 28
+    const titleWidth = Math.max(120, messageWidth - 98)
+    const titleHeight = this.wrap(title, titleWidth, 34, Infinity, 850).length * 45
+    const subtitleHeight = this.wrap(subtitle, messageWidth, 16, Infinity, 650).length * 23
     const messageHeight = this.measureParagraph(message || "", messageWidth, 17, 26)
-    const actualHeight = Math.max(heroHeight, 128 + messageHeight, image ? 198 : 176)
+    const subtitleY = 28 + titleHeight + 10
+    const messageY = subtitleY + subtitleHeight + 12
+    const actualHeight = Math.max(heroHeight, messageY + messageHeight + 26, image ? 198 : 176)
     this.card(x, y, width, actualHeight, async ctx => {
       if (image) {
         const img = await this.loadImage(image)
         if (img) this.drawImageContain(ctx, img, x + 24, y + 24, 150, actualHeight - 48)
       }
-      this.text(ctx, title, textX, y + 28, { width: width - (textX - x) - 30, size: 38, weight: 950, color: "#fff", shadow: true })
-      this.text(ctx, subtitle, textX, y + 78, { width: width - (textX - x) - 130, size: 17, weight: 760, color: "rgba(255,255,255,0.92)", shadow: true })
+      this.text(ctx, title, textX, y + 28, { width: titleWidth, size: 34, lineHeight: 45, weight: 850, color: "#d3bc8e" })
+      this.text(ctx, subtitle, textX, y + subtitleY, { width: messageWidth, size: 16, lineHeight: 23, weight: 650, color: "rgba(255,255,255,0.82)" })
       this.pill(ctx, x + width - 112, y + 28, 84, 30, badge)
-      this.text(ctx, message, textX, y + 108, { width: messageWidth, size: 17, lineHeight: 26, weight: 650, color: "#fff", shadow: true })
-    }, { fill: "rgba(0,0,0,0.38)", radius: 30 })
+      this.text(ctx, message, textX, y + messageY, { width: messageWidth, size: 17, lineHeight: 26, weight: 650, color: "#fff" })
+    }, { fill: "rgba(20,24,36,0.70)", radius: 8 })
     this.y += actualHeight + 18
   }
 
@@ -1284,7 +1333,7 @@ class SkiaRenderer {
     const height = 96 + Math.ceil(details.length / 3) * 34 + this.measureParagraph(item.detail || "", this.innerWidth() - 38, 16)
     const y = this.y
     this.card(this.padding, y, this.innerWidth(), height, ctx => {
-      this.text(ctx, `${item.gameName || ""} ${item.uid || ""} ${item.nickname || ""}`.trim(), this.padding + 18, y + 18, { width: this.innerWidth() - 150, size: 21, weight: 900, color: "#004466" })
+      this.text(ctx, `${item.gameName || ""} ${item.uid || ""} ${item.nickname || ""}`.trim(), this.padding + 18, y + 18, { width: this.innerWidth() - 150, size: 21, weight: 900, color: "#414555" })
       this.pill(ctx, this.width - this.padding - 96, y + 16, 76, 28, item.status || (item.ok ? "正常" : "失败"), item.ok === false ? "#bb3344" : COLOR.blue)
       this.text(ctx, item.detail || "", this.padding + 18, y + 52, { width: this.innerWidth() - 36, size: 16, lineHeight: 23, weight: 650, color: COLOR.ink })
       let x = this.padding + 18
@@ -1305,7 +1354,7 @@ class SkiaRenderer {
     for (const row of rows || []) {
       const y = this.y
       this.card(this.padding, y, this.innerWidth(), 76, ctx => {
-        this.text(ctx, row.label || "", this.padding + 18, y + 16, { width: 170, size: 20, weight: 950, color: "#004466" })
+        this.text(ctx, row.label || "", this.padding + 18, y + 16, { width: 170, size: 20, weight: 950, color: "#414555" })
         this.checkinCell(ctx, this.padding + 210, y + 14, (this.innerWidth() - 246) / 2, "游戏签到", row.game)
         this.checkinCell(ctx, this.padding + 222 + (this.innerWidth() - 246) / 2, y + 14, (this.innerWidth() - 246) / 2, "社区签到", row.community)
       })
@@ -1341,7 +1390,7 @@ class SkiaRenderer {
           const icon = await this.loadImage(skill.icon)
           if (icon) this.drawImageContain(ctx, icon, x + 14, y + 16, 58, 58)
           else this.iconPlaceholder(ctx, x + 14, y + 16, 58, 58, skill.iconText || "技")
-          this.text(ctx, skill.title || "技能", x + 84, y + 16, { width: colWidth - 100, size: 20, weight: 950, color: "#004466" })
+          this.text(ctx, skill.title || "技能", x + 84, y + 16, { width: colWidth - 100, size: 20, weight: 950, color: "#414555" })
           this.text(ctx, skill.type || "", x + 84, y + 43, { width: colWidth - 100, size: 13, weight: 750, color: COLOR.sub })
           let yy = y + 74
           if (skill.desc) {
@@ -1395,7 +1444,7 @@ class SkiaRenderer {
         this.card(x, y, width, h, async ctx => {
           const icon = await this.loadImage(item.icon)
           if (icon && !item.hideIcon) this.drawImageContain(ctx, icon, x + 12, y + 14, 42, 42)
-          this.text(ctx, `${item.level || ""} ${item.title || ""}`.trim(), x + textOffset, y + 13, { width: textWidth, size: 15, weight: 900, color: "#004466" })
+          this.text(ctx, `${item.level || ""} ${item.title || ""}`.trim(), x + textOffset, y + 13, { width: textWidth, size: 15, weight: 900, color: "#414555" })
           this.text(ctx, item.desc || "", x + textOffset, y + 38, { width: textWidth, size: 13, lineHeight: 19, weight: 650, color: COLOR.ink })
         })
         ys[index] += h + 10
@@ -1417,7 +1466,7 @@ class SkiaRenderer {
       const body = item[bodyKey] || item.desc || item.body || ""
       const h = Math.max(92, this.measureParagraph(body, width - 30, 15, 22) + 58)
       this.card(x, y, width, h, ctx => {
-        this.text(ctx, title, x + 15, y + 14, { width: width - 30, size: 17, weight: 900, color: "#004466" })
+        this.text(ctx, title, x + 15, y + 14, { width: width - 30, size: 17, weight: 900, color: "#414555" })
         this.text(ctx, body, x + 15, y + 44, { width: width - 30, size: 15, lineHeight: 22, weight: 650, color: COLOR.ink })
       })
       ys[col] += h + 12
@@ -1449,15 +1498,27 @@ class SkiaRenderer {
     const subtitleH = this.measureParagraph(subtitleText, this.innerWidth() - 36, 15, 22)
     const descH = room.desc ? this.measureParagraph(room.desc, this.innerWidth() - 36, 14, 21) + 8 : 0
     const sides = (room.sides || []).filter(side => side.monsters?.length)
-    const sideH = sides.reduce((sum, side) => {
-      const rows = Math.max(1, Math.ceil((side.monsters?.length || 0) / 6))
-      return sum + rows * 104
-    }, 0)
-    const h = Math.max(128, 44 + titleH + subtitleH + descH + sideH)
+    const columns = Math.min(2, Math.max(1, sides.length))
+    const gap = 20
+    const columnWidth = (this.innerWidth() - 36 - gap * (columns - 1)) / columns
+    const perRow = Math.max(1, Math.floor(columnWidth / 116))
+    const cellWidth = columnWidth / perRow
+    const sideLayouts = sides.map(side => {
+      const rows = []
+      for (let index = 0; index < side.monsters.length; index += perRow) {
+        const monsters = side.monsters.slice(index, index + perRow)
+        rows.push({ monsters, height: 98 + Math.max(...monsters.map(monster => this.measureParagraph(monster.name || "", cellWidth - 12, 14, 19))) })
+      }
+      return { side, rows, height: 32 + rows.reduce((sum, row) => sum + row.height, 0) }
+    })
+    const sideRowHeights = []
+    for (let index = 0; index < sideLayouts.length; index += columns) sideRowHeights.push(Math.max(...sideLayouts.slice(index, index + columns).map(side => side.height)))
+    const sideH = sideRowHeights.reduce((sum, height) => sum + height + 12, 0)
+    const h = Math.max(128, 30 + titleH + subtitleH + descH + sideH)
     const x = this.padding
     const y = this.y
     this.card(x, y, this.innerWidth(), h, async ctx => {
-      this.text(ctx, room.title || "关卡", x + 18, y + 16, { width: this.innerWidth() - 36, size: 22, weight: 950, color: "#004466" })
+      this.text(ctx, room.title || "关卡", x + 18, y + 16, { width: this.innerWidth() - 36, size: 22, weight: 950, color: "#414555" })
       let yy = y + 48
       yy += this.text(ctx, subtitleText, x + 18, yy, { width: this.innerWidth() - 36, size: 15, lineHeight: 22, weight: 650, color: COLOR.ink })
       if (room.desc) {
@@ -1465,21 +1526,20 @@ class SkiaRenderer {
         yy += this.text(ctx, room.desc, x + 18, yy, { width: this.innerWidth() - 36, size: 14, lineHeight: 21, weight: 650, color: COLOR.sub })
       }
       yy += 10
-      for (const side of sides) {
-        this.text(ctx, side.label || "敌人", x + 18, yy, { width: 120, size: 15, weight: 900, color: COLOR.blue })
-        let xx = x + 120
-        let rowY = yy - 8
-        for (const monster of side.monsters || []) {
-          const icon = await this.loadImage(monster.icon)
-          if (icon) this.drawImageContain(ctx, icon, xx, rowY, 58, 58)
-          this.text(ctx, monster.name || "", xx - 10, rowY + 62, { width: 78, size: 11, lineHeight: 14, weight: 750, color: COLOR.ink, align: "center", maxLines: 2 })
-          xx += 92
-          if (xx > x + this.innerWidth() - 80) {
-            xx = x + 120
-            rowY += 104
+      for (const [index, layout] of sideLayouts.entries()) {
+        const sx = x + 18 + (index % columns) * (columnWidth + gap)
+        let sy = yy + sideRowHeights.slice(0, Math.floor(index / columns)).reduce((sum, height) => sum + height + 12, 0)
+        this.text(ctx, layout.side.label || "敌人", sx, sy, { width: columnWidth, size: 17, weight: 900, color: COLOR.blue })
+        sy += 30
+        for (const row of layout.rows) {
+          for (const [offset, monster] of row.monsters.entries()) {
+            const mx = sx + offset * cellWidth
+            const icon = await this.loadImage(monster.icon)
+            if (icon) this.drawImageContain(ctx, icon, mx + (cellWidth - 80) / 2, sy, 80, 80)
+            this.text(ctx, monster.name || "", mx + 6, sy + 86, { width: cellWidth - 12, size: 14, lineHeight: 19, weight: 750, color: COLOR.ink, align: "center" })
           }
+          sy += row.height
         }
-        yy = Math.max(rowY + 104, yy + 104)
       }
     })
     this.y += h + 12
@@ -1561,7 +1621,7 @@ class SkiaRenderer {
     const x = this.padding
     const y = this.y
     this.card(x, y, this.innerWidth(), h, async ctx => {
-      this.text(ctx, level.title || "关卡", x + 18, y + 16, { width: this.innerWidth() - 36, size: 25, weight: 950, color: "#004466", align: "center" })
+      this.text(ctx, level.title || "关卡", x + 18, y + 16, { width: this.innerWidth() - 36, size: 25, weight: 950, color: "#414555", align: "center" })
       let yy = y + 52
       if (desc) {
         yy += this.text(ctx, desc, x + 18, yy, { width: this.innerWidth() - 36, size: 14, lineHeight: 21, weight: 650, color: COLOR.sub, align: "center", maxLines: 3 })
@@ -1602,9 +1662,8 @@ class SkiaRenderer {
   async hardChallengeMonsterColumn(ctx, monster, x, y, width) {
     const icon = await this.loadImage(monster.icon)
     if (icon) this.drawImageContain(ctx, icon, x + (width - 88) / 2, y, 88, 88)
-    else this.iconPlaceholder(ctx, x + (width - 88) / 2, y, 88, 88, "敌")
     const title = [monster.side, monster.name].filter(Boolean).join(" · ")
-    let yy = y + 98
+    let yy = y + (icon ? 98 : 12)
     yy += this.text(ctx, title, x + 8, yy, { width: width - 16, size: 15, lineHeight: 20, weight: 900, color: COLOR.ink, align: "center", maxLines: 2 })
     yy += 4
     const hpLine = this.hardChallengeHpLine(monster)
@@ -1613,7 +1672,7 @@ class SkiaRenderer {
       yy += 6
     }
     for (const item of this.hardChallengeMonsterDescriptions(monster)) {
-      yy += this.text(ctx, item.label, x + 8, yy, { width: width - 16, size: 13, lineHeight: 17, weight: 900, color: "#006699", align: "center", maxLines: 1 })
+      yy += this.text(ctx, item.label, x + 8, yy, { width: width - 16, size: 13, lineHeight: 17, weight: 900, color: "#8c7044", align: "center", maxLines: 1 })
       yy += this.text(ctx, item.text, x + 8, yy, { width: width - 16, size: 13, lineHeight: 20, weight: 650, color: COLOR.ink })
       yy += 6
     }
@@ -1661,13 +1720,13 @@ class SkiaRenderer {
       34 + this.theaterIconRowsHeight(group.items || [], contentWidth, 78, 88))
     const h = Math.max(260, 122 + groupHeights.reduce((sum, height) => sum + height, 0))
     this.card(x, y, width, h, async ctx => {
-      this.text(ctx, `${overview.version || ""}${overview.difficultyLabel ? ` · ${overview.difficultyLabel}` : ""}`, x + 24, y + 18, { width: width - 48, size: 30, weight: 950, color: "#004466", align: "center" })
+      this.text(ctx, `${overview.version || ""}${overview.difficultyLabel ? ` · ${overview.difficultyLabel}` : ""}`, x + 24, y + 18, { width: width - 48, size: 30, weight: 950, color: "#414555", align: "center" })
       const meta = [overview.month, overview.period, overview.minLevel, overview.bossLimit].filter(Boolean).join(" · ")
       this.text(ctx, meta, x + 24, y + 60, { width: width - 48, size: 15, weight: 750, color: COLOR.ink, align: "center" })
       await this.drawTheaterElementChips(ctx, overview.elements || [], x + 24, y + 84, width - 48)
       let yy = y + 130
       for (const group of overview.groups || []) {
-        this.text(ctx, group.title, x + 24, yy, { width: width - 48, size: 18, weight: 950, color: "#004466", align: "center" })
+        this.text(ctx, group.title, x + 24, yy, { width: width - 48, size: 18, weight: 950, color: "#414555", align: "center" })
         yy += 30
         yy += await this.drawTheaterIconRows(ctx, group.items || [], x + 24, yy, width - 48, { itemWidth: 78, rowHeight: 88, iconSize: 50, showId: group.title.includes("阵容") || group.title.includes("挑战") })
         yy += 4
@@ -1688,7 +1747,7 @@ class SkiaRenderer {
         const x = this.padding + offset * (width + gap)
         const y = this.y
         this.card(x, y, width, rowH, async ctx => {
-          this.text(ctx, act.title || "幕次", x + 14, y + 14, { width: width - 28, size: 20, weight: 950, color: "#004466", align: "center" })
+          this.text(ctx, act.title || "幕次", x + 14, y + 14, { width: width - 28, size: 20, weight: 950, color: "#414555", align: "center" })
           this.text(ctx, act.subtitle || "", x + 14, y + 43, { width: width - 28, size: 13, weight: 800, color: "#b17900", align: "center" })
           let yy = y + 66
           if (act.monsters?.length) {
@@ -1726,10 +1785,10 @@ class SkiaRenderer {
     const total = list.length * chipW + (list.length - 1) * gap
     let xx = x + Math.max(0, (width - total) / 2)
     for (const element of list) {
-      this.roundRect(ctx, xx, y, chipW, 28, 14, "rgba(36,169,216,0.12)")
+      this.roundRect(ctx, xx, y, chipW, 28, 14, "rgba(211,188,142,0.12)")
       const icon = await this.loadImage(element.icon)
       if (icon) this.drawImageContain(ctx, icon, xx + 7, y + 4, 20, 20)
-      this.text(ctx, element.name || "", xx + (icon ? 30 : 0), y + 6, { width: icon ? 22 : chipW, size: 12, weight: 900, color: "#006699", align: icon ? "left" : "center" })
+      this.text(ctx, element.name || "", xx + (icon ? 30 : 0), y + 6, { width: icon ? 22 : chipW, size: 12, weight: 900, color: "#8c7044", align: icon ? "left" : "center" })
       xx += chipW + gap
     }
     return 28
@@ -1752,13 +1811,13 @@ class SkiaRenderer {
         const icon = await this.loadImage(item.icon || item.image)
         if (icon) this.drawImageContain(ctx, icon, iconX, rowY, iconSize, iconSize)
         else {
-          this.roundRect(ctx, iconX, rowY, iconSize, iconSize, 14, "rgba(36,169,216,0.12)")
+          this.roundRect(ctx, iconX, rowY, iconSize, iconSize, 14, "rgba(211,188,142,0.12)")
           this.text(ctx, item.name?.slice?.(0, 1) || "?", iconX, rowY + iconSize / 2 - 13, { width: iconSize, size: 20, weight: 950, color: COLOR.blue, align: "center" })
         }
         const labelLines = options.showId ? 1 : options.maxLabelLines || 2
         this.text(ctx, item.name || "", itemX + 2, rowY + iconSize + 5, { width: itemWidth - 4, size: 10, lineHeight: 13, weight: 800, color: COLOR.ink, align: "center", maxLines: labelLines })
         if (options.showId && item.id) {
-          this.text(ctx, item.id, itemX + 2, rowY + iconSize + 20, { width: itemWidth - 4, size: 10, weight: 950, color: "#006699", align: "center", maxLines: 1 })
+          this.text(ctx, item.id, itemX + 2, rowY + iconSize + 20, { width: itemWidth - 4, size: 10, weight: 950, color: "#8c7044", align: "center", maxLines: 1 })
         }
       }
     }
@@ -1782,7 +1841,7 @@ class SkiaRenderer {
       return Math.max(28, ...cellHeights.map(height => height + 10))
     })
     const totalH = headerH + rowHeights.reduce((sum, height) => sum + height, 0)
-    this.roundRect(ctx, x, y, width, totalH, 10, "rgba(232,248,255,0.78)")
+    this.roundRect(ctx, x, y, width, totalH, 10, "rgba(240,235,226,0.78)")
     ctx.strokeStyle = "rgba(0,68,102,0.14)"
     ctx.lineWidth = 1
     let xx = x
@@ -1799,7 +1858,7 @@ class SkiaRenderer {
     ctx.stroke()
     let cursorX = x
     headers.forEach((head, index) => {
-      this.text(ctx, head, cursorX + 4, y + 5, { width: widths[index] - 8, size: 10, lineHeight: 14, weight: 900, color: "#006699", align: "center" })
+      this.text(ctx, head, cursorX + 4, y + 5, { width: widths[index] - 8, size: 10, lineHeight: 14, weight: 900, color: "#8c7044", align: "center" })
       cursorX += widths[index]
     })
     let yy = y + headerH
@@ -1812,7 +1871,7 @@ class SkiaRenderer {
         ctx.stroke()
       }
       let cellX = x
-      this.text(ctx, row.label || "", cellX + 4, yy + 5, { width: widths[0] - 8, size: 9, lineHeight: 13, weight: 900, color: "#006699", align: "center" })
+      this.text(ctx, row.label || "", cellX + 4, yy + 5, { width: widths[0] - 8, size: 9, lineHeight: 13, weight: 900, color: "#8c7044", align: "center" })
       cellX += widths[0]
       normalizeTableRowValues(row, headers.length).forEach((value, index) => {
         this.text(ctx, value, cellX + 4, yy + 5, { width: widths[index + 1] - 8, size: 9, lineHeight: 13, color: COLOR.ink, align: "center" })
@@ -1851,7 +1910,7 @@ class SkiaRenderer {
       pair.forEach((row, offset) => {
         const xx = x + offset * (colW + 8)
         const yy = y + offsetY
-        this.roundRect(ctx, xx, yy, colW, rowH, 8, "rgba(232,248,255,0.78)")
+        this.roundRect(ctx, xx, yy, colW, rowH, 8, "rgba(240,235,226,0.78)")
         this.text(ctx, `${row.level} ${row.text}`, xx + 8, yy + 8, { width: colW - 16, size: 11, lineHeight: 15, color: COLOR.ink })
       })
       offsetY += rowH + 8
@@ -1883,18 +1942,18 @@ class SkiaRenderer {
       ctx.font = `950 18px ${FONT_FAMILY}, sans-serif`
       const textW = Math.min(width, Math.max(140, ctx.measureText(title).width + 54))
       ctx.restore()
-      this.roundRect(ctx, x, y, textW, 34, 17, "rgba(255,255,255,0.88)")
+      this.roundRect(ctx, x, y, textW, 34, 6, "rgba(245,241,231,0.92)")
       this.roundRect(ctx, x + 14, y + 8, 8, 18, 99, COLOR.blue)
-      this.text(ctx, title, x + 32, y + 8, { width: textW - 44, size: 18, weight: 950, color: "#004466" })
+      this.text(ctx, title, x + 32, y + 8, { width: textW - 44, size: 18, weight: 950, color: "#414555" })
     })
   }
 
   card(x, y, width, height, draw, options = {}) {
     this.commands.push(async ctx => {
-      this.roundRect(ctx, x, y, width, height, options.radius || 20, options.fill || COLOR.panelStrong)
+      this.roundRect(ctx, x, y, width, height, options.radius || 12, options.fill || COLOR.panelStrong)
       ctx.strokeStyle = COLOR.line
       ctx.lineWidth = 1
-      this.roundRectStroke(ctx, x, y, width, height, options.radius || 20)
+      this.roundRectStroke(ctx, x, y, width, height, options.radius || 12)
       await draw(ctx)
     })
   }
@@ -1969,12 +2028,12 @@ class SkiaRenderer {
   }
 
   smallChip(ctx, x, y, text) {
-    this.roundRect(ctx, x, y, 200, 26, 13, "rgba(102,204,255,0.16)")
-    this.text(ctx, text, x + 10, y + 6, { width: 180, size: 12, weight: 800, color: "#006699" })
+    this.roundRect(ctx, x, y, 200, 26, 13, "rgba(211,188,142,0.16)")
+    this.text(ctx, text, x + 10, y + 6, { width: 180, size: 12, weight: 800, color: "#8c7044" })
   }
 
   iconPlaceholder(ctx, x, y, w, h, text) {
-    this.roundRect(ctx, x, y, w, h, 16, "rgba(102,204,255,0.16)")
+    this.roundRect(ctx, x, y, w, h, 16, "rgba(211,188,142,0.16)")
     this.text(ctx, text, x, y + h / 2 - 13, { width: w, size: 22, weight: 950, color: COLOR.blue, align: "center" })
   }
 
@@ -2036,6 +2095,7 @@ async function loadCachedImage(src, imageRoots = []) {
   if (!src || typeof src !== "string") return null
   const resolved = normalizeImageSource(src, imageRoots)
   const key = resolved
+  if (IMAGE_CACHE.size >= 128 && !IMAGE_CACHE.has(key)) IMAGE_CACHE.delete(IMAGE_CACHE.keys().next().value)
   if (IMAGE_CACHE.has(key)) return IMAGE_CACHE.get(key)
   const promise = (async () => loadImage(/^https?:\/\//i.test(resolved) ? await fetchImageBytes(resolved) : resolved))().catch(error => {
     if (error?.code !== "ENOENT") {
@@ -2050,6 +2110,7 @@ async function loadCachedImage(src, imageRoots = []) {
 function normalizeImageSource(src, imageRoots = []) {
   if (src.startsWith("file://")) return fileURLToPath(src)
   if (/^(?:data:image\/|https?:\/\/)/i.test(src)) return src
+  if (/^\/?meta-(?:gs|sr)\//.test(src)) return path.join(process.cwd(), "plugins", "miao-plugin", "resources", src.replace(/^\//, ""))
   if (path.isAbsolute(src)) return src
   for (const root of imageRoots) {
     const candidate = path.join(root, src)
@@ -2201,7 +2262,7 @@ function elementColor(elem = "") {
   if (/风|anemo/i.test(key)) return "rgba(67,181,151,0.82)"
   if (/岩|geo/i.test(key)) return "rgba(205,154,61,0.82)"
   if (/草|dendro/i.test(key)) return "rgba(109,179,82,0.82)"
-  return "rgba(102,204,255,0.78)"
+  return "rgba(211,188,142,0.78)"
 }
 
 function formatShortNumber(value) {

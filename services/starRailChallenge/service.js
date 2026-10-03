@@ -1,6 +1,7 @@
 import crypto from "node:crypto"
 import { deviceHeaders } from "../../core/devices/service.js"
 import { getDs2 } from "../../core/mihoyo/ds.js"
+import { starRailCharacterName } from "../../core/mihoyo/starrailCharacters.js"
 import { isCnServer, resolveServer } from "../../core/mihoyo/regions.js"
 import { getRoleUid, pickRole } from "../pluginBridge/common.js"
 
@@ -370,7 +371,8 @@ function formatPeakRecord(record = {}, root = {}) {
 
 function formatAvatar(avatar = {}) {
   return {
-    name: avatar.name_mi18n || avatar.name || "",
+    id: avatar.id ?? avatar.avatar_id ?? "",
+    name: avatar.name_mi18n || avatar.name || starRailCharacterName(avatar.id ?? avatar.avatar_id),
     icon: avatar.icon || "",
     rarity: avatar.rarity || "",
     rank: avatar.rank ?? "",

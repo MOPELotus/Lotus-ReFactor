@@ -4,7 +4,18 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { parse as parseYaml } from "yaml"
 import { loadGlobalConfig } from "../../core/config/global.js"
-import { rootPath } from "../../core/path.js"
+import { rootPath, resourcesPath } from "../../core/path.js"
+import { plainGameText } from "../../core/render/plain-text.js"
+import { createRequire } from "node:module"
+
+const CHARACTER_FACTS = createRequire(import.meta.url)("../../resources/miao-theme/character-facts.json")
+const RELIC_PARTS = createRequire(import.meta.url)("../../resources/miao-theme/relic-parts/index.json")
+const PORTRAITS = createRequire(import.meta.url)("../../resources/miao-theme/portraits/index.json")
+
+function characterReference(meta, list, detail, entry = {}) {
+  if ((meta.pageFolder || entry.page) !== "角色") return null
+  return CHARACTER_FACTS[meta.gameId]?.[String(meta.recordId || entry.id || list.id || detail.id || "")] || null
+}
 
 const GAME_LABELS = {
   gi: "原神",
@@ -422,6 +433,23 @@ export class NanokaAtlasService {
     const locale = options.locale || config.locale || "简体中文"
     const index = await loadAtlasIndex(root, locale, this.fs)
     return index.modules
+  }
+
+  // Enumerate every retained record through the same adapter used by queries.
+  // Audits and previews must cover dependency pages as well as name shortcuts.
+  async * items(options = {}) {
+    const config = this.config || (await loadGlobalConfig()).atlas || {}
+    const root = resolveAtlasRoot(options.dataRoot || config.data_root)
+    const locale = options.locale || config.locale || "简体中文"
+    const index = await loadAtlasIndex(root, locale, this.fs)
+    for (const entry of index.entries) {
+      try {
+        const item = await readAtlasItem(entry.file, root, this.fs, entry)
+        yield { ok: true, root, locale, results: [item], template: item.template, query: item.title }
+      } catch (error) {
+        yield { ok: false, file: entry.file, game: entry.game, page: entry.page, error: error.message }
+      }
+    }
   }
 
   async sampleResults(options = {}) {
@@ -1262,10 +1290,12 @@ async function readAtlasItem(file, root, fsImpl, entry = {}) {
   const meta = json.meta || {}
   const list = json.content?.list || {}
   const detail = json.content?.detail || {}
-  const title = displayTitle(meta, list, detail, entry)
+  const title = cleanText(displayTitle(meta, list, detail, entry))
   const page = meta.pageFolder || entry.page || meta.pageId || ""
   const imageResolver = createImageResolver(root, meta.images, meta.gameId)
-  const image = resolveImage(root, meta.images)
+  const image = page === "角色"
+    ? imageResolver.first([/^icon$/, /^detail\.icon$/, /^derived\.avatarDrawCard$/, /^detail\.partner_info\.role_icon$/, /^(?:detail\.)?skin\.[^.]+\.image$/])
+    : resolveImage(root, meta.images)
   const challengePage = CHALLENGE_PAGE_NAMES.has(page)
   const item = {
     title,
@@ -1306,11 +1336,23 @@ async function readAtlasItem(file, root, fsImpl, entry = {}) {
   item.facts = extractFacts(meta, list, detail, item)
   item.sections = extractSections(item, list, detail)
   item.view = buildItemView(item, list, detail, imageResolver)
+  item.view = normalizeVisibleText(item.view)
+  item.sections = normalizeVisibleText(item.sections)
+  item.facts = normalizeVisibleText(item.facts)
   return item
 }
 
+function normalizeVisibleText(value, key = "") {
+  if (typeof value === "string") return /^(?:icon|image|portrait|source|atlasRoot|file|id|version)$/.test(key) ? value : cleanText(value)
+  if (Array.isArray(value)) return value.map(item => normalizeVisibleText(item, key))
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, normalizeVisibleText(item, key)]))
+  return value
+}
+
 function displayTitle(meta, list, detail, entry) {
-  if (meta.pageFolder === "角色" && detail.partner_info?.full_name) return String(detail.partner_info.full_name)
+  const reference = characterReference(meta, list, detail, entry)
+  if (reference?.name) return reference.name
+  if (meta.pageFolder === "角色" && plainGameText(detail.partner_info?.full_name)) return plainGameText(detail.partner_info.full_name)
   if (["圣遗物", "遗器套装", "驱动盘"].includes(meta.pageFolder) && detail.affix?.[0]?.name) {
     return String(detail.affix[0].name)
   }
@@ -1318,17 +1360,21 @@ function displayTitle(meta, list, detail, entry) {
 }
 
 function displayRarity(meta, list, detail, entry) {
-  if (meta.pageFolder === "角色" && meta.gameId === "zzz") {
+  const reference = characterReference(meta, list, detail, entry)
+  if (reference?.rarity) return reference.rarity
+  if (meta.gameId === "zzz" && ["角色", "音擎", "邦布"].includes(meta.pageFolder || entry.page)) {
     const rank = Number(detail.rarity ?? list.rank ?? entry.rarity)
-    if (rank === 3) return "四星"
-    if (rank === 4) return "五星"
+    if (rank === 2) return (meta.pageFolder || entry.page) === "音擎" ? "B级" : "资料待核对"
+    if (rank === 3) return "A级"
+    if (rank === 4) return "S级"
+    return /^[AS]级$/.test(meta.rarity || "") ? meta.rarity : "资料待核对"
   }
   return meta.rarity || entry.rarity || list.rank && `${list.rank}星` || list.rarity && `${list.rarity}星` || ""
 }
 
 function resolveImage(root, images = []) {
   const picked = images.find(item => item?.localPath && item.status === "downloaded" && !item.placeholder)
-    || images.find(item => item?.localPath)
+    || images.find(item => item?.localPath && !item.placeholder && item.status !== "failed")
   if (!picked?.localPath) return ""
   return pathToFileURL(path.join(root, picked.localPath)).href
 }
@@ -1362,7 +1408,11 @@ function createImageResolver(root, images = [], gameId = "") {
   return {
     first(patterns = []) {
       const list = Array.isArray(patterns) ? patterns : [patterns]
-      return entries.find(entry => list.some(pattern => match(entry, pattern)))?.url || ""
+      for (const pattern of list) {
+        const hit = entries.find(entry => match(entry, pattern) || entry.originalValue === String(pattern))
+        if (hit) return hit.url
+      }
+      return ""
     },
     all(patterns = [], limit = 20) {
       const list = Array.isArray(patterns) ? patterns : [patterns]
@@ -2055,7 +2105,7 @@ function buildItemView(item, list, detail, images) {
     versionLabel: item.version ? `图鉴版本 ${item.version}` : "",
     image: item.image,
     description: cleanText(item.description),
-    meta: buildViewMeta(item, list, detail),
+    meta: verifiedViewMeta(item, list, detail),
     stats: extractStatFacts(item, detail),
     materials: extractMaterialObjects(item, detail, images),
   }
@@ -2077,21 +2127,25 @@ function buildItemView(item, list, detail, images) {
 
   if (base.kind === "character") {
     const skills = extractSkillCards(item, detail, images)
+    const portraitKey = `gi-${String(item.raw?.meta?.recordId || item.id).split("-")[0]}`
+    const portraitFile = item.game === "原神" && PORTRAITS[portraitKey]
     return {
       ...base,
-      portrait: images.first(["derived.avatarDrawCard", "detail.skin", "detail.partner_info.role_icon", "detail.icon", "icon"]) || item.image,
+      portrait: portraitFile ? pathToFileURL(path.join(resourcesPath, "miao-theme", "portraits", portraitFile)).href
+        : images.first(["derived.avatarDrawCard", "detail.skin", "detail.partner_info.role_icon"]),
       skills,
       skillColumns: item.game === "原神" ? [skills] : splitCardsBalanced(skills, 2),
       constellations: extractConstellationCards(item, list, detail, images),
       passives: extractPassiveCards(item, detail, images),
       enhancements: extractEnhancementCards(item, detail, images),
+      materialGroups: extractMaterialGroups(item, detail, images),
     }
   }
 
   if (base.kind === "weapon") {
     return {
       ...base,
-      refinements: combineVariantCards(extractRefinementCards(item, detail)),
+      refinements: extractRefinementCards(item, detail),
       story: cleanText(detail.story || detail.background),
     }
   }
@@ -2171,11 +2225,27 @@ function buildViewMeta(item, list, detail) {
     { label: "图鉴版本", value: item.version },
     { label: "ID", value: item.id },
     { label: "类型", value: valueLabel(detail.weapon_type || detail.weapon_type_name || list.type || detail.type) },
-    { label: "属性", value: valueLabel(detail.element_type || detail.special_element_type?.title || detail.element || list.element) },
+    { label: "属性", value: valueLabel(detail.element_type || detail.special_element_type?.title || detail.damage_type || detail.element || list.element) },
     { label: "阵营", value: valueLabel(detail.camp || detail.partner_info?.camp || list.camp) },
     { label: "命途", value: valueLabel(detail.base_type || detail.path || list.base_type) },
     { label: "生日", value: detail.partner_info?.birthday },
   ].filter(item => item.value)
+}
+
+function verifiedViewMeta(item, list, detail) {
+  const meta = buildViewMeta(item, list, detail)
+  const reference = CHARACTER_FACTS[GAME_IDS_BY_LABEL[item.game]]?.[item.id]
+  if (item.page !== "角色" || !reference) return meta
+  const set = (label, value) => {
+    if (!value) return
+    const entry = meta.find(entry => entry.label === label)
+    if (entry) entry.value = value
+    else meta.push({ label, value })
+  }
+  set("属性", reference.element)
+  set(item.game === "星铁" ? "命途" : "类型", reference.type)
+  set("阵营", reference.camp)
+  return meta
 }
 
 function extractSkillCards(item, detail, images) {
@@ -2207,15 +2277,34 @@ function extractGenshinSkillCards(skills, images) {
 function extractHsrSkillCards(skills, skillTrees, images) {
   return toArray(skills).map((skill, index) => {
     const levels = numericValues(skill.level)
-    const levelRows = compressLevelRows(levels, level => cleanText(skill.desc, level.param_list))
+    const levelRows = levels.map(level => ({ level: `Lv${level.level}`, text: cleanText(skill.desc, level.param_list) }))
+    const matrix = buildHsrDescriptionMatrix(levelRows)
     return {
       title: skill.name || "技能",
-      type: skill.type_name || skill.type || "",
+      type: valueLabel(skill.type_name || skill.type || ""),
       icon: findHsrSkillIcon(skill, skillTrees, index, images),
-      desc: cleanText(skill.simple_desc || skill.desc, levels[0]?.param_list || []),
-      levelRows,
+      desc: matrix ? levelRows[0].text : cleanText(skill.simple_desc || skill.desc, levels[0]?.param_list || []),
+      levelRows: matrix ? [] : levelRows,
+      tables: matrix ? [matrix] : [],
     }
   }).filter(card => card.title || card.desc)
+}
+
+function buildHsrDescriptionMatrix(levelRows) {
+  if (levelRows.length < 2) return null
+  const skeletons = levelRows.map(row => row.text.replace(NUMERIC_TOKEN_RE, "{}"))
+  if (new Set(skeletons).size !== 1) return null
+  const matches = [...levelRows[0].text.matchAll(/[-+]?\d+(?:\.\d+)?%?/g)]
+  const tokens = levelRows.map(row => row.text.match(NUMERIC_TOKEN_RE) || [])
+  const rows = matches.flatMap((match, index) => {
+    const values = tokens.map(row => row[index] || "")
+    if (new Set(values).size < 2) return []
+    // Use surrounding effect words rather than displaying internal parameter IDs.
+    const before = levelRows[0].text.slice(0, match.index).split(/[，。；\n]/).at(-1).slice(-18)
+    const after = levelRows[0].text.slice(match.index + match[0].length).split(/[，。；\n]/)[0].slice(0, 12)
+    return [{ label: `${before}…${after}` || "等级效果", values }]
+  })
+  return rows.length ? { title: "等级倍率（说明按 Lv1 展示）", headers: ["效果", ...levelRows.map(row => row.level)], rows } : null
 }
 
 function compressLevelRows(levels, textForLevel) {
@@ -2265,12 +2354,12 @@ function findHsrSkillIcon(skill, skillTrees = {}, index = 0, images) {
   for (const group of groups) {
     for (const point of Object.values(group || {})) {
       const ids = toArray(point?.level_up_skill_id).map(Number)
-      if (point?.icon && skillId && ids.includes(skillId)) return point.icon
+      if (point?.icon && skillId && ids.includes(skillId)) return images.first([point.icon]) || images.localAsset(point.icon)
     }
   }
   for (const group of groups) {
     const point = Object.values(group || {}).find(item => item?.icon)
-    if (point?.icon) return point.icon
+    if (point?.icon) return images.first([point.icon]) || images.localAsset(point.icon)
   }
   return images.first([`detail.skill_trees.${preferredKey}.1.icon`, /detail\.skill_trees\.point\d+\.1\.icon/])
 }
@@ -2486,7 +2575,7 @@ function extractEnhancementCards(item, detail, images) {
       if (!point?.point_desc) continue
       cards.push({
         title: point.point_name || "行迹能力",
-        icon: point.icon || images.first([`detail.skill_trees.${String(point.anchor || "").toLowerCase()}`, point.icon].filter(Boolean)),
+        icon: images.first([point.icon, `detail.skill_trees.${String(point.anchor || "").toLowerCase()}`].filter(Boolean)) || images.localAsset(point.icon),
         desc: cleanText(point.point_desc, point.param_list),
       })
     }
@@ -2522,46 +2611,12 @@ function extractRefinementCards(item, detail) {
   }
   if (item.game === "绝区零") {
     return numericValues(detail.talents).map((talent, index) => ({
-      level: `${index + 1}星`,
+      level: `改装等级 ${index + 1}`,
       title: talent.name || "",
       desc: cleanText(talent.desc, talent.param || talent.param_list),
     }))
   }
   return []
-}
-
-function combineVariantCards(cards) {
-  const list = toArray(cards).filter(card => card?.desc || card?.title)
-  if (list.length <= 1) return list
-  const title = list.find(card => card.title)?.title || ""
-  const mergedDesc = compressVariantDescriptions(list)
-  if (!mergedDesc) return list
-  return [{
-    level: list.map(card => card.level).filter(Boolean).join(" / "),
-    title,
-    desc: mergedDesc,
-  }]
-}
-
-function compressVariantDescriptions(cards) {
-  const first = cards[0]?.desc || ""
-  if (!first) return ""
-  const valuesByIndex = []
-  let pattern = first
-  const numberPattern = /[-+]?\d+(?:\.\d+)?%?/g
-  const firstNumbers = first.match(numberPattern) || []
-  if (!firstNumbers.length) return cards.map(card => `${card.level}：${card.desc}`).join("\n")
-
-  for (let index = 0; index < firstNumbers.length; index++) {
-    const column = cards.map(card => (card.desc || "").match(numberPattern)?.[index]).filter(Boolean)
-    if (column.length === cards.length && new Set(column).size > 1) valuesByIndex[index] = column
-  }
-  firstNumbers.forEach((number, index) => {
-    const variants = valuesByIndex[index]
-    if (!variants) return
-    pattern = pattern.replace(number, variants.join("/"))
-  })
-  return pattern
 }
 
 function extractRelicEffectCards(detail, list = {}) {
@@ -2594,10 +2649,17 @@ function extractRelicEffectCards(detail, list = {}) {
 }
 
 function extractRelicParts(item, detail, images) {
-  return Object.entries(detail.parts || {}).map(([key, part]) => ({
-    name: part.name || key,
-    icon: images.first([`detail.parts.${key}.icon`, key, part.icon]) || relicPartIconName(item, key),
-  }))
+  const game = item.game === "原神" ? "gs" : item.game === "星铁" ? "sr" : "zzz"
+  return Object.entries(detail.parts || {}).map(([key, part]) => {
+    const reference = RELIC_PARTS[`${game}-${key}`]
+    const bundled = reference && path.join(resourcesPath, "miao-theme", "relic-parts", reference.file)
+    return {
+      name: part.name || reference?.name || "套装部件",
+      icon: images.first([`detail.parts.${key}.icon`, part.icon].filter(Boolean))
+        || images.localAsset([`itemfigures/${key}`, relicPartIconName(item, key)])
+        || (bundled && existsSync(bundled) ? pathToFileURL(bundled).href : ""),
+    }
+  })
 }
 
 function relicPartIconName(item, key) {
@@ -2957,10 +3019,14 @@ function monsterCard(monster, icon = "", weakness = null, item = null, context =
     indexed?.list,
   ], ["desc", "description", "describe", "monster_desc", "intro", "effect"])
   const buffText = monsterBuffText(monster)
+  const resolvedIcon = icon || indexed?.image || (item?.atlasRoot
+    ? createImageResolver(item.atlasRoot, [], GAME_IDS_BY_LABEL[item.game]).localAsset([monsterIconName(monster?.id), `monsterfigure/${monsterIconName(monster?.id)}`])
+    : "")
   return {
     id: monster?.id ? normalizeMonsterId(monster.id) : indexed?.id || "",
     name: cleanText(monster?.name || monster?.title || indexed?.name || (monster?.id ? `敌人 ${normalizeMonsterId(monster.id)}` : "敌人")),
-    icon: icon || indexed?.image || monsterIconName(monster?.id),
+    icon: resolvedIcon,
+    imageMissing: !resolvedIcon,
     hp,
     level: monster?.level ? `Lv${monster.level}` : context.level || "",
     weakness: valueLabel(weakness || monster?.monster_weakness),
@@ -3085,7 +3151,22 @@ function extractMaterialObjects(item, detail, images) {
   collectMaterials(detail.materials, materials)
   collectMaterials(detail.ascension?.materials || detail.ascension?.mats || detail.ascension, materials)
   collectMaterials(detail.promote?.materials || detail.promote?.mats, materials)
-  return mergeMaterials(materials, item, images).slice(0, 24)
+  return mergeMaterials(materials, item, images)
+}
+
+function extractMaterialGroups(item, detail, images) {
+  const groups = []
+  const labels = { ascensions: "角色突破材料", talents: "天赋升级材料", promote: "晋阶材料", materials: "养成材料" }
+  for (const [key, value] of Object.entries(detail.materials || {})) {
+    const materials = []; collectMaterials(value, materials)
+    const items = mergeMaterials(materials, item, images)
+    if (!items.length) continue
+    let cost = 0
+    const visit = value => { if (!value || typeof value !== "object") return; cost += Number(value.cost || 0); for (const child of Object.values(value)) if (typeof child === "object") visit(child) }
+    visit(value)
+    groups.push({ title: labels[key] || "养成材料", items, cost: cost ? `${item.game === "原神" ? "摩拉" : item.game === "绝区零" ? "丁尼" : "信用点"} × ${cost.toLocaleString("en-US")}` : "" })
+  }
+  return groups
 }
 
 function collectMaterials(value, target) {
@@ -3150,7 +3231,7 @@ function resolveMaterialIcon(material, item, images) {
     if (gameId === "hsr") names.push(`ItemIcon_${material.id}`, `IconItem_${material.id}`, String(material.id))
     if (gameId === "zzz") names.push(`Item_${material.id}`, `Icon_Item_${material.id}`, String(material.id))
   }
-  return images.first(names) || names[0] || ""
+  return images.first(names) || images.localAsset(names) || ""
 }
 
 function extractSkillLines(item, detail) {
@@ -3981,12 +4062,12 @@ function dedupeSections(sections) {
 function firstText(values) {
   for (const value of values) {
     const text = cleanText(value)
-    if (text) return text.slice(0, 420)
+    if (text) return text
   }
   return ""
 }
 
-function cleanText(value, params = []) {
+export function cleanText(value, params = []) {
   if (value == null) return ""
   if (Array.isArray(value)) return value.map(item => cleanText(item, params)).filter(Boolean).join("\n")
   if (typeof value === "object") {
@@ -3996,7 +4077,7 @@ function cleanText(value, params = []) {
     if (value.name) return cleanText(value.name)
     return ""
   }
-  return localizeInlineText(formatGameText(String(value), params)
+  return plainGameText(localizeInlineText(formatGameText(String(value), params)
     .replace(/<color=[^>]+>/gi, "")
     .replace(/<\/?color>/gi, "")
     .replace(/<\/?(?:unbreak|u|i|b)>/gi, "")
@@ -4007,7 +4088,7 @@ function cleanText(value, params = []) {
     .replace(/\/?\s*\(test\)/gi, "")
     .replace(/\\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]{2,}/g, " "))
+    .replace(/[ \t]{2,}/g, " ")))
     .trim()
 }
 
@@ -4039,7 +4120,7 @@ function pushRichText(parts, value) {
 
 function iconMapLabel(token = "") {
   const key = String(token || "").trim()
-  return ZZZ_ICON_MAP_LABELS[key] || key.replace(/^Icon_/, "").replace(/_/g, " ")
+  return ZZZ_ICON_MAP_LABELS[key] || "技能操作"
 }
 
 function localizeInlineText(text) {
@@ -4071,7 +4152,10 @@ function localizeInlineText(text) {
 
 function valueLabel(value) {
   if (value == null || value === "") return ""
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return localizeInlineText(String(value))
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    const labels = { Warrior: "毁灭", Rogue: "巡猎", Mage: "智识", Shaman: "同谐", Warlock: "虚无", Knight: "存护", Priest: "丰饶", Memory: "记忆", Elation: "欢愉", MazeNormal: "地图攻击", Normal: "普攻", BPSkill: "战技", Ultra: "终结技", Talent: "天赋", Maze: "秘技" }
+    return labels[value] || cleanText(value)
+  }
   if (Array.isArray(value)) return value.map(valueLabel).filter(Boolean).slice(0, 5).join(" / ")
   if (typeof value === "object") {
     if (value.name) return value.name

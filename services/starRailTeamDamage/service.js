@@ -92,7 +92,7 @@ export class StarRailTeamDamageService {
       roles: systemRoles,
       aliases: this.aliases,
     })
-    const { player, profiles, Character } = await this.loadPlayerProfiles(uid).catch(error => {
+    const { player, profiles, Character, Weapon } = await this.loadPlayerProfiles(uid).catch(error => {
       globalThis.logger?.debug?.(`[Lotus-Plugin] starrail team damage miao profile skipped: ${error.message}`)
       return { player: null, profiles: {}, Character: null }
     })
@@ -101,7 +101,7 @@ export class StarRailTeamDamageService {
       const profileRole = findStarRailProfile({ player, profiles, Character, roleInfo })
       const panel = extractStarRailPanel(profileRole, roleInfo, uid)
       if (panel) panelDataById[String(roleInfo.item_id)] = panel
-      return buildSelectedRole(roleInfo, profileRole, panel)
+      return buildSelectedRole(roleInfo, profileRole, panel, Weapon)
     })
 
     const result = await this.engine.calculate({
@@ -133,12 +133,13 @@ export class StarRailTeamDamageService {
   }
 
   async loadPlayerProfiles(uid) {
-    const { Player, Character } = await this.loadMiaoModels()
+    const { Player, Character, Weapon } = await this.loadMiaoModels()
     const player = Player.create(uid, "sr")
     return {
       player,
       profiles: player?.getProfiles?.() || {},
       Character,
+      Weapon,
     }
   }
 }
@@ -463,9 +464,14 @@ function normalizeProfileWeapon(weapon = {}) {
   }
 }
 
-function buildSelectedRole(role = {}, profile = null, panel = null) {
+function buildSelectedRole(role = {}, profile = null, panel = null, Weapon = null) {
   const attr = profile?.attr || {}
   const weapon = profile?.weapon || {}
+  const templateWeapon = role.dps_template?.weapon || {}
+  let weaponName = weapon.name || templateWeapon.name || ""
+  if (!weaponName && templateWeapon.id) {
+    try { weaponName = Weapon?.get?.(templateWeapon.id, "sr")?.name || "" } catch {}
+  }
   return {
     id: role.item_id,
     name: cleanRoleName(role.nick_name || role.name || profile?.name || role.item_id),
@@ -473,7 +479,7 @@ function buildSelectedRole(role = {}, profile = null, panel = null) {
     path: PATH_LABELS[role.profession] || role.profession || "-",
     level: profile?.level || panel?.level || role.dps_template?.level || 80,
     rank: profile?.cons ?? panel?.rank ?? role.dps_template?.rank ?? 0,
-    weapon: weapon.name || role.dps_template?.weapon?.name || role.dps_template?.weapon?.id || "-",
+    weapon: weaponName || "光锥资料未记录",
     weaponLevel: weapon.level || panel?.weapon?.level || 80,
     weaponRank: weapon.affix || panel?.weapon?.rankLevel || role.dps_template?.weapon?.rankLevel || 1,
     icon: role.avatar || role.long_avatar || role.role_picture || "",
