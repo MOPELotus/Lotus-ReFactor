@@ -81,6 +81,16 @@ export function buildProfileCardData(profile, profiles = []) {
       { label: "星铁", value: roleText(roleCounts.sr, currentUid.sr) },
       { label: "绝区零", value: roleText(roleCounts.zzz, currentUid.zzz) },
     ],
+    roleGroups: [["gs", "原神"], ["sr", "星铁"], ["zzz", "绝区零"]].map(([game, label]) => ({
+      label,
+      rows: (Array.isArray(account.game_roles?.[game]) ? account.game_roles[game] : []).map(role => ({
+        uid: String(role.uid || role.game_uid || ""),
+        name: role.nickname || role.region_name || "",
+        level: role.level,
+        active: String(role.uid || role.game_uid) === String(currentUid[game]),
+        image: role.game_head_icon || role.avatar_url || "",
+      })),
+    })),
     settings: [
       ...gameSettingRows(games, bbs),
       os.enable ? { label: "国际服", value: `${os.lang || "zh-cn"} · ${os.cookie ? "已保存" : "未保存"}` } : null,

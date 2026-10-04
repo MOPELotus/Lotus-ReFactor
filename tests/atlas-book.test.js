@@ -20,13 +20,17 @@ test('game markup retains readable controls, link text, numbers and arithmetic',
  assert.equal(cleanText('{CAL:process.exit(1),1,2}'), '随技能效果变化')
 })
 
-test('complete character pagination preserves long descriptions, every level and constellation', () => {
+test('each complete character category remains on one long image, with skills and talents together', () => {
  const text='技能完整说明。'.repeat(250)
  const levels=Array.from({length:15},(_,i)=>`Lv${i+1}`)
- const data={title:'分页角色',view:{kind:'character',game:'原神',skills:[{title:'长技能',desc:text,tables:[{headers:['倍率',...levels],rows:[{label:'完整倍率',values:levels.map((_,i)=>`${i+1}%`)}]}]}],constellations:Array.from({length:6},(_,i)=>({level:`${i+1}命`,title:`命座${i+1}`,desc:'完整命座说明。'})),stats:[],meta:[]}}
+ const data={title:'分页角色',view:{kind:'character',game:'原神',skills:[{title:'长技能',desc:text,tables:[{headers:['倍率',...levels],rows:[{label:'完整倍率',values:levels.map((_,i)=>`${i+1}%`)}]}]}],constellations:Array.from({length:6},(_,i)=>({level:`${i+1}命`,title:`命座${i+1}`,desc:'完整命座说明。'})),passives:[{title:'固有天赋',desc:'天赋完整效果'}],stats:[],meta:[]}}
  const pages=buildAtlasPages(data)
- assert.ok(pages.length>2)
- assert.ok(pages.every(page=>page.height<=1270))
+ assert.equal(pages.length,2)
+ assert.equal(pages[0].section,'技能与天赋')
+ assert.equal(pages[1].section,'命座')
+ assert.ok(pages[0].height>1270)
+ assert.equal(pages.filter(p=>p.section==='命座').length,1)
+ assert.ok(pages[0].blocks.some(b=>b.title?.includes('固有天赋')))
  const bodies=pages.flatMap(p=>p.blocks).filter(b=>b.type==='text').flatMap(b=>b.lines).join('')
  assert.ok(bodies.includes(text))
  const heads=pages.flatMap(p=>p.blocks).filter(b=>b.type==='table-head').flatMap(b=>b.cells.flat())

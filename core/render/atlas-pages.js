@@ -6,11 +6,12 @@ import { Canvas, FontLibrary, loadImage } from 'skia-canvas'
 import { resourcesPath } from '../path.js'
 import { fetchImageBytes } from './image.js'
 import { plainGameText } from './plain-text.js'
+import { encodeGpuCanvas } from './gpu-buffer.js'
 
 // Miao wiki/character-talent: elemental canvas, circular icon, gold headings,
-// dark talent panels. Layout is measured before painting and paginated intact.
+// dark talent panels. Each content category is measured and kept on one complete image.
 const WIDTH = 800, MARGIN = 24, INNER = WIDTH - MARGIN * 2
-const HEADER = 184, LIMIT = 1270, BOTTOM = 62
+const HEADER = 184, BOTTOM = 62
 const FONT = '"MiaoWiki", MiSans, sans-serif'
 const GOLD = '#d3bc8e', WHITE = '#f1efed', MUTED = '#c2c5cb'
 const ROOT = path.join(resourcesPath, 'miao-theme')
@@ -134,7 +135,9 @@ function elementOf(data) {
 function groupsOf(data) {
   const view = data.view || {}, groups = []
   const add = (section, blocks) => { if (blocks.length) groups.push({ section, blocks }) }
-  if (view.kind === 'character') {
+  if (view.kind === 'challenge' || data.template === 'atlas-challenge') {
+    add('挑战图鉴', challengeBlocks(view, data))
+  } else if (view.kind === 'character') {
     const overview = []
     if (view.portrait) overview.push({ type: 'portrait', image: view.portrait, height: 300 })
     if (view.description) overview.push(textBlock(view.description))
@@ -142,8 +145,10 @@ function groupsOf(data) {
     if (meta.length) overview.push(textBlock(meta.map(m => `${m.label}：${m.value}`).join(' · '), { color: GOLD }))
     overview.push(...factsBlocks(view.stats || []))
     add('角色总览', overview)
-    add('技能详情', cardBlocks(view.skills))
-    add(view.game === '星铁' ? '行迹与额外能力' : view.game === '绝区零' ? '核心被动与强化' : '固有天赋与强化', cardBlocks([...(view.passives || []), ...(view.enhancements || [])]))
+    add(view.game === '星铁' ? '技能与行迹' : view.game === '绝区零' ? '技能与核心能力' : '技能与天赋', [
+      ...cardBlocks(view.skills),
+      ...cardBlocks([...(view.passives || []), ...(view.enhancements || [])]),
+    ])
     add(view.game === '星铁' ? '星魂' : view.game === '绝区零' ? '影画' : '命座', cardBlocks(view.constellations))
     const materialGroups = view.materialGroups?.length ? view.materialGroups : [{ title: '养成材料', items: view.materials || [] }]
     const blocks = []
@@ -172,6 +177,46 @@ function groupsOf(data) {
   if (!groups.length) add(view.page || '图鉴资料', [textBlock(view.description || data.message || '本条目未提供详细说明。')])
   return groups
 }
+function challengeBlocks(view, data) {
+  const blocks = []
+  const paragraph = value => { if(value) blocks.push(textBlock(value)) }
+  const heading = (title, icon='') => blocks.push(labelBlock(title, icon))
+  const creatures = items => {
+    for(const item of items || []) {
+      heading([item.side,item.name||item.title].filter(Boolean).join(' · '),item.icon)
+      paragraph([item.level,item.hp ? `生命值 ${item.hp}` : '',item.weakness ? `弱点 ${item.weakness}` : ''].filter(Boolean).join(' · '))
+      if(item.levelByChallenge) paragraph(Object.entries(item.levelByChallenge).map(([name,level])=>`${name}：${level}`).join(' · '))
+      if(item.descByLevel?.N5 || item.descByLevel?.N6) {
+        for(const [name,desc] of Object.entries(item.descByLevel)) { heading(`${name}说明`); paragraph(desc) }
+      } else paragraph(item.desc)
+      paragraph(item.buffText)
+    }
+  }
+  const room = item => {
+    heading(item.title||'关卡');paragraph([item.subtitle,...(item.goals||[])].filter(Boolean).join(' · '));paragraph(item.desc)
+    for(const side of item.sides||[]) { heading(side.label||'敌人');creatures(side.monsters) }
+    creatures(item.monsters)
+  }
+  paragraph(view.description)
+  if(view.theaterOverview) {
+    const overview=view.theaterOverview
+    paragraph([overview.version,overview.difficultyLabel,overview.period,overview.minLevel,overview.bossLimit].filter(Boolean).join(' · '))
+    if(overview.elements?.length){heading('限定元素');creatures(overview.elements)}
+    for(const group of overview.groups||[]) { heading(group.title);creatures(group.items) }
+    for(const act of [...(overview.acts||[]),...(overview.hardActs||[])])room(act)
+  } else if(view.hardChallengeOverview) {
+    const overview=view.hardChallengeOverview
+    paragraph([overview.title,overview.period].filter(Boolean).join(' · '))
+    for(const item of overview.descriptions||[]) { heading(item.label);paragraph(item.text) }
+    if(overview.monsters?.length)creatures(overview.monsters)
+    else for(const level of overview.levels||[])room(level)
+  } else {
+    for(const [title,items]of [['环境与全局效果',view.environment],['可选增益',view.optionalBuffs]])if(items?.length){heading(title);blocks.push(...cardBlocks(items.map(item=>({...item,desc:item.body||item.desc}))))}
+    for(const item of view.rooms||[])room(item)
+    if(!view.environment?.length&&!view.optionalBuffs?.length&&!view.rooms?.length)blocks.push(...cardBlocks((data.sections||[]).map(s=>({...s,desc:s.body}))))
+  }
+  return blocks
+}
 function factsBlocks(items) {
   items = items.filter(item => String(item.value ?? item.body ?? '').trim())
   const blocks = []
@@ -187,38 +232,11 @@ function materialBlocks(items) {
 }
 
 export function buildAtlasPages(data) {
-  const pages = []
-  for (const { section, blocks } of groupsOf(data)) {
-    let active = [], used = HEADER, lastLabel = null, tableHead = null
-    const flush = () => {
-      if (active.some(b => b.type !== 'gap')) pages.push({ section, blocks: active, height: Math.max(460, used + BOTTOM) })
-      active = []; used = HEADER
-    }
-    const start = (includeTable = true) => {
-      if (lastLabel) { active.push({ ...lastLabel, subtitle: `${lastLabel.subtitle || ''} · 续`.trim() }); used += lastLabel.height }
-      if (tableHead && includeTable) { active.push(tableHead); used += tableHead.height }
-    }
-    for (const block of blocks) {
-      if (block.type === 'label') { lastLabel = block; tableHead = null }
-      if (block.type === 'table-head') tableHead = block
-      if (block.type === 'gap') { tableHead = null; if (used + block.height < LIMIT - BOTTOM) { active.push(block); used += block.height }; continue }
-      // A header and its first body line stay together.
-      const reserve = block.type === 'label' ? 78 : block.type === 'table-head' ? 40 : 0
-      const canSplitText = block.type === 'text' && LIMIT - BOTTOM - used >= block.lineHeight * 2 + 20
-      if (used + block.height + reserve > LIMIT - BOTTOM && active.length && !canSplitText) { flush(); if (block.type !== 'label') start(block.type !== 'table-head') }
-      if (block.type === 'text' && used + block.height > LIMIT - BOTTOM) {
-        const lines = [...block.lines]
-        while (lines.length) {
-          const capacity = Math.max(1, Math.floor((LIMIT - BOTTOM - used - 20) / block.lineHeight))
-          const chunk = lines.splice(0, capacity)
-          active.push({ ...block, lines: chunk, height: chunk.length * block.lineHeight + 20 })
-          used += chunk.length * block.lineHeight + 20
-          if (lines.length) { flush(); start() }
-        }
-      } else { active.push(block); used += block.height }
-    }
-    flush()
-  }
+  const pages = groupsOf(data).map(({section, blocks}) => ({
+    section,
+    blocks,
+    height: Math.max(460, HEADER + blocks.reduce((sum, block) => sum + block.height, 0) + BOTTOM),
+  }))
   return pages.map((page, index) => ({ ...page, index: index + 1, total: pages.length, title: data.title, element: elementOf(data) }))
 }
 
@@ -314,8 +332,8 @@ export async function renderAtlasPage(data, options = {}) {
   }
   textLines([`荷花插件 · Nanoka Atlas · ${page.index}/${page.total}`], 24, page.height - 37, 14, MUTED)
   if (y + BOTTOM > page.height + 1) throw new Error(`Atlas page overflow: ${data.title}/${page.section}`)
-  const buffer = await canvas.toBuffer(options.imgType === 'png' ? 'png' : 'jpeg', { quality: Number(options.quality || 98) / 100 })
-  options.onRender?.({ gpu: canvas.gpu, ...canvas.engine, width: canvas.width, height: canvas.height, section: page.section, page: page.index, missingImages: [...new Set(missing)] })
+  const { buffer, tiles, format } = await encodeGpuCanvas(canvas, options)
+  options.onRender?.({ gpu: canvas.gpu, ...canvas.engine, width: canvas.width, height: canvas.height, tiles, format, section: page.section, page: page.index, missingImages: [...new Set(missing)] })
   if (options.path) await fs.writeFile(options.path, buffer)
   return globalThis.segment?.image ? globalThis.segment.image(buffer) : buffer
 }

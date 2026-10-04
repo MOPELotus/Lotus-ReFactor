@@ -1,4 +1,4 @@
-# 星铁混沌回忆 Skia 模板素材来源
+# 星铁四种挑战 Skia 模板素材来源
 
 - 设计依据：本机 Miao-Yunzai 的 `plugins/genshin/resources/html/abyss/abyss-floor.html` 与 `abyss-floor.css`。
 - `floor12.png`、`star.png`、`fonts/HYWenHei-55W.ttf`、`fonts/tttgbnumber.ttf`：来自同一 genshin 模块的 `resources/img/abyss` 和 `resources/font`，保留原文件。
