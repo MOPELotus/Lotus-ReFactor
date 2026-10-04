@@ -238,7 +238,9 @@ function team(p,data){
  // to accommodate complete names and both games' actual panel attributes.
  table(p,['#','角色','等级 / 命座','装备'],members.map((m,i)=>[i+1,{label:m.name,image:m.icon},`Lv.${m.level??'未记录'} · ${m.cons??m.rank??0}${data.badge==='SR'?'魂':'命'}`,`${m.weapon||'未装配'}\nLv.${m.weaponLevel||'未记录'} · ${m.weaponAffix??m.weaponRank??'未记录'}${data.badge==='SR'?'叠影':'精炼'}`]),[28,160,100,p.width-313])
  const keys=[...new Set(members.flatMap(m=>Object.keys(m.stats||{})))]
- if(keys.length)table(p,['面板属性',...members.map(m=>m.name)],keys.map(key=>[key,...members.map(m=>m.stats?.[key]??'未记录')]),[110,...members.map(()=>(p.width-135)/Math.max(1,members.length))])
+ const percentKeys=new Set(['暴击率','暴击伤害','元素充能效率','充能效率','击破','击破特攻','效果命中','效果抵抗'])
+ const statValue=(member,key)=>{const value=member.stats?.[key];return value===undefined||value===null?'未记录':percentKeys.has(key)&&/^[-+]?\d+(?:\.\d+)?$/.test(String(value))?`${value}%`:value}
+ if(keys.length)table(p,['面板属性',...members.map(m=>m.name)],keys.map(key=>[key,...members.map(m=>statValue(m,key))]),[110,...members.map(()=>(p.width-135)/Math.max(1,members.length))])
  if(members.some(m=>m.panelSource))table(p,['角色','面板来源'],members.map(m=>[m.name,m.panelSource||'未记录']))
  const total=(data.pie||[]).reduce((sum,r)=>sum+Number(r.damage||0),0)
  if(data.pie?.length)table(p,['伤害贡献','伤害','占比'],data.pie.map(r=>[r.char,damageNumber(r.damage),`${total?(Number(r.damage||0)/total*100).toFixed(1):'0'}%`]))
