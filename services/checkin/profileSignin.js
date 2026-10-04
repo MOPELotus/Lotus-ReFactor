@@ -103,12 +103,15 @@ export class ProfileSigninService {
 }
 
 export async function renderSigninResult({ result, profile, skipped }) {
-  const message = String(result.message || "无详细结果").slice(0, 180)
+  const detail = String(result.message || "")
+  const message = result.ok
+    ? detail.split(/\r\n?|\n/).map(line => line.trim()).filter(line => line.includes("米游币")).join("\n")
+    : (detail || "无详细结果").slice(0, 180)
 
   return renderTemplate("checkin-result", {
     title: profile.user?.nickname || `QQ ${profile.user?.qq || ""}`,
     subtitle: `profile ${profile.profile?.id || 1}`,
-    badge: result.ok ? "成功" : "失败",
+    badge: result.ok ? "米游币" : "失败",
     message,
     avatar: qqAvatar(profile.user?.qq),
     userId: profile.user?.qq,
