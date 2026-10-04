@@ -1,7 +1,9 @@
 const BasePlugin = globalThis.plugin
 
-import { renderStatusCard } from "../core/render/service.js"
-import { replyImage } from "../core/transport/reply.js"
+import { setTimeout as delay } from "node:timers/promises"
+import { renderTemplate } from "../core/render/service.js"
+import { replyImage, replyText } from "../core/transport/reply.js"
+import { loadDonateContent, DONATE_URL } from "../services/donate/service.js"
 
 export class LotusDonate extends BasePlugin {
   constructor() {
@@ -20,19 +22,17 @@ export class LotusDonate extends BasePlugin {
   }
 
   async donate() {
-    const image = await renderStatusCard({
-      title: "支持荷花插件",
-      subtitle: "lotusshared.cn",
-      badge: "DONATE",
-      message: "感谢对荷花插件和机器人运营的支持。链接已放在卡片里，敏感信息不会写入仓库。",
-      userId: this.e?.user_id || "user",
-      items: [
-        { label: "捐赠链接", value: "https://lotusshared.cn/2025/12/21/donate/" },
-      ],
-    }, {
-      saveId: `lotus-donate-${this.e?.user_id || "user"}`,
-    })
-    await replyImage(this, image, "[荷花插件]捐赠卡片生成完成。")
+    try {
+      const image = await renderTemplate("donate", await loadDonateContent(), {
+        saveId: `lotus-donate-${this.e?.user_id || "user"}`,
+      })
+      await replyImage(this, image, "[荷花插件]捐赠图片发送失败，请通过稍后发送的链接查看。")
+    } catch (error) {
+      globalThis.logger?.warn?.(`[Lotus-Plugin] donate render failed: ${error.message}`)
+      await replyText(this, "[荷花插件]捐赠图片生成失败，请通过稍后发送的链接查看。")
+    }
+    await delay(2000)
+    await replyText(this, DONATE_URL)
     return true
   }
 }

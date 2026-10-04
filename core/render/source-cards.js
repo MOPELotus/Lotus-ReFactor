@@ -16,6 +16,7 @@ let fontsLoaded=false
 const cache=new Map()
 
 export const SOURCE_CARD_TEMPLATES=Object.freeze({
+ 'donate':'miao/help/index.html',
  'profile-card':'genshin/html/user/uid-list.html',
  'daily-note-summary':'genshin/html/player/daily-note-gs.html',
  'checkin-result':'miao/character/profile-stat.html',
@@ -234,6 +235,43 @@ function logs(p,data){
  elemental(p)
  p.log(data.title||'荷花插件',data.items||[],[data.subtitle,data.message].filter(Boolean).join('\n'))
 }
+async function donate(p,data){
+ // Miao help/index: head-box followed by titled cont-box groups. Replace
+ // each help-table's entries with the original payment poster and caption.
+ const background=path.join(ROOT,'miao/common/theme/bg-01.jpg')
+ p.refs.add(background)
+ p.commands.push((ctx,images)=>{
+  const img=images.get(background);if(!img)return
+  for(let y=0;y<p.height;y+=img.height)for(let x=0;x<p.width;x+=img.width)ctx.drawImage(img,x,y)
+ })
+ p.image(path.join(ROOT,'miao/common/theme/main-01.png'),0,0,p.width,800)
+ p.y=60
+ const titleH=p.lines(data.title,p.width-70,50,TITLE).length*60
+ const bodyH=p.lines(data.message,p.width-70,18).length*28
+ p.rect(15,p.y-15,p.width-30,titleH+bodyH+45,'rgba(15,20,31,.78)',15)
+ p.y+=p.text(data.title,35,p.y,p.width-70,50,WHITE,{font:TITLE,leading:60})+10
+ p.y+=p.text(data.message,35,p.y,p.width-70,18,WHITE,{leading:28})+35
+ const gap=20,columnWidth=(p.width-30-gap)/2,imageWidth=columnWidth-36,top=p.y
+ const methods=await Promise.all(data.methods.map(async method=>{
+  const image=await getImage(method.image)
+  if(!image)throw new Error(`捐赠收款码加载失败：${method.title}`)
+  return {...method,height:imageWidth*image.height/image.width}
+ }))
+ const posterHeight=Math.max(...methods.map(method=>method.height))
+ const captionHeight=Math.max(...methods.map(method=>p.lines(method.notice,columnWidth-36,18).length*28))
+ const panelHeight=60+posterHeight+18+captionHeight+20
+ methods.forEach((method,index)=>{
+  const x=15+index*(columnWidth+gap)
+  p.clip(x,top,columnWidth,panelHeight,15)
+  p.rect(x,top,columnWidth,panelHeight,'rgba(15,20,31,.78)')
+  p.rect(x,top,columnWidth,48,'rgba(0,0,0,.40)')
+  p.text(method.title,x+18,top+15,columnWidth-36,20,GOLD,{align:'center',singleLine:true})
+  p.image(method.image,x+18,top+60+(posterHeight-method.height)/2,imageWidth,method.height)
+  p.text(method.notice,x+18,top+60+posterHeight+18,columnWidth-36,18,WHITE,{align:'center',leading:28})
+  p.restore()
+ })
+ p.y=top+panelHeight+20
+}
 function qr(p,data){
  p.rect(0,0,p.width,100000,'#243344')
  p.image(path.join(ROOT,'miao/common/theme/bg-01.jpg'),0,0,p.width,1200,{cover:true})
@@ -402,8 +440,9 @@ function searchResults(p,data){
 export async function renderSourceCard(template,data={},options={}){
  init()
  const widths={'profile-card':450,'daily-note-summary':480,'checkin-result':600,'qr-login':830,'status':600,'schedule-notice':600,'genshin-team-damage':600,'starrail-team-damage':600,'achievement-index':760,'achievement-category':760,'zzz-rank':820,'douyin-info':900,'douyin-article':900,'bilibili-info':900,'atlas-result':700}
- const p=new SourceCanvas(widths[template]||600)
+ const p=new SourceCanvas(template==='donate'?830:widths[template]||600)
  const builders={'profile-card':profile,'daily-note-summary':daily,'checkin-result':checkin,'status':logs,'schedule-notice':logs,'qr-login':qr,'genshin-team-damage':team,'starrail-team-damage':team,'achievement-index':achievements,'achievement-category':achievements,'zzz-rank':rank,'douyin-info':news,'douyin-article':news,'bilibili-info':news,'atlas-result':searchResults}
+ builders.donate=donate
  if(!builders[template])throw new Error(`No source template implementation: ${template}`)
  await builders[template](p,data,template)
  const light=['daily-note-summary','atlas-result'].includes(template)
