@@ -280,7 +280,7 @@ export async function renderAtlasPage(data, options = {}) {
   rect(0, 0, WIDTH, page.height, '#252c40', 0)
   const bg = await image(path.join(ROOT, `bg/bg-${page.element || 'sr'}.webp`))
   if (bg) ctx.drawImage(bg, 0, 0, WIDTH, page.height)
-  rect(0, 0, WIDTH, 164, 'rgba(15,18,29,0.52)', 0)
+  rect(MARGIN, 12, INNER, 152, 'rgba(15,18,29,0.52)', 12)
   const avatar = await image(data.image || data.view?.image)
   if (avatar) {
     ctx.save(); ctx.beginPath(); ctx.arc(84, 79, 51, 0, Math.PI * 2); ctx.clip(); contain(avatar, 33, 28, 102, 102); ctx.restore()
@@ -292,8 +292,16 @@ export async function renderAtlasPage(data, options = {}) {
   textLines([data.view?.version ? `资料版本 ${data.view.version}` : '角色与装备资料'], 154, 69 + titleLines.length * 39, 14, MUTED)
   let y = HEADER
   const texture = await image(path.join(ROOT, 'card-bg.png'))
-  for (const block of page.blocks) {
+  for (const [blockIndex, block] of page.blocks.entries()) {
     if (block.type === 'gap') { y += block.height; continue }
+    const isTable = block.type.startsWith('table')
+    if (isTable && !page.blocks[blockIndex - 1]?.type.startsWith('table')) {
+      let tableHeight = 0
+      for (const row of page.blocks.slice(blockIndex)) { if (!row.type.startsWith('table')) break; tableHeight += row.height }
+      ctx.save(); ctx.beginPath(); ctx.roundRect(MARGIN, y, INNER, tableHeight, 10); ctx.clip()
+    } else if (!isTable) {
+      ctx.save(); ctx.beginPath(); ctx.roundRect(MARGIN, y, INNER, block.height, 10); ctx.clip()
+    }
     rect(MARGIN, y, INNER, block.height, 'rgba(15,20,31,0.58)', block.type.startsWith('table') ? 0 : 8)
     if (texture && block.type === 'label') ctx.drawImage(texture, MARGIN, y, INNER, block.height)
     if (block.type === 'label') {
@@ -329,6 +337,7 @@ export async function renderAtlasPage(data, options = {}) {
       ctx.strokeStyle = 'rgba(255,255,255,0.09)'; ctx.beginPath(); ctx.moveTo(44, y + block.height); ctx.lineTo(756, y + block.height); ctx.stroke()
     }
     y += block.height
+    if (!isTable || !page.blocks[blockIndex + 1]?.type.startsWith('table')) ctx.restore()
   }
   textLines([`荷花插件 · Nanoka Atlas · ${page.index}/${page.total}`], 24, page.height - 37, 14, MUTED)
   if (y + BOTTOM > page.height + 1) throw new Error(`Atlas page overflow: ${data.title}/${page.section}`)

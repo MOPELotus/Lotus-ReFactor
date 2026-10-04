@@ -130,8 +130,8 @@ export async function renderStarRailAbyss(data = {}, options = {}) {
     ctx.restore()
   }
   rect(0, 0, 760, height, "#1d2a4a")
-  ctx.strokeStyle = "rgba(211,188,141,0.65)"; ctx.lineWidth = 1.5; ctx.strokeRect(12, 12, 736, height - 24)
-  ctx.strokeStyle = "rgba(255,255,255,0.13)"; ctx.strokeRect(18, 18, 724, height - 36)
+  ctx.strokeStyle = "rgba(211,188,141,0.65)"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(12, 12, 736, height - 24, 14); ctx.stroke()
+  ctx.strokeStyle = "rgba(255,255,255,0.13)"; ctx.beginPath(); ctx.roundRect(18, 18, 724, height - 36, 10); ctx.stroke()
   let offset = 0
   for (const layout of layouts) {
     const { section, headerHeight } = layout
@@ -149,7 +149,7 @@ export async function renderStarRailAbyss(data = {}, options = {}) {
     text(["2", "3"].includes(String(section.scheduleType)) ? "往期记录" : "本期记录", 540, 146, 19, GOLD, 174, "right")
     if (Number(section.extraStars) > 0) text(`星启加星 +${section.extraStars}`, 540, 169, 13, GOLD, 174, "right")
     line(44, 185, 672); text(section.period || "周期暂无数据", 44, 200, 18, MUTED, 672)
-    rect(44, 242, 672, 80, "rgba(9,17,34,0.40)", 4)
+    rect(44, 242, 672, 80, "rgba(9,17,34,0.40)", 10)
     section.metrics.forEach(([label, value], i) => {
       const x = 44 + i * 168
       text(label, x, 255, 16, MUTED, 168, "center"); text(value, x + 8, 281, 23, WHITE, 152, "center", true)
@@ -161,7 +161,7 @@ export async function renderStarRailAbyss(data = {}, options = {}) {
     let y = headerHeight
     for (const item of layout.nodes) {
       const { node, height: nodeHeight, teamTop } = item
-      rect(44, y, 672, nodeHeight, "rgba(10,18,35,0.32)", 4); rect(44, y, 3, 37, GOLD)
+      rect(44, y, 672, nodeHeight, "rgba(10,18,35,0.32)", 10); rect(44, y, 3, 37, GOLD, 2)
       text(item.label, 62, y + 10, 22, GOLD, 636)
       if (node.title) {
         const enemy = images.get(node.icon)

@@ -75,9 +75,18 @@ class SourceCanvas{
   return lines
  }
  rect(x,y,w,h,fill,radius=0){this.commands.push(ctx=>{ctx.fillStyle=fill;ctx.beginPath();ctx.roundRect(x,y,w,h,radius);ctx.fill()})}
+ clip(x,y,w,h,radius=10){this.commands.push(ctx=>{ctx.save();ctx.beginPath();ctx.roundRect(x,y,w,h,radius);ctx.clip()})}
+ restore(){this.commands.push(ctx=>ctx.restore())}
  rule(x,y,w,color='#ddd'){this.rect(x,y,w,1,color)}
  text(value,x,y,width,size=16,color=WHITE,options={}){
-  const font=options.font||TEXT,leading=options.leading||size*1.5,lines=this.lines(value,width,size,font)
+  const font=options.font||TEXT
+  let lines
+  if(options.singleLine){
+   lines=[plainGameText(value).replace(/\s*\n\s*/g,' ')]
+   this.ctx.font=`${size}px ${font}`
+   while(this.ctx.measureText(lines[0]).width>width&&size>(options.minSize||10)){size-=.5;this.ctx.font=`${size}px ${font}`}
+  }else lines=this.lines(value,width,size,font)
+  const leading=options.leading||size*1.5
   this.commands.push(ctx=>{ctx.save();ctx.font=`${size}px ${font}`;ctx.textBaseline='top';ctx.fillStyle=color;ctx.textAlign=options.align||'left';if(options.shadow){ctx.shadowColor='#000';ctx.shadowBlur=2;ctx.shadowOffsetX=1;ctx.shadowOffsetY=1}lines.forEach((line,i)=>ctx.fillText(line,x+(options.align==='right'?width:options.align==='center'?width/2:0),y+i*leading));ctx.restore()})
   return lines.length*leading
  }
@@ -128,14 +137,15 @@ function table(p,headers,rows,widths){
  const x=10,w=p.width-25
  widths ||= headers.map(()=>w/headers.length)
  let y=p.y
- const paint=(cells,head,index)=>{
-  const h=Math.max(36,...cells.map((cell,i)=>p.lines(cell?.label??cell,widths[i]-12-(cell?.image?36:0),14).length*21+14))
+ const entries=[headers,...rows].map(cells=>({cells,h:Math.max(36,...cells.map((cell,i)=>p.lines(cell?.label??cell,widths[i]-12-(cell?.image?36:0),14).length*21+14))}))
+ p.clip(x,y,w,entries.reduce((sum,row)=>sum+row.h,0),10)
+ const paint=({cells,h},head,index)=>{
   p.rect(x,y,w,h,head?'rgba(0,0,0,.5)':index%2?'#fff':'#f0f0f0')
   let xx=x
   cells.forEach((cell,i)=>{if(cell?.image)p.image(cell.image,xx+3,y+3,30,30);const indent=cell?.image?36:0;p.text(cell?.label??cell,xx+6+indent,y+7,widths[i]-12-indent,14,head?GOLD:'#333',{leading:21});p.rule(xx,y,widths[i],'rgba(100,100,100,.3)');p.rect(xx,y,1,h,'rgba(100,100,100,.3)');xx+=widths[i]})
   y+=h
  }
- paint(headers,true,0);rows.forEach((row,i)=>paint(row,false,i));p.y=y+14
+ entries.forEach((row,i)=>paint(row,i===0,i-1));p.restore();p.y=y+14
 }
 
 function profile(p,data){
@@ -179,22 +189,23 @@ function daily(p,data){
   for(const item of group.items||[]){
    p.rect(16,p.y-3,5,24,'#d3bc8d',1)
    const title=`${group.name} · ${item.gameName||item.game} · UID ${item.uid||'未同步'}`
-   p.y+=p.text(title,26,p.y,p.width-42,16,'#504c49',{font:NUMBER})+9
+   p.y+=p.text(title,26,p.y,p.width-42,16,'#504c49',{font:NUMBER,singleLine:true,minSize:12})+9
    const primary=primaryNote(item)
    const coin=item.game==='gs'&&item.data?.current_home_coin!==undefined?[{label:'洞天宝钱',value:`${item.data.current_home_coin}/${item.data.max_home_coin}`,icon:'洞天宝钱'}]:[]
-   const rows=item.ok?[{label:primary.label,value:primary.value||item.detail,note:primary.value?item.detail:'',icon:primary.icon},...coin,...(item.details||[]).map(row=>({...row,icon:{'洞天宝钱':'洞天宝钱','每日委托':'委托','探索派遣':'派遣','最快派遣':'派遣','周本减半':'周本','参量质变仪':'参量质变仪'}[row.label]}))]:[{label:'查询失败',value:'失败',note:item.error||item.detail}]
+   const recovery=(item.detail||'').split(' · ').find(part=>/^(回满|已回满)/.test(part))||''
+   const rows=item.ok?[{label:primary.label,value:primary.value||'查询成功',note:primary.value?recovery:item.detail,icon:primary.icon},...coin,...(item.details||[]).map(row=>({...row,icon:{'洞天宝钱':'洞天宝钱','每日委托':'委托','探索派遣':'派遣','最快派遣':'派遣','周本减半':'周本','参量质变仪':'参量质变仪'}[row.label]}))]:[{label:'查询失败',value:'失败',note:item.error||item.detail}]
    for(const row of rows){
-    const valueWidth=96,x=16,w=p.width-32,labelWidth=w-valueWidth-53
+    const valueWidth=148,x=16,w=p.width-32,labelWidth=w-valueWidth-53
     const noteLines=row.note?p.lines(row.note,labelWidth,12):[]
     let valueSize=16;p.ctx.font=`${valueSize}px ${NUMBER}`
     while(p.ctx.measureText(String(row.value??'')).width>valueWidth-12&&valueSize>12){valueSize-=.5;p.ctx.font=`${valueSize}px ${NUMBER}`}
-    const valueLines=p.lines(row.value??'',valueWidth-12,valueSize,NUMBER)
-    const h=Math.max(49,28+noteLines.length*17+9,valueLines.length*22+14)
-    p.rect(x,p.y,w,h,'#dfd8d1');p.rect(x+1,p.y+1,w-valueWidth-1,h-2,'#f5f1eb');p.rect(x+w-valueWidth,p.y+1,valueWidth-1,h-2,'#ece3d8')
+    const h=Math.max(49,28+noteLines.length*17+9)
+    p.rect(x,p.y,w,h,'#dfd8d1',9);p.clip(x+1,p.y+1,w-2,h-2,8)
+    p.rect(x+1,p.y+1,w-valueWidth-1,h-2,'#f5f1eb');p.rect(x+w-valueWidth,p.y+1,valueWidth-1,h-2,'#ece3d8')
     if(row.icon){const icon=path.join(ROOT,'genshin/note-icons/gs',`${row.icon}.png`);if(existsSync(icon))p.image(icon,x+8,p.y+11,25,25)}
     p.text(row.label,x+42,p.y+7,labelWidth,14,'#1e1f20',{font:NUMBER,leading:18})
     if(row.note)p.text(row.note,x+42,p.y+27,labelWidth,12,'#5f5f5d',{font:NUMBER,leading:17})
-    p.text(row.value??'',x+w-valueWidth+6,p.y+(h-valueLines.length*22)/2,valueWidth-12,valueSize,'#504c49',{font:NUMBER,align:'center',leading:22});p.y+=h+5
+    p.text(row.value??'',x+w-valueWidth+6,p.y+(h-22)/2,valueWidth-12,valueSize,'#504c49',{font:NUMBER,align:'center',leading:22,singleLine:true,minSize:10});p.restore();p.y+=h+5
    }
    p.y+=16
   }
@@ -213,7 +224,10 @@ function qr(p,data){
  p.rect(0,0,p.width,100000,'#243344')
  p.image(path.join(ROOT,'miao/common/theme/bg-01.jpg'),0,0,p.width,1200,{cover:true})
  p.image(path.join(ROOT,'miao/common/theme/main-01.png'),0,0,p.width,800)
- p.y=60;p.y+=p.text(data.title||'扫码登录',35,p.y,p.width-70,50,WHITE,{font:TITLE,leading:60,shadow:true})
+ const title=data.title||'扫码登录',subtitle=data.subtitle||`profile ${data.profileId||1}`
+ const headerHeight=p.lines(title,p.width-70,50,TITLE).length*60+p.lines(subtitle,p.width-70,16).length*24+38
+ p.rect(15,38,p.width-30,headerHeight,'rgba(15,20,31,.78)',15)
+ p.y=54;p.y+=p.text(title,35,p.y,p.width-70,50,WHITE,{font:TITLE,leading:60,shadow:true})
  p.y+=p.text(data.subtitle||`profile ${data.profileId||1}`,35,p.y+5,p.width-70,16,WHITE,{shadow:true})+25
  const top=p.y,w=p.width-30,qrSize=360,notice=data.notice||'请使用对应 App 扫码确认。'
  const noticeHeight=p.lines(notice,w-40,16).length*24
@@ -244,17 +258,15 @@ function team(p,data){
  if(members.some(m=>m.panelSource))table(p,['角色','面板来源'],members.map(m=>[m.name,m.panelSource||'未记录']))
  const total=(data.pie||[]).reduce((sum,r)=>sum+Number(r.damage||0),0)
  if(data.pie?.length)table(p,['伤害贡献','伤害','占比'],data.pie.map(r=>[r.char,damageNumber(r.damage),`${total?(Number(r.damage||0)/total*100).toFixed(1):'0'}%`]))
- if(data.actions?.length)p.log('输出轴',data.actions)
- if(data.actionTrack?.length)table(p,['行动顺序','角色','行动值'],data.actionTrack.map(r=>[r.order,r.name,r.actionPoints??r.actionPoint??'未记录']))
- if(data.battleRecords?.length){
-  for(const record of data.battleRecords)p.log(`${record.order} · ${record.title||record.name||'行动'}${record.actionPoint!==undefined?` · 行动值 ${record.actionPoint}`:''}`,(record.lines||[]).map(line=>line.text))
- }
+ if(data.actions?.length)p.log('输出手法',[],data.actions.join(' → '))
+ if(data.actionTrack?.length)p.log('起手顺序',[],data.actionTrack.slice(0,4).map(r=>r.name).join(' → '))
+ if(data.badge==='SR'&&data.detail&&data.battleRecords?.length)table(p,['顺序','关键行动（前 8 项）','行动值'],data.battleRecords.slice(0,8).map(r=>[r.order,[r.title,(r.lines||[]).find(line=>line.type==='skill')?.text].filter(Boolean).join('\n'),r.actionPoint??'未记录']),[50,p.width-165,90])
  if(data.detail){
   if(data.damages?.length)table(p,['时间','动作','伤害'],data.damages.map(r=>[`${r.time??0}s`,r.action,(r.values||[]).join(' / ')]),[65,185,p.width-275])
   if(data.buffs?.length)table(p,['时间','增益','说明'],data.buffs.map(r=>[`${r.time??0}s`,r.name,r.detail]),[65,185,p.width-275])
-  if(!data.battleRecords?.length&&data.damageLogs?.length)p.log('伤害过程',data.damageLogs.map(r=>`${r.order} · ${r.text}`))
+  if(data.badge!=='SR'&&!data.battleRecords?.length&&data.damageLogs?.length)p.log('伤害过程',data.damageLogs.map(r=>`${r.order} · ${r.text}`))
  }
- if(data.source)p.log('数据来源',[data.source])
+ if(data.source)p.footerNotes=[`数据来源：${data.source}`]
 }
 function achievements(p,data){
  statBackground(p);p.heading(data);summaries(p,data.summary)
@@ -303,7 +315,7 @@ async function newsImage(p,src){
  const img=await getImage(src)
  if(!img){p.image(src,30,p.y,p.width-60,200);p.y+=215;return}
  const w=p.width-60,h=w*img.height/img.width
- p.image(src,30,p.y,w,h);p.y+=h+20
+ p.image(src,30,p.y,w,h,{radius:14});p.y+=h+20
 }
 function mediaStats(data,template){
  const s=data.stat||{},format=n=>n===undefined?'未记录':damageNumber(n)
@@ -311,32 +323,37 @@ function mediaStats(data,template){
  return stats.map(([label,value])=>`${label} ${value||'未记录'}`).join('    ')
 }
 async function news(p,data,template){
- // mysNews's 900px white article: account header, 44/60 title, full-width
- // content images and paragraphs, grey metadata/footer. No Lotus card shell.
- p.rect(0,0,p.width,100000,'#fff');p.y=40
+ // genshin mysNews content order inside Miao help/index's elemental, rounded
+ // group container. Keep the article typography and real cover/media content.
+ elemental(p)
+ const frame={height:0}
+ p.commands.push(ctx=>{ctx.fillStyle='rgba(15,20,31,.78)';ctx.beginPath();ctx.roundRect(15,20,p.width-30,frame.height,15);ctx.fill()})
+ p.y=40
  const owner=data.owner||'作者资料未记录'
  if(data.avatar)p.image(data.avatar,35,p.y,90,90,{cover:true,radius:45})
- p.text(owner,data.avatar?143:35,p.y+16,p.width-(data.avatar?178:70),30,'#404040',{leading:50})
- p.text(template==='douyin-article'?`第 ${data.page||1} 页`:data.id||'',data.avatar?143:35,p.y+66,p.width-(data.avatar?178:70),22,'#999')
+ p.text(owner,data.avatar?143:35,p.y+16,p.width-(data.avatar?178:70),30,GOLD,{leading:50})
+ p.text(template==='douyin-article'?`第 ${data.page||1} 页`:data.id||'',data.avatar?143:35,p.y+66,p.width-(data.avatar?178:70),22,'#c2c5cb')
  p.y+=130
- p.y+=p.text(data.title||'作品信息',30,p.y,p.width-60,44,'#333',{leading:60})+20
+ p.rule(30,p.y-5,p.width-60,'rgba(211,188,142,.35)')
+ p.y+=p.text(data.title||'作品信息',30,p.y,p.width-60,44,WHITE,{leading:60})+20
  if(template==='douyin-article'){
   for(const block of data.blocks||[]){
    if(block.type==='image')for(const src of block.urls||[])await newsImage(p,src)
-   else if(block.text)p.y+=p.text(block.text,30,p.y,p.width-60,22,'#333',{leading:36})+16
+   else if(block.text)p.y+=p.text(block.text,30,p.y,p.width-60,22,WHITE,{leading:36})+16
   }
  }else{
   const metadata=[data.type==='live'?'直播':data.type==='gallery'?'图集':data.type==='article'?'文章':'视频',data.duration?`${Math.floor(data.duration/60)}分${Math.floor(data.duration%60)}秒`:'',data.createdAt?new Date(data.createdAt*1000).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'',data.media?.length?`${data.media.length} 个媒体项`:''].filter(Boolean).join(' · ')
-  p.y+=p.text(metadata,30,p.y,p.width-60,18,'#999',{leading:28})+20
+  p.y+=p.text(metadata,30,p.y,p.width-60,18,GOLD,{leading:28})+20
   await newsImage(p,data.cover||data.image)
-  if(data.desc)p.y+=p.text(data.desc,30,p.y,p.width-60,22,'#333',{leading:36})+20
-  if(data.music?.title)p.y+=p.text(`音乐：${data.music.title} · ${data.music.author||''}`,30,p.y,p.width-60,18,'#666')+20
-  if(data.collection?.title)p.y+=p.text(`合集：${data.collection.title}`,30,p.y,p.width-60,18,'#666')+20
-  if(data.sources?.length)p.y+=p.text(`可用视频源：${data.sources.map(source=>[source.quality||'清晰度未记录',source.width&&source.height?`${source.width}×${source.height}`:'',source.codec||''].filter(Boolean).join(' ')).join(' / ')}`,30,p.y,p.width-60,18,'#666')+20
-  for(const warning of data.warnings||[])p.y+=p.text(warning,30,p.y,p.width-60,18,'#666')+16
-  p.rule(30,p.y,p.width-60,'#ebebeb');p.y+=22
-  p.y+=p.text(mediaStats(data,template),30,p.y,p.width-60,18,'#999',{leading:28})+18
+  if(data.desc)p.y+=p.text(data.desc,30,p.y,p.width-60,22,WHITE,{leading:36})+20
+  if(data.music?.title)p.y+=p.text(`音乐：${data.music.title} · ${data.music.author||''}`,30,p.y,p.width-60,18,'#c2c5cb')+20
+  if(data.collection?.title)p.y+=p.text(`合集：${data.collection.title}`,30,p.y,p.width-60,18,'#c2c5cb')+20
+  if(data.sources?.length)p.y+=p.text(`可用视频源：${data.sources.map(source=>[source.quality||'清晰度未记录',source.width&&source.height?`${source.width}×${source.height}`:'',source.codec||''].filter(Boolean).join(' ')).join(' / ')}`,30,p.y,p.width-60,18,'#c2c5cb')+20
+  for(const warning of data.warnings||[])p.y+=p.text(warning,30,p.y,p.width-60,18,'#c2c5cb')+16
+  p.rule(30,p.y,p.width-60,'rgba(211,188,142,.35)');p.y+=22
+  p.y+=p.text(mediaStats(data,template),30,p.y,p.width-60,18,GOLD,{leading:28})+18
  }
+ frame.height=p.y-10;p.y+=15
 }
 function searchResults(p,data){
  p.rect(0,0,p.width,100000,'#f5f6fb');p.y=20
@@ -350,24 +367,27 @@ function searchResults(p,data){
   const y=p.y,w=p.width-30,textWidth=row.image?325:p.width-124
   const titleH=p.lines(row.title,textWidth,22).length*28,descH=p.lines(row.desc||'',textWidth,18).length*30
   const h=Math.max(row.image?166:90,titleH+descH+70)
-  p.rect(15,y,w,h,'#fff',i===0?15:0)
+  p.rect(15,y,w,h,'#fff',15)
   p.text(i+1,35,y+24,40,26,'#333',{font:NUMBER,align:'center'})
   p.text(row.title,89,y+24,textWidth,22,'#333',{leading:28})
   p.text(row.desc||'',89,y+titleH+38,textWidth,18,'#999',{leading:30})
   p.text(row.meta||'',89,y+titleH+descH+49,textWidth,14,'#999')
   if(row.image)p.image(row.image,p.width-277,y+26,242,124,{radius:8})
   if(i<rows.length-1)p.rule(35,y+h-1,p.width-70)
-  p.y+=h
+  p.y+=h+8
  }
 }
 
 export async function renderSourceCard(template,data={},options={}){
  init()
- const widths={'profile-card':450,'daily-note-summary':400,'checkin-result':600,'qr-login':830,'status':600,'schedule-notice':600,'genshin-team-damage':600,'starrail-team-damage':600,'achievement-index':760,'achievement-category':760,'zzz-rank':820,'douyin-info':900,'douyin-article':900,'bilibili-info':900,'atlas-result':700}
+ const widths={'profile-card':450,'daily-note-summary':480,'checkin-result':600,'qr-login':830,'status':600,'schedule-notice':600,'genshin-team-damage':600,'starrail-team-damage':600,'achievement-index':760,'achievement-category':760,'zzz-rank':820,'douyin-info':900,'douyin-article':900,'bilibili-info':900,'atlas-result':700}
  const p=new SourceCanvas(widths[template]||600)
  const builders={'profile-card':profile,'daily-note-summary':daily,'checkin-result':checkin,'status':logs,'schedule-notice':logs,'qr-login':qr,'genshin-team-damage':team,'starrail-team-damage':team,'achievement-index':achievements,'achievement-category':achievements,'zzz-rank':rank,'douyin-info':news,'douyin-article':news,'bilibili-info':news,'atlas-result':searchResults}
  if(!builders[template])throw new Error(`No source template implementation: ${template}`)
  await builders[template](p,data,template)
- p.text(`荷花插件${data.generatedAt?' · '+data.generatedAt:''}`,15,p.y+15,p.width-30,12,['daily-note-summary','atlas-result','douyin-info','douyin-article','bilibili-info'].includes(template)?'#7994a7':WHITE,{align:'center',shadow:!['daily-note-summary','atlas-result','douyin-info','douyin-article','bilibili-info'].includes(template)})
+ const light=['daily-note-summary','atlas-result'].includes(template)
+ const footer=[...(p.footerNotes||[]),`荷花插件${data.generatedAt?' · '+data.generatedAt:''}`]
+ p.text(footer.join('\n'),15,p.y+15,p.width-30,12,light?'#597487':WHITE,{align:'center',shadow:!light,leading:18})
+ p.y+=(footer.length-1)*18
  return p.render(template,data,options)
 }
