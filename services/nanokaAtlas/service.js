@@ -7,6 +7,7 @@ import { loadGlobalConfig } from "../../core/config/global.js"
 import { rootPath, resourcesPath } from "../../core/path.js"
 import { plainGameText } from "../../core/render/plain-text.js"
 import { createRequire } from "node:module"
+import { matchPersonalQuery } from "../../core/intercept/personal-query.js"
 
 const CHARACTER_FACTS = createRequire(import.meta.url)("../../resources/miao-theme/character-facts.json")
 const RELIC_PARTS = createRequire(import.meta.url)("../../resources/miao-theme/relic-parts/index.json")
@@ -165,8 +166,10 @@ const CHALLENGE_SCHEDULES = Object.freeze({
 
 const PERSONAL_CHALLENGE_TERMS = new Set([
   "深渊",
+  "深境",
   "深境螺旋",
   "幻想",
+  "幻境",
   "幻想真境剧诗",
   "剧诗",
   "幽境",
@@ -181,6 +184,9 @@ const PERSONAL_CHALLENGE_TERMS = new Set([
   "虚构",
   "虚构叙事",
   "异相",
+  "异乡",
+  "异向",
+  "仲裁",
   "异相仲裁",
   "防卫",
   "防卫战",
@@ -191,6 +197,12 @@ const PERSONAL_CHALLENGE_TERMS = new Set([
   "危局强袭战",
   "强袭",
   "强袭战",
+  "临界",
+  "推演",
+  "临界推演",
+  "鏖战",
+  "爬塔",
+  "拟真鏖战试炼",
 ])
 
 const GENERIC_ATLAS_SHORTCUT_TERMS = new Set([
@@ -793,6 +805,7 @@ export function parseAtlasShortcutMessage(message = "") {
   const text = stripShortcutAtlasSuffix(originalText)
   const explicitSuffix = text !== originalText
   if (!text) return { ok: false, reason: "empty_query" }
+  if (!explicitSuffix && matchPersonalQuery(raw)) return { ok: false, reason: "personal_query" }
   if (isPanelShortcutQuery(originalText)) return { ok: false, reason: "panel_query" }
   if (isRankingShortcutQuery(originalText)) return { ok: false, reason: "ranking_query" }
   if (isExtremeBuildShortcutQuery(originalText)) return { ok: false, reason: "extreme_build_query" }
@@ -850,8 +863,10 @@ function normalizeLoaderShortcutPrefix(raw = "") {
 
 export function isPersonalChallengeQuery(query = "") {
   const text = normalizeShortcutText(query)
-  if (!text || resolveChallengeQuery(text)) return false
-  return PERSONAL_CHALLENGE_TERMS.has(text)
+  if (!text) return false
+  // Period selectors are also used by battle records. Only an explicit atlas
+  // suffix or a dated/future challenge query should select atlas data.
+  return PERSONAL_CHALLENGE_TERMS.has(text.replace(/^(?:本期|当期|上期|往期|最新)/, ""))
 }
 
 function isPanelShortcutQuery(text = "") {

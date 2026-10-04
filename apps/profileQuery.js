@@ -1,11 +1,11 @@
 const BasePlugin = globalThis.plugin
 
+import { PERSONAL_QUERY_RULES } from "../core/intercept/personal-query.js"
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import {
   isMissingProfileError,
   loadProfile,
   profileLoginRequiredMessage,
-  PROFILE_ID_REQUIRED_SUFFIX_PATTERN,
 } from "../core/config/profile.js"
 import { AccountService } from "../core/login/account.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
@@ -15,12 +15,6 @@ import { MiaoProfileQueryBridge } from "../services/pluginBridge/miaoProfileQuer
 import { ZzzProfileQueryBridge } from "../services/pluginBridge/zzzPanel.js"
 import { StarRailChallengeService } from "../services/starRailChallenge/service.js"
 
-// 个人查询的无后缀形式也由 Lotus 接管，并与显式 profile 1 走同一条路径。
-// 无后缀分支要求命令不以数字结尾，避免把游戏 UID 误判成 profile 指令。
-const P = `(?:(?:${PROFILE_ID_REQUIRED_SUFFIX_PATTERN})|(?<!\\d))`
-const Z = "(?:[%％]|#绝区零)"
-const SR_CHALLENGE_WORDS = "(?:深渊|忘却|忘却之庭|混沌|混沌回忆|虚构|虚构叙事|末日|末日幻影|异乡|异相|异向|仲裁|异相仲裁)"
-
 export class LotusProfileQuery extends BasePlugin {
   constructor(options = {}) {
     super({
@@ -28,39 +22,7 @@ export class LotusProfileQuery extends BasePlugin {
       dsc: "Lotus profile aware personal UID queries",
       event: "message",
       priority: LOTUS_INTERCEPT_PRIORITY,
-      rule: [
-        { reg: `^#(?:星铁|原神)?(?:面板角色|角色面板|面板)(?:列表)?\\s*${P}$`, fnc: "miaoProfileList" },
-        { reg: `^\\*(?:面板角色|角色面板|面板)(?:列表)?\\s*${P}$`, fnc: "miaoProfileList" },
-        { reg: `^#(?!绝区零)(?!(?:原神|星铁)?(?:更新面板|面板更新|全部面板更新|更新全部面板))[\\s\\S]{1,}(?:详细|详情|面板|面版|圣遗物|遗器|武器|伤害)\\s*${P}$`, fnc: "miaoProfileDetail" },
-        { reg: `^\\*(?!更新|面板更新|全部面板更新|更新全部面板)[\\s\\S]{1,}(?:详细|详情|面板|面版|遗器|武器|伤害)\\s*${P}$`, fnc: "miaoProfileDetail" },
-        { reg: `^#(?:星铁|原神)?(?:面板|喵喵)?练度统计\\s*${P}$`, fnc: "miaoProfileStat" },
-        { reg: `^\\*(?:面板|喵喵)?练度统计\\s*${P}$`, fnc: "miaoProfileStat" },
-        { reg: `^#(?:我的)?(?:风|岩|雷|草|水|火|冰)*(?:武器|角色|练度|五|四|5|4|星)+(?:汇总|统计|列表)(?:force|五|四|5|4|星)*\\s*${P}$`, fnc: "miaoProfileStat" },
-        { reg: `^#(?:喵喵)?(?:角色|查询|查询角色|角色查询|人物)\\s*${P}$`, fnc: "miaoAvatarList" },
-        { reg: `^#(?!(?:今日|今天|明日|明天|周(?:[1-6]|一|二|三|四|五|六))(?:技能|天赋)$)(?:我的)?(?:今日|今天|明日|明天|周(?:[1-6]|一|二|三|四|五|六))*(?:[五四54]星)?(?:技能|天赋)+(?:汇总|统计|列表)?\\s*${P}$`, fnc: "miaoTalentStat" },
-        { reg: `^#202\\d{3}(?:幻想|真境|剧诗|幻想真境剧诗)(?:角色|练度)?(?:汇总|统计|列表)?\\s*${P}$`, fnc: "miaoRoleCombatStat" },
-        { reg: `^#(?:喵喵|上传|本期)*(?:深渊|深境|深境螺旋)[ |0-9]*(?:数据)?\\s*${P}$`, fnc: "miaoAbyssSummary" },
-        { reg: `^#(?:喵喵)*(?:本期|上期)?(?:幻想|幻境|剧诗|幻想真境剧诗)[ |0-9]*(?:数据)?\\s*${P}$`, fnc: "miaoRoleCombatSummary" },
-        { reg: `^#(?:喵喵)*(?:本期|上期)?(?:幽境|危战|幽境危战)(?:单人|单挑|组队|多人|合作|最佳)?[ |0-9]*(?:数据)?\\s*${P}$`, fnc: "miaoHardChallengeSummary" },
-        { reg: `^\\*(?:往期|上期|本期|最新|当期)?(?:简易)?${SR_CHALLENGE_WORDS}\\s*${P}$`, fnc: "starRailChallenge" },
-        { reg: `^#星铁(?:往期|上期|本期|最新|当期)?(?:简易)?${SR_CHALLENGE_WORDS}\\s*${P}$`, fnc: "starRailChallenge" },
-        { reg: `^\\*(?:简易)?${SR_CHALLENGE_WORDS}\\s*$`, fnc: "starRailChallenge" },
-        { reg: `^#星铁(?:简易)?${SR_CHALLENGE_WORDS}\\s*$`, fnc: "starRailChallenge" },
-        { reg: `^${Z}(?![\\s\\S]*(?:更新|刷新))[\\s\\S]*(?:面板)(?:列表)?\\s*${P}$`, fnc: "zzzPanel" },
-        { reg: `^(?![^\\n]*\\d{4,}\\s*$)${Z}[^\\d]*(?:(?:排名|排行|综合榜)|(?:面板|圣遗物|驱动盘))\\s*${P}$`, fnc: "zzzRank" },
-        { reg: `^${Z}[\\s\\S]+伤害\\s*${P}$`, fnc: "zzzDamage" },
-        { reg: `^${Z}练度(?:统计)?\\s*${P}$`, fnc: "zzzProficiency" },
-        { reg: `^${Z}(?:card|卡片|个人信息|角色)\\s*${P}$`, fnc: "zzzCard" },
-        { reg: `^${Z}(?:上期|往期)?(?:式舆防卫战|式舆|深渊|防卫战|防卫)\\s*${P}$`, fnc: "zzzAbyss" },
-        { reg: `^${Z}(?:上期|往期)?(?:危局强袭战|危局|强袭|强袭战)\\s*${P}$`, fnc: "zzzDeadly" },
-        { reg: `^${Z}(?:上期|往期)?(?:临界推演|临界|推演)\\s*${P}$`, fnc: "zzzVoidFrontBattle" },
-        { reg: `^${Z}(?:拟真鏖战试炼|鏖战|爬塔)\\s*${P}$`, fnc: "zzzClimbingTower" },
-        { reg: `^${Z}(?:monthly|菲林|邦布券|收入|月报)(?:(?:\\d{4})年)?(?:(?:\\d{1,2}|上)月)?\\s*${P}$`, fnc: "zzzMonthly" },
-        { reg: `^${Z}(?:monthly|菲林|邦布券|收入|月报)统计\\s*${P}$`, fnc: "zzzMonthlyCollect" },
-        { reg: `^${Z}(?:枯萎苗圃|枯萎|苗圃)\\s*${P}$`, fnc: "zzzHollowZero" },
-        { reg: `^${Z}(?:迷失之地|迷失)\\s*${P}$`, fnc: "zzzHollowZeroS2" },
-        { reg: `^${Z}(?:区域收集|收集|探索|探索度)\\s*${P}$`, fnc: "zzzExplorationDetail" },
-      ],
+      rule: PERSONAL_QUERY_RULES.map(rule => ({ ...rule })),
     })
     this.miao = options.miao || new MiaoProfileQueryBridge(options)
     this.zzz = options.zzz || new ZzzProfileQueryBridge(options)
@@ -93,7 +55,7 @@ export class LotusProfileQuery extends BasePlugin {
   async zzzExplorationDetail() { return this.runZzz("explorationDetail") }
   async zzzRank() {
     const parsed = splitProfileSuffix(this.e.msg)
-    const text = parsed.message.replace(/^[%％]|^#绝区零/, "").trim()
+    const text = parsed.message.replace(/^(?:[%％](?:zzz|绝区零)?|[#/](?:zzz|绝区零)|(?:zzz|绝区零))/i, "").trim()
     // 默认“排名”是纯面板分；明确写“综合榜”才使用加权分。
     // 兼容“面板/圣遗物/驱动盘”别名，并从角色名中剥离关键词。
     const character = text
@@ -116,13 +78,13 @@ export class LotusProfileQuery extends BasePlugin {
       userId,
       profileId: parsed.profileId,
       game,
-      command: normalizeMiaoCommand(parsed.message, game),
+      command: normalizeMiaoCommand(parsed.message, game, method),
       runner: profile => this.miao[method]({
         e: this.e,
         profile,
         profileId: parsed.profileId,
         game,
-        command: normalizeMiaoCommand(parsed.message, game),
+        command: normalizeMiaoCommand(parsed.message, game, method),
         forwardReplies: true,
       }),
       title: "个人查询",
@@ -231,17 +193,27 @@ function miaoGameFromMessage(message = "") {
   return text.startsWith("*") || /^#星铁/.test(text) ? "sr" : "gs"
 }
 
-function normalizeMiaoCommand(message = "", game = "gs") {
+function normalizeMiaoCommand(message = "", game = "gs", method = "") {
   const text = String(message || "").trim()
   if (text.startsWith("*")) return `#星铁${text.replace(/^\*+/, "")}`
   if (game === "sr" && text.startsWith("#") && !/^#星铁/.test(text)) return text.replace(/^#/, "#星铁")
-  return text
+  const command = text.replace(/^#原神/, "#").replace(/^#(喵喵)?当期/, "#$1本期")
+  // These upstream switches disable automatic handling of plain commands.
+  // Explicit #喵喵 requests remain supported even when the switches are off.
+  if (method === "abyssSummary") return command.replace(/^#(?:喵喵|上传|本期)*/, "#喵喵")
+  if (["roleCombatSummary", "hardChallengeSummary"].includes(method)) {
+    return command.replace(/^#(?:喵喵)*/, "#喵喵")
+  }
+  return command
 }
 
 function normalizeZzzCommand(message = "") {
   const text = String(message || "").trim()
     .replace(/^％/, "%")
-    .replace(/^#绝区零/, "%")
+    .replace(/^(?:[#/](?:zzz|绝区零)|(?:zzz|绝区零))/i, "%")
+    .replace(/^%(?:zzz|绝区零)/i, "%")
+    .replace(/^%(?:本期|当期)/, "%")
+    .replace(/式舆防卫(?!(?:战))/, "式舆防卫战")
   // ZZZ-Plugin 的 rulePrefix 要求命令带 zzz/绝区零 标识；Lotus 对外
   // 兼容简写 `%蕾米面板`，这里补成上游实际能匹配的 `%zzz蕾米面板`。
   if (/^%(?:zzz|绝区零)/i.test(text)) return text

@@ -287,7 +287,7 @@ export class LotusAtlas extends BasePlugin {
       items: [
         { label: "直查", value: "#星见雅 / #雾切之回光 / #雾切 / #冰封迷途的勇士" },
         { label: "显式", value: "#图鉴 神里绫华 / #荷花图鉴 星见雅" },
-        { label: "挑战图鉴", value: "#本期幽境 / #本期幻想 / *上期末日 / %下期防卫战" },
+        { label: "挑战图鉴", value: "#本期幽境图鉴 / #本期幻想图鉴 / *上期末日图鉴 / %下期防卫战图鉴" },
         { label: "不抢占", value: "#深渊 / #幻想 / #幽境 / *混沌 / %防卫战 仍交给挑战数据插件" },
         { label: "状态", value: "#图鉴状态" },
         { label: "更新", value: "#更新图鉴" },

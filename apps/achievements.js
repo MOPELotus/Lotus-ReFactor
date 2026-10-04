@@ -1,6 +1,7 @@
 const BasePlugin = globalThis.plugin
 
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
+import { matchPersonalQuery } from "../core/intercept/personal-query.js"
 import {
   isMissingProfileError,
   loadProfile,
@@ -38,9 +39,17 @@ const CATEGORY_RESERVED_TERMS = [
   "B站",
   "BBDown",
   "深渊",
+  "深境",
   "幻想",
+  "幻境",
+  "剧诗",
+  "真境",
   "幽境",
   "危战",
+  "星铁",
+  "崩铁",
+  "星穹铁道",
+  "绝区零",
 ]
 
 const IMPORT_WAIT_MS = 5 * 60 * 1000
@@ -76,6 +85,9 @@ export class LotusAchievements extends BasePlugin {
       ],
     })
     this.service = options.service || new GenshinAchievementService(options)
+    this.renderCategory = options.renderCategory || renderTemplate
+    this.resolveCategoryUid = options.resolveCategoryUid || resolveGenshinUid
+    this.getCategoryBackgrounds = options.getCategoryBackgrounds || getRenderBackgrounds
   }
 
   async index() {
@@ -175,7 +187,7 @@ export class LotusAchievements extends BasePlugin {
   async category() {
     const parsed = parseCategoryCommand(this.e.msg)
     if (!parsed.ok) return false
-    if (!parsed.explicit && shouldPassThroughCategory(parsed.query)) return false
+    if (!parsed.explicit && (matchPersonalQuery(this.e.msg) || shouldPassThroughCategory(parsed.query))) return false
 
     try {
       const category = await this.service.resolveCategory(parsed.query)
@@ -185,11 +197,11 @@ export class LotusAchievements extends BasePlugin {
         return true
       }
 
-      const uid = await resolveGenshinUid(this.e, parsed.profileId)
+      const uid = await this.resolveCategoryUid(this.e, parsed.profileId)
       let offset = 0
       let pageCount = 0
       const images = []
-      const backgrounds = await getRenderBackgrounds(1)
+      const backgrounds = await this.getCategoryBackgrounds(1)
       while (true) {
         const result = await this.service.buildCategory({
           uid,
@@ -200,7 +212,10 @@ export class LotusAchievements extends BasePlugin {
         result.renderData.backgrounds = backgrounds
         pageCount += 1
         const page = result.renderData.page || { index: pageCount, total: pageCount, hasNext: false }
-        const image = await renderTemplate("achievement-category", result.renderData, {
+        if (pageCount === 1 && page.total > 1) {
+          await replyText(this, `[荷花插件]正在生成「${category.name}」成就，共 ${page.total} 张，完成后将合并转发，请稍候。`)
+        }
+        const image = await this.renderCategory("achievement-category", result.renderData, {
           saveId: `lotus-achievement-category-${this.e.user_id}-${parsed.profileId}-${page.index}-${Date.now()}`,
         })
         images.push(image)
