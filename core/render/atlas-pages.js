@@ -73,7 +73,8 @@ function splitTables(table) {
       const cells = values.map((s, i) => linesOf(s, widths[i] - 12, 17))
       blocks.push({ type: 'table-row', cells, widths, height: Math.max(40, ...cells.map(c => c.length * 25 + 14)) })
     }
-    blocks.push({ type: 'gap', height: 12 })
+    // Level-table spacing stays inside its skill's single rounded container.
+    blocks.push({ type: 'spacer', height: 12 })
   }
   return blocks
 }
@@ -294,15 +295,12 @@ export async function renderAtlasPage(data, options = {}) {
   const texture = await image(path.join(ROOT, 'card-bg.png'))
   for (const [blockIndex, block] of page.blocks.entries()) {
     if (block.type === 'gap') { y += block.height; continue }
-    const isTable = block.type.startsWith('table')
-    if (isTable && !page.blocks[blockIndex - 1]?.type.startsWith('table')) {
-      let tableHeight = 0
-      for (const row of page.blocks.slice(blockIndex)) { if (!row.type.startsWith('table')) break; tableHeight += row.height }
-      ctx.save(); ctx.beginPath(); ctx.roundRect(MARGIN, y, INNER, tableHeight, 10); ctx.clip()
-    } else if (!isTable) {
-      ctx.save(); ctx.beginPath(); ctx.roundRect(MARGIN, y, INNER, block.height, 10); ctx.clip()
+    if (!blockIndex || page.blocks[blockIndex - 1].type === 'gap') {
+      let groupHeight = 0
+      for (const row of page.blocks.slice(blockIndex)) { if (row.type === 'gap') break; groupHeight += row.height }
+      ctx.save(); ctx.beginPath(); ctx.roundRect(MARGIN, y, INNER, groupHeight, 10); ctx.clip()
     }
-    rect(MARGIN, y, INNER, block.height, 'rgba(15,20,31,0.58)', block.type.startsWith('table') ? 0 : 8)
+    rect(MARGIN, y, INNER, block.height, 'rgba(15,20,31,0.58)', 0)
     if (texture && block.type === 'label') ctx.drawImage(texture, MARGIN, y, INNER, block.height)
     if (block.type === 'label') {
       const icon = block.icon ? await image(block.icon) : null
@@ -337,7 +335,7 @@ export async function renderAtlasPage(data, options = {}) {
       ctx.strokeStyle = 'rgba(255,255,255,0.09)'; ctx.beginPath(); ctx.moveTo(44, y + block.height); ctx.lineTo(756, y + block.height); ctx.stroke()
     }
     y += block.height
-    if (!isTable || !page.blocks[blockIndex + 1]?.type.startsWith('table')) ctx.restore()
+    if (!page.blocks[blockIndex + 1] || page.blocks[blockIndex + 1].type === 'gap') ctx.restore()
   }
   textLines([`荷花插件 · Nanoka Atlas · ${page.index}/${page.total}`], 24, page.height - 37, 14, MUTED)
   if (y + BOTTOM > page.height + 1) throw new Error(`Atlas page overflow: ${data.title}/${page.section}`)

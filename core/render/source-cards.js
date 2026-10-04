@@ -109,12 +109,13 @@ class SourceCanvas{
   const contents=[lead,...rows.map(row=>typeof row==='string'?row:`${row.label||row.title||''}：${row.value??row.body??''}`)].filter(Boolean)
   const heights=contents.map(value=>this.lines(value,w-65,14).length*22+8)
   const h=titleH+heights.reduce((a,b)=>a+b,0)+20
-  this.rect(x,top,w,h,'rgba(0,0,0,.50)',10)
-  this.rect(x,top,w,titleH,'rgba(0,0,0,.40)',10)
+  this.clip(x,top,w,h,10)
+  this.rect(x,top,w,h,'rgba(0,0,0,.50)')
+  this.rect(x,top,w,titleH,'rgba(0,0,0,.40)')
   this.text(title,x+20,top+10,w-40,20,GOLD,{leading:28})
   let y=top+titleH+10
   contents.forEach((value,i)=>{this.text('•',x+20,y,15,14,WHITE);this.text(value,x+40,y,w-65,14,WHITE,{leading:22});y+=heights[i]})
-  this.y+=h+10
+  this.restore();this.y+=h+10
  }
  async render(template,data,options){
   const height=Math.max(240,this.y+50),displayScale=720/this.width
@@ -133,12 +134,19 @@ class SourceCanvas{
  }
 }
 function elemental(p){p.rect(0,0,p.width,100000,'#243344');p.commands.push((ctx,images)=>{const img=images.get(path.join(resourcesPath,'miao-theme/bg/bg-hydro.webp'));if(img)ctx.drawImage(img,0,0,p.width,p.height)});p.refs.add(path.join(resourcesPath,'miao-theme/bg/bg-hydro.webp'))}
-function table(p,headers,rows,widths){
+function table(p,headers,rows,widths,caption){
  const x=10,w=p.width-25
  widths ||= headers.map(()=>w/headers.length)
  let y=p.y
  const entries=[headers,...rows].map(cells=>({cells,h:Math.max(36,...cells.map((cell,i)=>p.lines(cell?.label??cell,widths[i]-12-(cell?.image?36:0),14).length*21+14))}))
- p.clip(x,y,w,entries.reduce((sum,row)=>sum+row.h,0),10)
+ const captionH=caption?p.lines(caption.title,w-40,18).length*26+20+(caption.description?p.lines(caption.description,w-40,14).length*22+16:0):0
+ p.clip(x,y,w,captionH+entries.reduce((sum,row)=>sum+row.h,0),10)
+ if(caption){
+  p.rect(x,y,w,captionH,'rgba(0,0,0,.5)')
+  const titleH=p.text(caption.title,x+20,y+10,w-40,18,GOLD,{leading:26})
+  if(caption.description)p.text(caption.description,x+20,y+titleH+20,w-40,14,WHITE,{leading:22})
+  y+=captionH
+ }
  const paint=({cells,h},head,index)=>{
   p.rect(x,y,w,h,head?'rgba(0,0,0,.5)':index%2?'#fff':'#f0f0f0')
   let xx=x
@@ -156,7 +164,8 @@ function profile(p,data){
   const top=p.y,x=10,w=p.width-25
   const rows=group.rows?.length?group.rows:[{name:'未同步游戏角色'}]
   const h=42+rows.length*76
-  p.rect(x,top,w,h,'rgba(255,255,255,.65)',10);p.rect(x,top,w,34,'rgba(255,255,255,.8)',10)
+  p.clip(x,top,w,h,10)
+  p.rect(x,top,w,h,'rgba(255,255,255,.65)');p.rect(x,top,w,34,'rgba(255,255,255,.8)')
   p.text(group.label,x+15,top+8,w-30,16,'#333')
   rows.forEach((row,i)=>{
    const y=top+42+i*76
@@ -167,7 +176,7 @@ function profile(p,data){
    const xx=x+(row.image?104:48)
    p.text(row.uid||row.name,xx,y+9,w-(xx-x)-22,row.uid?24:16,INK,{font:row.uid?NUMBER:TEXT,leading:21})
    if(row.uid)p.text([row.name,row.level?`Lv.${row.level}`:'',row.active?'当前 UID':''].filter(Boolean).join(' · '),xx,y+38,w-(xx-x)-22,12,INK)
-  });p.y+=h+10
+  });p.restore();p.y+=h+10
  }
  p.log('账号状态',data.account||[],data.summary)
  p.log('签到设置',data.settings||[])
@@ -183,7 +192,7 @@ function primaryNote(item){
 }
 function daily(p,data){
  // Exact daily-note source: beige canvas, gold title marker, bordered rows,
- // icon/name/time left and a distinct 96px value column on the right.
+ // icon/name/time left and a wider single-line value column on the right.
  p.rect(0,0,p.width,100000,'#f0eae3');p.y=12
  for(const group of data.groups||[]){
   for(const item of group.items||[]){
@@ -194,19 +203,24 @@ function daily(p,data){
    const coin=item.game==='gs'&&item.data?.current_home_coin!==undefined?[{label:'洞天宝钱',value:`${item.data.current_home_coin}/${item.data.max_home_coin}`,icon:'洞天宝钱'}]:[]
    const recovery=(item.detail||'').split(' · ').find(part=>/^(回满|已回满)/.test(part))||''
    const rows=item.ok?[{label:primary.label,value:primary.value||'查询成功',note:primary.value?recovery:item.detail,icon:primary.icon},...coin,...(item.details||[]).map(row=>({...row,icon:{'洞天宝钱':'洞天宝钱','每日委托':'委托','探索派遣':'派遣','最快派遣':'派遣','周本减半':'周本','参量质变仪':'参量质变仪'}[row.label]}))]:[{label:'查询失败',value:'失败',note:item.error||item.detail}]
-   for(const row of rows){
-    const valueWidth=148,x=16,w=p.width-32,labelWidth=w-valueWidth-53
-    const noteLines=row.note?p.lines(row.note,labelWidth,12):[]
+   const valueWidth=148,x=16,w=p.width-32,labelWidth=w-valueWidth-53
+   const heights=rows.map(row=>Math.max(49,28+(row.note?p.lines(row.note,labelWidth,12).length:0)*17+9))
+   const groupTop=p.y,groupHeight=heights.reduce((sum,h)=>sum+h,0)
+   p.rect(x,groupTop,w,groupHeight,'#dfd8d1',9)
+   p.clip(x+1,groupTop+1,w-2,groupHeight-2,8)
+   for(const [rowIndex,row]of rows.entries()){
     let valueSize=16;p.ctx.font=`${valueSize}px ${NUMBER}`
     while(p.ctx.measureText(String(row.value??'')).width>valueWidth-12&&valueSize>12){valueSize-=.5;p.ctx.font=`${valueSize}px ${NUMBER}`}
-    const h=Math.max(49,28+noteLines.length*17+9)
-    p.rect(x,p.y,w,h,'#dfd8d1',9);p.clip(x+1,p.y+1,w-2,h-2,8)
-    p.rect(x+1,p.y+1,w-valueWidth-1,h-2,'#f5f1eb');p.rect(x+w-valueWidth,p.y+1,valueWidth-1,h-2,'#ece3d8')
+    const h=heights[rowIndex]
+    p.rect(x+1,p.y,w-valueWidth-1,h,'#f5f1eb');p.rect(x+w-valueWidth,p.y,valueWidth-1,h,'#ece3d8')
     if(row.icon){const icon=path.join(ROOT,'genshin/note-icons/gs',`${row.icon}.png`);if(existsSync(icon))p.image(icon,x+8,p.y+11,25,25)}
     p.text(row.label,x+42,p.y+7,labelWidth,14,'#1e1f20',{font:NUMBER,leading:18})
     if(row.note)p.text(row.note,x+42,p.y+27,labelWidth,12,'#5f5f5d',{font:NUMBER,leading:17})
-    p.text(row.value??'',x+w-valueWidth+6,p.y+(h-22)/2,valueWidth-12,valueSize,'#504c49',{font:NUMBER,align:'center',leading:22,singleLine:true,minSize:10});p.restore();p.y+=h+5
+    p.text(row.value??'',x+w-valueWidth+6,p.y+(h-22)/2,valueWidth-12,valueSize,'#504c49',{font:NUMBER,align:'center',leading:22,singleLine:true,minSize:10})
+    p.y+=h
+    if(rowIndex<rows.length-1)p.rule(x+1,p.y-1,w-2,'#dfd8d1')
    }
+   p.restore();p.y+=5
    p.y+=16
   }
  }
@@ -226,16 +240,19 @@ function qr(p,data){
  p.image(path.join(ROOT,'miao/common/theme/main-01.png'),0,0,p.width,800)
  const title=data.title||'扫码登录',subtitle=data.subtitle||`profile ${data.profileId||1}`
  const headerHeight=p.lines(title,p.width-70,50,TITLE).length*60+p.lines(subtitle,p.width-70,16).length*24+38
- p.rect(15,38,p.width-30,headerHeight,'rgba(15,20,31,.78)',15)
+ const frame={height:0}
+ p.commands.push(ctx=>{ctx.save();ctx.beginPath();ctx.roundRect(15,38,p.width-30,frame.height,15);ctx.clip()})
+ p.rect(15,38,p.width-30,headerHeight+3,'rgba(15,20,31,.78)')
  p.y=54;p.y+=p.text(title,35,p.y,p.width-70,50,WHITE,{font:TITLE,leading:60,shadow:true})
  p.y+=p.text(data.subtitle||`profile ${data.profileId||1}`,35,p.y+5,p.width-70,16,WHITE,{shadow:true})+25
  const top=p.y,w=p.width-30,qrSize=360,notice=data.notice||'请使用对应 App 扫码确认。'
  const noticeHeight=p.lines(notice,w-40,16).length*24
- p.rect(15,top,w,qrSize+noticeHeight+98,'rgba(0,0,0,.50)',15)
- p.rect(15,top,w,48,'rgba(0,0,0,.40)',15);p.text('扫码确认',35,top+15,w-40,18,GOLD)
+ frame.height=top+qrSize+noticeHeight+98-38
+ p.rect(15,top,w,qrSize+noticeHeight+98,'rgba(0,0,0,.50)')
+ p.rect(15,top,w,48,'rgba(0,0,0,.40)');p.text('扫码确认',35,top+15,w-40,18,GOLD)
  p.rect((p.width-qrSize)/2-12,top+60,qrSize+24,qrSize+24,'#fff',5)
  p.image(data.qrDataUrl,(p.width-qrSize)/2,top+72,qrSize,qrSize)
- p.text(notice,35,top+qrSize+90,w-40,16,WHITE,{leading:24});p.y=top+qrSize+noticeHeight+113
+ p.text(notice,35,top+qrSize+90,w-40,16,WHITE,{leading:24});p.restore();p.y=top+qrSize+noticeHeight+113
 }
 
 function statBackground(p,sr=false){
@@ -281,11 +298,7 @@ function achievements(p,data){
  if(data.categories?.length)table(p,['分类','已完成','原石','完成率'],data.categories.map(c=>[{label:c.name,image:c.icon},`${c.completed}/${c.total}`,`${c.pointsDone}/${c.pointsTotal}`,`${c.percent}%`]),[270,100,105,p.width-500])
  for(const group of data.groups||[]){
   const title=`${group.name} · ${group.completed}/${group.total} · 原石 ${group.pointsDone}/${group.pointsTotal}`
-  const top=p.y,w=p.width-25,lines=p.lines(title,w-40,18)
-  const h=lines.length*26+20
-  p.rect(10,top,w,h,'rgba(0,0,0,.5)',10);p.text(title,30,top+10,w-40,18,GOLD,{leading:26});p.y+=h
-  if(group.desc)p.log('说明',[group.desc])
-  table(p,['阶段 / 状态','成就说明','原石 / 进度'],(group.stages||[]).map(s=>[`${s.stageTotal>1?`${s.stageIndex}/${s.stageTotal}`:'单项'} · ${s.done?'已完成':'未完成'}${s.date?'\n'+s.date:''}`,s.desc||s.name,`${s.points} 原石\n${s.progress||'未记录'}`]),[120,p.width-240,95])
+  table(p,['阶段 / 状态','成就说明','原石 / 进度'],(group.stages||[]).map(s=>[`${s.stageTotal>1?`${s.stageIndex}/${s.stageTotal}`:'单项'} · ${s.done?'已完成':'未完成'}${s.date?'\n'+s.date:''}`,s.desc||s.name,`${s.points} 原石\n${s.progress||'未记录'}`]),[120,p.width-240,95],{title,description:group.desc})
  }
  if(data.message)p.log('说明',[data.message])
  if(data.hiddenCount)p.log('下一页',[`还有 ${data.hiddenCount} 个分组，请使用下一页指令继续查看。`])
