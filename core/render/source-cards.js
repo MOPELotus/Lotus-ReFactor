@@ -239,8 +239,16 @@ function qr(p,data){
 }
 
 function statBackground(p,sr=false){
- p.rect(0,0,p.width,100000,'#e8e7e4')
- p.image(path.join(ROOT,`miao/character/imgs/bg-0${sr?2:1}.jpg`),0,0,p.width,1200,{cover:true})
+ p.rect(0,0,p.width,100000,sr?'#26142a':'#e8e7e4')
+ const background=path.join(ROOT,`miao/character/imgs/bg-0${sr?2:1}.jpg`)
+ p.refs.add(background)
+ p.commands.push((ctx,images)=>{
+  const img=images.get(background);if(!img)return
+  // Match profile-stat's CSS: background-size: 100% auto; left center; repeat.
+  const tileHeight=p.width*img.height/img.width,origin=(p.height-tileHeight)/2
+  const first=origin-Math.ceil(origin/tileHeight)*tileHeight
+  for(let y=first;y<p.height;y+=tileHeight)ctx.drawImage(img,0,y,p.width,tileHeight)
+ })
  p.image(path.join(ROOT,`miao/character/imgs/main-0${sr?2:1}.png`),0,-25,p.width,900)
 }
 function summaries(p,rows){if(rows?.length)table(p,rows.map(r=>r.label),[rows.map(r=>r.value)])}
