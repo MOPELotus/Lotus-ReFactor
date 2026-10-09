@@ -143,7 +143,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     restrict_file_paths: true,
     allowed_paths: ["data/remote"],
     allow_admin: false,
-    shells: ["pwsh", "powershell", "cmd"],
+    shells: ["pwsh", "powershell", "cmd", "bash", "sh", "zsh"],
   },
   bilibili: {
     cookie: "",

@@ -30,7 +30,7 @@ export class LotusRemote extends BasePlugin {
           fnc: "otpStatus",
         },
         {
-          reg: "^#(远程管理员spawn|admin\\s+spawn|远程spawn|spawn)\\s+\\d{6}\\s+(pwsh|powershell|cmd)\\s+[\\s\\S]+$",
+          reg: "^#(远程管理员spawn|admin\\s+spawn|远程spawn|spawn)\\s+\\d{6}\\s+(pwsh|powershell|cmd|bash|sh|zsh)\\s+[\\s\\S]+$",
           fnc: "spawnCommand",
         },
         {
@@ -105,7 +105,7 @@ export class LotusRemote extends BasePlugin {
   async spawnCommand() {
     const parsed = parseRemoteSpawn(this.e.msg)
     if (!parsed) {
-      await replyText(this, "[荷花插件]格式：#远程spawn 123456 pwsh Get-Process")
+      await replyText(this, "[荷花插件]格式：#远程spawn 123456 pwsh Get-Process（Linux：#远程spawn 123456 bash uname -a）")
       return true
     }
 

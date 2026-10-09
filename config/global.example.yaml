@@ -113,6 +113,9 @@ remote:
     - pwsh
     - powershell
     - cmd
+    - bash
+    - sh
+    - zsh
 bilibili:
   cookie: ""
   sessdata: ""

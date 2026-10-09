@@ -1,5 +1,5 @@
 export function parseRemoteSpawn(message = "") {
-  const match = String(message).match(/^#(?:(远程管理员spawn|admin\s+spawn|远程spawn|spawn))\s+(\d{6})\s+(pwsh|powershell|cmd)\s+([\s\S]+)$/i)
+  const match = String(message).match(/^#(?:(远程管理员spawn|admin\s+spawn|远程spawn|spawn))\s+(\d{6})\s+(pwsh|powershell|cmd|bash|sh|zsh)\s+([\s\S]+)$/i)
   if (!match) return null
   return {
     admin: /管理员|admin/i.test(match[1]),

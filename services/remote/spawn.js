@@ -13,6 +13,9 @@ const SHELL_ARGS = Object.freeze({
   pwsh: command => ["-NoProfile", "-NonInteractive", "-Command", powershellUtf8Command(command)],
   powershell: command => ["-NoProfile", "-NonInteractive", "-Command", powershellUtf8Command(command)],
   cmd: command => ["/d", "/q", "/c", `chcp 65001>nul & ${command}`],
+  bash: command => ["-c", command],
+  sh: command => ["-c", command],
+  zsh: command => ["-c", command],
 })
 
 export class RemoteSpawnService {
@@ -126,12 +129,25 @@ export async function isProcessElevated(spawnImpl = spawn) {
 
 export function runShellSpawn(spawnImpl, shell, command, options = {}) {
   return new Promise(resolve => {
+    if (!Object.hasOwn(SHELL_ARGS, shell)) {
+      resolve({ ok: false, stage: "validate", reason: "shell_not_allowed" })
+      return
+    }
     const args = SHELL_ARGS[shell](command)
-    const child = spawnImpl(shell, args, {
-      cwd: process.cwd(),
-      windowsHide: true,
-      windowsVerbatimArguments: process.platform === "win32" && shell === "cmd",
-    })
+    const useProcessGroup = process.platform !== "win32"
+    let child
+    try {
+      child = spawnImpl(shell, args, {
+        cwd: process.cwd(),
+        windowsHide: true,
+        windowsVerbatimArguments: process.platform === "win32" && shell === "cmd",
+        detached: useProcessGroup,
+        stdio: ["ignore", "pipe", "pipe"],
+      })
+    } catch (error) {
+      resolve({ ok: false, stage: "spawn", reason: redactSensitive(error.message), stdout: "", stderr: "" })
+      return
+    }
     const limit = Number(options.outputLimit || 12000)
     const byteLimit = Math.max(limit * 4, 4096)
     const stdout = createChunkCollector(byteLimit)
@@ -139,7 +155,17 @@ export function runShellSpawn(spawnImpl, shell, command, options = {}) {
     let timedOut = false
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill("SIGTERM")
+      // Unix shells can leave pipeline/background children holding output pipes open.
+      // A separate process group lets the timeout stop the entire command tree.
+      if (useProcessGroup && child.pid) {
+        try {
+          process.kill(-child.pid, "SIGKILL")
+        } catch (error) {
+          if (error.code !== "ESRCH") child.kill("SIGKILL")
+        }
+      } else {
+        child.kill(useProcessGroup ? "SIGKILL" : "SIGTERM")
+      }
     }, Number(options.timeoutMs || 30000))
 
     child.stdout?.on("data", chunk => {
@@ -153,7 +179,7 @@ export function runShellSpawn(spawnImpl, shell, command, options = {}) {
       resolve({
         ok: false,
         stage: "spawn",
-        reason: error.message,
+        reason: redactSensitive(error.message),
         stdout: "",
         stderr: "",
       })

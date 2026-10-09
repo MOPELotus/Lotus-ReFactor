@@ -194,7 +194,7 @@ const GUOBA_SCHEMAS = [
   sw("remote.restrict_file_paths", "限制文件路径", "上传下载只允许指定目录。"),
   textArea("remote.allowed_paths", "允许路径", "每行一个目录。"),
   sw("remote.allow_admin", "允许管理员模式", "仅在受控环境下开启。"),
-  textArea("remote.shells", "允许 shell", "每行一个：pwsh、powershell、cmd。"),
+  textArea("remote.shells", "允许 shell", "每行一个：pwsh、powershell、cmd、bash、sh、zsh；主机需已安装对应 shell。"),
 
   group("B 站"),
   textArea("bilibili.cookie", "B 站 Cookie", "长 Cookie 可直接粘贴。"),
