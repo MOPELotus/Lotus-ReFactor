@@ -1,18 +1,17 @@
-import crypto from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
 import YAML from "yaml"
 import { resolveData } from "../../core/path.js"
 import { formatLocalIso } from "../../core/time.js"
+import QRCode from "qrcode"
+import { TuneWeaveService } from "../tuneweave/service.js"
 
-const MODULUS = "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7"
-const PUBKEY = "010001"
-const NONCE = "0CoJUm6Qyw8W8jud"
-const IV = "0102030405060708"
+let taskRunning = null
 
 export class NeteasePartnerService {
   constructor(options = {}) {
-    this.fetch = options.fetch || globalThis.fetch
+    this.tuneweave = options.tuneweave || new TuneWeaveService({ config: options.config, fetch: options.fetch })
+    this.scorer = options.scorer || weightedScore
     this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)))
     this.now = options.now || (() => new Date())
     this.accountsFile = options.accountsFile || resolveData("netease", "accounts.yaml")
@@ -20,51 +19,41 @@ export class NeteasePartnerService {
     this.stateFile = options.stateFile || resolveData("netease", "state.yaml")
   }
 
-  async createQrLogin(apiUrl) {
-    const base = normalizeApiUrl(apiUrl)
-    const keyRes = await this.requestJson(`${base}/login/qr/key?timestamp=${Date.now()}`)
-    const key = keyRes?.data?.unikey
-    if (!key) throw new Error("网易云二维码 key 获取失败")
-    const qrRes = await this.requestJson(`${base}/login/qr/create?key=${encodeURIComponent(key)}&qrimg=true&timestamp=${Date.now()}`)
-    const qrimg = qrRes?.data?.qrimg
-    if (!qrimg) throw new Error("网易云二维码创建失败")
-    return {
-      key,
-      qrimg,
-    }
+  async createQrLogin(qq) {
+    await this.tuneweave.requireReady()
+    const alias = `lotus-nep-${String(qq).replace(/[^a-zA-Z0-9_-]/g, "_")}`
+    const qr = await this.tuneweave.request("/v1/auth/qr", {
+      method: "POST", body: { platform: "netease", account: alias, credential_mode: "server" },
+    })
+    if (!qr.transaction_id || !qr.url) throw new Error("TuneWeave 未返回完整登录二维码。")
+    return { key: qr.transaction_id, alias, qrimg: qr.image_data_url || await QRCode.toDataURL(qr.url) }
   }
 
-  async waitQrLogin({ apiUrl, key, qq, timeoutMs = 300000, pollMs = 3000 } = {}) {
-    const base = normalizeApiUrl(apiUrl)
+  async waitQrLogin({ key, alias, qq, timeoutMs = 300000, pollMs = 3000 } = {}) {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      const res = await this.requestJson(`${base}/login/qr/check?key=${encodeURIComponent(key)}&timestamp=${Date.now()}`)
-      if (res?.code === 803) {
-        const cookie = normalizeCookie(res.cookie || "")
-        const account = await this.getAccountInfo(base, cookie).catch(() => ({ uid: "", nickname: "网易云账号" }))
-        const saved = await this.saveAccount({
-          uid: String(account.uid || ""),
-          nickname: account.nickname || "网易云账号",
-          qq: String(qq || ""),
-          cookie,
-        })
-        return {
-          ok: true,
-          account: saved,
-        }
+      const result = await this.tuneweave.request(`/v1/auth/qr/${encodeURIComponent(key)}`)
+      if (result.state === "confirmed") {
+        if (!result.profile?.authenticated || !result.profile.user_id) throw new Error("TuneWeave 登录未核验账号身份。")
+        const account = await this.saveAccount({ uid: result.profile.user_id, nickname: result.profile.nickname, qq, tuneweave_account: alias })
+        return { ok: true, account }
       }
-      if (res?.code === 800) throw new Error("网易云二维码已过期")
+      if (["expired", "failed", "verification_required"].includes(result.state)) throw new Error("二维码已过期或需要额外验证，请重新登录。")
       await this.sleep(pollMs)
     }
     throw new Error("网易云二维码登录超时")
   }
 
-  async getAccountInfo(apiUrl, cookie) {
-    const res = await this.requestJson(`${apiUrl}/user/account?cookie=${encodeURIComponent(cookie)}&timestamp=${Date.now()}`)
-    return {
-      uid: res?.profile?.userId || "",
-      nickname: res?.profile?.nickname || "网易云账号",
-    }
+  async migrateAccount(account) {
+    if (account.tuneweave_account) return account
+    if (!account.cookie) throw new Error("请先使用 #合伙人登录。")
+    const profile = await this.tuneweave.request("/v1/account?platform=netease&account=default")
+    if (!profile?.authenticated || !profile.user_id || (account.uid && String(profile.user_id) !== String(account.uid))) throw new Error("旧账号与 TuneWeave 默认账号不一致，请使用 #合伙人登录。")
+    return this.saveAccount({ ...account, uid: profile.user_id, nickname: profile.nickname || account.nickname, tuneweave_account: "default" })
+  }
+
+  async partnerApi(account, uri, data = {}, crypto = "weapi") {
+    return this.tuneweave.request("/v1/extensions/netease/api", { method: "POST", body: { account: account.tuneweave_account, uri, data, crypto } })
   }
 
   async loadAccounts() {
@@ -86,19 +75,27 @@ export class NeteasePartnerService {
       qq: String(account.qq || ""),
       extraCount: Number(account.extraCount ?? 9999),
       comment: account.comment !== false,
-      cookie: account.cookie || "",
+      tuneweave_account: account.tuneweave_account || "",
       updated_at: formatLocalIso(this.now()),
     }
-    const index = accounts.findIndex(item => String(item.uid) === String(normalized.uid) && normalized.uid)
+    const index = accounts.findIndex(item => (String(item.uid) === String(normalized.uid) && normalized.uid) || (normalized.tuneweave_account && item.tuneweave_account === normalized.tuneweave_account))
     if (index >= 0) accounts[index] = { ...accounts[index], ...normalized }
     else accounts.push(normalized)
+    for (const item of accounts) { if (item.tuneweave_account) delete item.cookie }
 
     await fs.mkdir(path.dirname(this.accountsFile), { recursive: true })
-    await fs.writeFile(this.accountsFile, YAML.stringify({ accounts }), "utf8")
+    await fs.writeFile(this.accountsFile, YAML.stringify({ accounts }), { encoding: "utf8", mode: 0o600 })
+    await fs.chmod(this.accountsFile, 0o600)
     return normalized
   }
 
   async executeTask(config = {}, trigger = "手动测试", options = {}) {
+    if (taskRunning) return taskRunning
+    taskRunning = this.executeTaskInternal(config, trigger, options)
+    try { return await taskRunning } finally { taskRunning = null }
+  }
+
+  async executeTaskInternal(config = {}, trigger = "手动测试", options = {}) {
     const accounts = await this.loadAccounts()
     const report = {
       trigger,
@@ -112,7 +109,7 @@ export class NeteasePartnerService {
         success: 0,
         skip: 0,
         fail: 0,
-        details: ["请先使用 #合伙人登录 或写入 data/netease/accounts.yaml。"],
+        details: ["请先使用 #初始化TuneWeave 和 #合伙人登录。"],
       })
       await this.writeLog(report)
       if (options.recordRun) await this.markTaskRun(report.time)
@@ -128,89 +125,92 @@ export class NeteasePartnerService {
   }
 
   async executeAccount(account, config = {}) {
-    const comments = Array.isArray(config.comments) && config.comments.length ? config.comments : ["打卡支持"]
+    const comments = [...new Set((Array.isArray(config.comments) && config.comments.length ? config.comments : ["打卡支持"]).map(text => String(text).trim()).filter(Boolean))]
+    const availableComments = [...comments]
     const delayMin = Number(config.delay_ms_min ?? 8000)
     const delayMax = Number(config.delay_ms_max ?? 11000)
-    const summary = {
-      uid: account.uid,
-      nickname: account.nickname || `用户_${account.uid}`,
-      total: 0,
-      success: 0,
-      skip: 0,
-      fail: 0,
-      details: [],
-    }
-    try {
-      if (!account.cookie) throw new Error("未登录")
-      const csrf = account.cookie.match(/__csrf=([^;]+)/)?.[1] || ""
-      const headers = {
-        Cookie: account.cookie,
-        Referer: "https://mp.music.163.com/",
-      }
-      const taskRes = await this.requestJson("https://interface.music.163.com/api/music/partner/daily/task/get", { headers })
-      if (taskRes.code !== 200) throw new Error(taskRes.message || "接口异常")
-      const taskId = taskRes.data?.id
-      const works = [...(taskRes.data?.works || [])]
-      const extraRes = await this.requestJson("https://interface.music.163.com/api/music/partner/extra/wait/evaluate/work/list", { headers }).catch(() => null)
-      if (extraRes?.code === 200) {
-        const extra = (extraRes.data || []).filter(item => !item.completed).slice(0, Number(account.extraCount || 0))
-        works.push(...extra.map(item => ({ ...item, isExtra: true })))
-      }
+    const completed = new Map()
+    const pending = new Map()
+    const summary = { uid: account.uid, nickname: account.nickname || `用户_${account.uid}`, total: 20, success: 0, skip: 0, fail: 20, attempts: 0, details: [], evaluations: [], results: [] }
 
-      if (!works.length) summary.details.push("今日无评定待办")
-      for (const item of works) {
-        const work = item.work || item
-        const songId = work.id
-        const songName = work.name || String(songId)
-        summary.total++
-        if (item.completed) {
-          summary.skip++
-          summary.details.push(`${songName}: 已完成`)
-          continue
-        }
+    for (let attempt = 1; attempt <= 2 && completed.size < 20; attempt++) {
+      summary.attempts = attempt
+      if (attempt === 2) {
+        summary.details.push("完成数不足 20，重试一轮；已完成作品不重复提交。")
         await this.sleep(randomDelay(delayMin, delayMax))
-        const score = weightedScore()
-        const extraScore = buildExtraScore(resolveExtraScoreDimensions(item, work))
-        const payload = {
-          taskId,
-          workId: songId,
-          score,
-          tags: `${score}-A-1`,
-          customTags: "[]",
-          comment: account.comment === false ? "" : comments[Math.floor(Math.random() * comments.length)],
-          syncYunCircle: "true",
-          syncComment: account.comment === false ? "false" : "true",
-          extraScore: JSON.stringify(extraScore),
-          source: "mp-music-partner",
-          csrf_token: csrf,
-        }
-        if (item.isExtra) payload.extraResource = "true"
-        const cryptoData = weapi(payload)
-        const post = await this.requestJson(`https://interface.music.163.com/weapi/music/partner/work/evaluate?csrf_token=${csrf}`, {
-          method: "POST",
-          headers: {
-            ...headers,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams(cryptoData).toString(),
-        })
-        if (post.code === 200) {
-          summary.success++
-          const subScoreText = formatSubScores(extraScore)
-          summary.details.push(`${songName}: ${score}分${subScoreText ? `（分项 ${subScoreText}）` : ""}`)
-        } else {
-          summary.fail++
-          summary.details.push(`${songName}: ${post.message || "失败"}`)
-        }
       }
-    } catch (error) {
-      summary.fail++
-      summary.details.push(`流程错误: ${error.message}`)
+      try {
+        await this.tuneweave.requireReady?.()
+        account = await this.migrateAccount(account)
+        const identity = await this.tuneweave.request(`/v1/account?platform=netease&account=${encodeURIComponent(account.tuneweave_account)}`)
+        if (!identity.authenticated || String(identity.user_id) !== String(account.uid)) throw new Error("TuneWeave 账号与合伙人记录不一致，请重新登录。")
+        const taskRes = await this.partnerApi(account, "/api/music/partner/daily/task/get")
+        if (taskRes.code !== 200) throw new Error("每日任务读取失败。")
+        const works = [...(taskRes.data?.works || [])]
+        const extraRes = await this.partnerApi(account, "/api/music/partner/extra/wait/evaluate/work/list").catch(error => {
+          summary.details.push(`第 ${attempt} 轮额外任务读取失败：${error.message}`)
+          return null
+        })
+        if (extraRes?.code === 200 && Array.isArray(extraRes.data)) {
+          works.push(...extraRes.data.slice(0, Math.min(15, Number(account.extraCount ?? 15))).map(item => ({ ...item, isExtra: true })))
+        }
+        if (!works.length) summary.details.push(`第 ${attempt} 轮未返回待评作品。`)
+        for (const item of works) {
+          if (completed.size >= 20) break
+          const work = item.work || item
+          const id = String(work.id || "")
+          if (!id || completed.has(id)) continue
+          const name = work.name || id
+          const dimensions = resolveExtraScoreDimensions(item, work)
+          if (item.completed) {
+            const record = { workId: id, name, status: "already_completed", score: item.score ?? null, dimensions, extraScore: Object.fromEntries(dimensions.map(key => [key, item.extraScore?.[key] ?? null])), comment: item.comment || "", attempt }
+            completed.set(id, record)
+            summary.evaluations.push(record)
+            summary.skip++
+            summary.details.push(`${name}: 已完成，不重复提交。`)
+            continue
+          }
+          let payload = pending.get(id)
+          if (!payload) {
+            const score = this.scorer()
+            const extraScore = buildExtraScore(dimensions, this.scorer)
+            if (!availableComments.length) availableComments.push(...comments)
+            const comment = account.comment === false ? "" : availableComments.splice(Math.floor(Math.random() * availableComments.length), 1)[0] || ""
+            payload = { taskId: taskRes.data?.id, workId: work.id, score, tags: `${score}-A-1`, customTags: "[]", comment, syncYunCircle: "true", syncComment: comment ? "true" : "false", extraScore: JSON.stringify(extraScore), source: "mp-music-partner" }
+            if (item.isExtra) payload.extraResource = "true"
+            pending.set(id, payload)
+          }
+          const record = { workId: id, name, score: payload.score, extraScore: JSON.parse(payload.extraScore), dimensions, comment: payload.comment, commentPosted: Boolean(payload.comment), attempt }
+          await this.sleep(randomDelay(delayMin, delayMax))
+          try {
+            const post = await this.partnerApi(account, "/api/music/partner/work/evaluate", payload)
+            if (post.code !== 200) throw new Error(`评分提交未成功（${post.code || "未知状态"}）。`)
+            record.status = "success"
+            completed.set(id, record)
+            summary.evaluations.push(record)
+            summary.details.push(`${name}: 主分 ${record.score} · ${formatSubScores(record.extraScore) || "该作品未提供子项"}\n乐评：${record.comment || "未发布"}`)
+          } catch (error) {
+            record.status = "failed"
+            record.error = error.message
+            summary.evaluations.push(record)
+            summary.details.push(`第 ${attempt} 轮 ${name}: ${error.message}`)
+            if (error.message.includes("（405）")) break
+          }
+        }
+      } catch (error) {
+        summary.details.push(`第 ${attempt} 轮流程错误: ${error.message}`)
+      }
     }
+    summary.success = completed.size
+    summary.fail = 20 - completed.size
+    summary.results = [...completed.values()]
     return summary
   }
 
   async latestLog() {
+    try {
+      return JSON.parse(await fs.readFile(path.join(this.logDir, "nep-latest.json"), "utf8"))
+    } catch (error) { if (error.code !== "ENOENT") throw error }
     const files = await fs.readdir(this.logDir).catch(error => {
       if (error?.code === "ENOENT") return []
       throw error
@@ -222,10 +222,11 @@ export class NeteasePartnerService {
 
   async writeLog(report) {
     await fs.mkdir(this.logDir, { recursive: true })
-    const date = this.now()
-    const stamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}${pad(date.getHours())}${pad(date.getMinutes())}`
-    const file = path.join(this.logDir, `nep-${stamp}.json`)
+    const file = path.join(this.logDir, "nep-latest.json")
     await fs.writeFile(file, JSON.stringify(report, null, 2), "utf8")
+    // Keep the latest daily report only; never touch other feature logs.
+    const oldFiles = (await fs.readdir(this.logDir)).filter(name => /^nep-\d{12}\.json$/.test(name))
+    await Promise.all(oldFiles.map(name => fs.rm(path.join(this.logDir, name), { force: true })))
     return file
   }
 
@@ -267,14 +268,7 @@ export class NeteasePartnerService {
     return now > scheduledToday
   }
 
-  async requestJson(url, options = {}) {
-    if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
-    const response = await this.fetch(url, options)
-    const text = await response.text()
-    const data = text ? JSON.parse(text) : null
-    if (!response.ok) throw new Error(`网易云请求失败 HTTP ${response.status}`)
-    return data
-  }
+
 }
 
 export function parseDailyCronTime(schedule = "") {
@@ -290,21 +284,23 @@ export function parseDailyCronTime(schedule = "") {
   }
 }
 
-export function weapi(obj) {
-  const text = JSON.stringify(obj)
-  const secretKey = crypto.randomBytes(16).map(n => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".charCodeAt(n % 62))
-  const params = aesEncrypt(aesEncrypt(text, NONCE, IV), secretKey, IV)
-  return {
-    params,
-    encSecKey: rsaEncrypt(secretKey, PUBKEY, MODULUS),
-  }
-}
-
 export function buildPartnerItems(report) {
   return (report.accounts || []).map(account => ({
     label: account.nickname || account.uid || "账号",
-    value: `总 ${account.total} · 成功 ${account.success} · 跳过 ${account.skip} · 失败 ${account.fail}`,
+    value: `成功 ${account.success} · 失败 ${account.fail}`,
   }))
+}
+
+export function buildPartnerLogMessages(report) {
+  const messages = [`合伙人日志 · ${report.time || ""} · ${report.trigger || ""}`]
+  for (const account of report.accounts || []) {
+    messages.push(`${account.nickname || account.uid || "账号"}：成功 ${account.success} · 失败 ${account.fail} · 执行 ${account.attempts || 1} 轮`)
+    for (const entry of account.evaluations || []) {
+      messages.push(`歌曲：${entry.name}\n主分：${entry.score ?? "未返回"}\n子项：${formatSubScores(entry.extraScore) || "该作品未提供子项"}\n乐评：${entry.comment || (entry.status === "already_completed" ? "已完成记录未返回乐评" : "未发布")}\n第 ${entry.attempt} 轮 · ${entry.status === "success" ? "成功" : entry.status === "already_completed" ? "此前已完成" : `失败：${entry.error}`}`)
+    }
+    messages.push(...(account.details || []).filter(text => /错误|失败|重试|未返回/.test(text)))
+  }
+  return messages
 }
 
 export function buildExtraScore(dimensions = [], scorer = weightedScore) {
@@ -332,30 +328,6 @@ export function normalizeCookie(rawCookie = "") {
     pairs.set(key, rest.join("="))
   }
   return [...pairs.entries()].map(([key, value]) => `${key}=${value}`).join("; ")
-}
-
-function aesEncrypt(data, key, iv) {
-  const cipher = crypto.createCipheriv("aes-128-cbc", Buffer.from(key), Buffer.from(iv))
-  return Buffer.concat([cipher.update(data, "utf8"), cipher.final()]).toString("base64")
-}
-
-function rsaEncrypt(key, pubKey, mod) {
-  const mBig = BigInt(`0x${mod}`)
-  const eBig = BigInt(`0x${pubKey}`)
-  const kBig = BigInt(`0x${Buffer.from(key).reverse().toString("hex")}`)
-  let res = 1n
-  let base = kBig
-  let exp = eBig
-  while (exp > 0n) {
-    if (exp % 2n === 1n) res = (res * base) % mBig
-    base = (base * base) % mBig
-    exp /= 2n
-  }
-  return res.toString(16).padStart(256, "0")
-}
-
-function normalizeApiUrl(value = "http://127.0.0.1:3000") {
-  return String(value || "http://127.0.0.1:3000").replace(/\/+$/, "")
 }
 
 function weightedScore() {

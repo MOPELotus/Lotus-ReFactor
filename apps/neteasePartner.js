@@ -1,12 +1,13 @@
 const BasePlugin = globalThis.plugin
 
-import { loadGlobalConfig } from "../core/config/global.js"
+import { loadGlobalConfig, saveGlobalConfig } from "../core/config/global.js"
+import { TuneWeaveService } from "../services/tuneweave/service.js"
 import { PermissionService } from "../core/permissions/service.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
 import { formatLocalDateTime } from "../core/time.js"
 import { notifyUser } from "../core/transport/notify.js"
-import { replyImage, replyText } from "../core/transport/reply.js"
-import { buildPartnerItems, NeteasePartnerService } from "../services/neteasePartner/service.js"
+import { replyImage, replyText, replyForward } from "../core/transport/reply.js"
+import { buildPartnerItems, buildPartnerLogMessages, NeteasePartnerService } from "../services/neteasePartner/service.js"
 
 export class LotusNeteasePartner extends BasePlugin {
   constructor() {
@@ -16,7 +17,9 @@ export class LotusNeteasePartner extends BasePlugin {
       event: "message",
       priority: 20,
       rule: [
-        { reg: "^#合伙人测试$", fnc: "manualTest" },
+        { reg: "^#初始化TuneWeave$", fnc: "initializeTuneWeave" },
+        { reg: "^#TuneWeave状态$", fnc: "tuneWeaveStatus" },
+        { reg: "^#合伙人测试(?:[（(]执行[）)])?$", fnc: "manualTest" },
         { reg: "^#合伙人登录$", fnc: "partnerLogin" },
         { reg: "^#合伙人日志$", fnc: "partnerLog" },
       ],
@@ -43,6 +46,7 @@ export class LotusNeteasePartner extends BasePlugin {
           log: false,
         },
       ]
+      await new TuneWeaveService({ config: globalConfig.tuneweave }).resume()
       await this.scheduleStartupCatchUp(config)
     } catch (error) {
       logger?.warn?.(`[Lotus-Plugin] load netease partner task failed: ${error.message}`)
@@ -50,7 +54,8 @@ export class LotusNeteasePartner extends BasePlugin {
   }
 
   async scheduleStartupCatchUp(config) {
-    const service = new NeteasePartnerService()
+    const globalConfig = await loadGlobalConfig()
+    const service = new NeteasePartnerService({ config: globalConfig.tuneweave })
     if (!await service.shouldCatchUp(config).catch(() => false)) return
     logger?.mark?.("[Lotus-Plugin] netease partner catch-up scheduled in 60s")
     setTimeout(() => {
@@ -69,11 +74,12 @@ export class LotusNeteasePartner extends BasePlugin {
         disabled: true,
       }
     }
-    const report = await new NeteasePartnerService().executeTask(
-      config,
-      options.trigger || "自动任务",
-      { recordRun: true },
-    )
+    let report
+    try {
+      report = await new NeteasePartnerService({ config: globalConfig.tuneweave }).executeTask(config, options.trigger || "自动任务", { recordRun: true })
+    } catch (error) {
+      report = { trigger: options.trigger || "自动任务", time: formatLocalDateTime(), accounts: [{ nickname: "TuneWeave", total: 0, success: 0, skip: 0, fail: 1, details: [error.message] }] }
+    }
     logger?.mark?.(`[Lotus-Plugin] netease partner task finished: ${report.accounts?.length || 0} account(s)`)
     await this.notifyMasters(globalConfig, report).catch(error => {
       logger?.warn?.(`[Lotus-Plugin] notify netease partner report failed: ${error.message}`)
@@ -81,18 +87,38 @@ export class LotusNeteasePartner extends BasePlugin {
     return report
   }
 
+  async initializeTuneWeave() {
+    const config = await loadGlobalConfig()
+    if (!await this.requireMaster(config)) return true
+    try {
+      const result = await new TuneWeaveService({ config: config.tuneweave }).initialize({
+        onProgress: text => replyText(this, `[荷花插件]${text}`),
+      })
+      await replyText(this, `[荷花插件]TuneWeave 初始化完成 · ${result.version} · ${result.apiUrl}。`)
+    } catch (error) { await replyText(this, `[荷花插件]TuneWeave 初始化失败：${error.message}`) }
+    return true
+  }
+
+  async tuneWeaveStatus() {
+    const config = await loadGlobalConfig()
+    if (!await this.requireMaster(config)) return true
+    const result = await new TuneWeaveService({ config: config.tuneweave }).status()
+    await replyText(this, `[荷花插件]TuneWeave ${result.ok ? "就绪" : "未就绪"} · ${result.version || "未知版本"}\n${result.apiUrl}\n${result.message}`)
+    return true
+  }
+
   async partnerLogin() {
     const globalConfig = await loadGlobalConfig()
     if (!await this.requireMaster(globalConfig)) return true
-    const service = new NeteasePartnerService()
+    const service = new NeteasePartnerService({ config: globalConfig.tuneweave })
     try {
       const config = globalConfig.netease_partner || {}
-      const qr = await service.createQrLogin(config.api_url)
+      const qr = await service.createQrLogin(this.e.user_id)
       const image = await renderTemplate("qr-login", {
         title: "网易云登录",
         subtitle: "音乐合伙人",
         badge: "5 MIN",
-        notice: "使用网易云音乐 App 扫码确认。完成后荷花插件会把账号 cookie 保存到 data/netease/accounts.yaml。",
+        notice: "使用网易云音乐 App 扫码确认。完成后凭据由自托管 TuneWeave 保存，荷花插件仅保存账号信息。",
         qrDataUrl: qr.qrimg,
         profileId: "netease",
       }, {
@@ -100,12 +126,14 @@ export class LotusNeteasePartner extends BasePlugin {
       })
       await replyImage(this, image, "[荷花插件]网易云登录二维码已生成。")
       const result = await service.waitQrLogin({
-        apiUrl: config.api_url,
+        alias: qr.alias,
         key: qr.key,
         qq: this.e.user_id,
         timeoutMs: config.login_timeout_ms,
         pollMs: config.login_poll_ms,
       })
+      globalConfig.netease_partner.enable = true
+      await saveGlobalConfig(globalConfig)
       await this.renderReport("合伙人登录", {
         trigger: "扫码登录",
         accounts: [{
@@ -127,7 +155,7 @@ export class LotusNeteasePartner extends BasePlugin {
     if (!await this.requireMaster(globalConfig)) return true
     await replyText(this, "[荷花插件]网易云合伙人任务启动中。")
     try {
-      const report = await new NeteasePartnerService().executeTask(globalConfig.netease_partner || {}, "手动测试")
+      const report = await new NeteasePartnerService({ config: globalConfig.tuneweave }).executeTask(globalConfig.netease_partner || {}, "手动执行", { recordRun: true })
       await this.renderReport("合伙人测试", report, "完成")
     } catch (error) {
       await this.renderError("合伙人测试", error)
@@ -138,7 +166,7 @@ export class LotusNeteasePartner extends BasePlugin {
   async partnerLog() {
     const globalConfig = await loadGlobalConfig()
     if (!await this.requireMaster(globalConfig)) return true
-    const report = await new NeteasePartnerService().latestLog()
+    const report = await new NeteasePartnerService({ config: globalConfig.tuneweave }).latestLog()
     if (!report) {
       await this.renderReport("合伙人日志", {
         trigger: "最近日志",
@@ -146,7 +174,7 @@ export class LotusNeteasePartner extends BasePlugin {
       }, "空")
       return true
     }
-    await this.renderReport("合伙人日志", report, "LOG")
+    await replyForward(this, buildPartnerLogMessages(report), { title: "合伙人日志" })
     return true
   }
 
@@ -182,12 +210,12 @@ export class LotusNeteasePartner extends BasePlugin {
   async notifyMasters(globalConfig, report) {
     const config = globalConfig.netease_partner || {}
     if (config.notify_master === false) return
-    const masters = collectMasterIds()
+    const masters = await collectMasterIds()
     if (!masters.length) {
       logger?.debug?.("[Lotus-Plugin] netease partner report skipped: no master configured")
       return
     }
-    const image = await this.renderReportImage("合伙人自动任务", report, "完成", "master")
+    const image = await this.renderReportImage("合伙人自动任务", report, report.accounts?.some(account => account.fail) ? "有失败" : "完成", "master")
     for (const master of masters) {
       const result = await notifyUser(master, image, {
         bot: globalThis.Bot,
@@ -208,7 +236,7 @@ export class LotusNeteasePartner extends BasePlugin {
       message: error.message,
       userId: this.e.user_id,
       items: [
-        { label: "建议", value: "检查 API 服务地址、账号 cookie 或稍后重试。" },
+        { label: "建议", value: "使用 #TuneWeave状态 检查服务，必要时 #初始化TuneWeave 或 #合伙人登录。" },
       ],
     }, {
       saveId: `lotus-netease-partner-error-${this.e.user_id || "master"}`,
@@ -217,7 +245,7 @@ export class LotusNeteasePartner extends BasePlugin {
   }
 }
 
-function collectMasterIds() {
+async function collectMasterIds() {
   const values = []
   const config = globalThis.Bot?.config || {}
   appendIds(values, config.masterQQ)
@@ -225,7 +253,15 @@ function collectMasterIds() {
   appendIds(values, config.masters)
   appendIds(values, config.master_qq)
   appendIds(values, config.owner)
-  return [...new Set(values.map(value => String(value).trim()).filter(Boolean))]
+  if (!values.length) {
+    // The bot config getter is available even when Bot.config is not populated.
+    const { pathToFileURL } = await import("node:url")
+    const { default: path } = await import("node:path")
+    const cfg = (await import(pathToFileURL(path.join(process.cwd(), "lib/config/config.js")).href)).default
+    appendIds(values, cfg.masterQQ)
+    appendIds(values, cfg.master)
+  }
+  return [...new Set(values.map(value => String(value).trim().split(":").at(-1)).filter(value => value && value !== "stdin"))]
 }
 
 function appendIds(target, value) {

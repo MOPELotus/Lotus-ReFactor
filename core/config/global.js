@@ -202,7 +202,6 @@ function normalizeLegacyPermissionScopes(permissions = {}) {
 function normalizeLegacyNetease(input = {}) {
   return {
     enable: Boolean(input.enable),
-    api_url: input.apiUrl || input.api_url || "http://127.0.0.1:3000",
     schedule: input.schedule || "0 5 0 * * ? *",
     auto_catch_up: Boolean(input.autoCatchUp ?? input.auto_catch_up),
     accounts: Array.isArray(input.accounts) ? input.accounts : [],
@@ -215,6 +214,7 @@ function normalizeCronFields(config = {}) {
     config.scheduler.run_due_cron = normalizeQuartzCron(config.scheduler.run_due_cron)
   }
   if (config.netease_partner) {
+    delete config.netease_partner.api_url
     config.netease_partner.schedule = normalizeQuartzCron(config.netease_partner.schedule)
   }
   if (config.atlas?.auto_update) {

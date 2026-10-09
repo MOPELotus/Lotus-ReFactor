@@ -61,6 +61,7 @@ export function validateGlobalConfig(config) {
   validateBilibiliConfig(config.bilibili, errors)
   validateDouyinConfig(config.douyin, errors)
   validateGroupsConfig(config.groups, errors)
+  if (!isObject(config.tuneweave) || !isString(config.tuneweave.api_url) || !isPositiveInteger(config.tuneweave.request_timeout_ms)) errors.push("tuneweave requires api_url and positive request_timeout_ms")
   validateNeteasePartnerConfig(config.netease_partner, errors)
   validateLoggingConfig(config.logging, errors)
   validateAtlasConfig(config.atlas, errors)
@@ -436,7 +437,7 @@ function validateNeteasePartnerConfig(netease = {}, errors) {
     return
   }
   if (typeof netease.enable !== "boolean") errors.push("netease_partner.enable must be boolean")
-  for (const field of ["api_url", "schedule"]) {
+  for (const field of ["schedule"]) {
     if (!isString(netease[field])) errors.push(`netease_partner.${field} must be a string`)
   }
   for (const field of ["login_timeout_ms", "login_poll_ms", "delay_ms_min", "delay_ms_max"]) {

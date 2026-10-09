@@ -31,14 +31,12 @@
 - [TimeRainStarSky/Yunzai](https://github.com/TimeRainStarSky/Yunzai)
 - [yoimiya-kokomi/miao-plugin](https://github.com/yoimiya-kokomi/miao-plugin)
 - [guoba-yunzai/guoba-plugin](https://github.com/guoba-yunzai/guoba-plugin)
-- [Black-Cyan/napcat-plugin-douyin](https://github.com/Black-Cyan/napcat-plugin-douyin)：抖音游客身份、接口参数及签名规则参考。
-- [ikenxuan/karin-plugin-kkk](https://github.com/ikenxuan/karin-plugin-kkk)：抖音作品类型和媒体结构参考。
-- [ikenxuan/kkkkkk-10086](https://github.com/ikenxuan/kkkkkk-10086)：媒体地址和异常处理行为参考。
-- [misaka20002/siliconflow-plugin](https://github.com/misaka20002/siliconflow-plugin)：分享页面 SSR 数据提取思路参考。
-- [Evil0ctal/Douyin_TikTok_Download_API](https://github.com/Evil0ctal/Douyin_TikTok_Download_API)：近期平台签名规则及公开浏览器签名样本参考。
-- [HDTianRu/TianRu-plugin](https://github.com/HDTianRu/TianRu-plugin)：提瓦特小助手抽卡记录导出接口及导入流程参考。
-
-抖音签名及业务实现由 Lotus 独立编写；参考平台参数、协议规则和数据结构，不复制或逐行翻译上述项目的功能代码。
+- [Black-Cyan/napcat-plugin-douyin](https://github.com/Black-Cyan/napcat-plugin-douyin)
+- [ikenxuan/karin-plugin-kkk](https://github.com/ikenxuan/karin-plugin-kkk)
+- [ikenxuan/kkkkkk-10086](https://github.com/ikenxuan/kkkkkk-10086)
+- [misaka20002/siliconflow-plugin](https://github.com/misaka20002/siliconflow-plugin)
+- [Evil0ctal/Douyin_TikTok_Download_API](https://github.com/Evil0ctal/Douyin_TikTok_Download_API)
+- [HDTianRu/TianRu-plugin](https://github.com/HDTianRu/TianRu-plugin)
 
 敏感数据只允许写入 `data/` 或用户本地配置，不要提交 cookie、stoken、mid、打码平台 key、OTP secret 或远程 spawn 输出。
 
