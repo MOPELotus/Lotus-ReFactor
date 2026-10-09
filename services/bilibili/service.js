@@ -203,7 +203,15 @@ export class BilibiliService {
         await packMediaFiles(files, target, { timeoutMs: download.timeout_ms, spawnImpl: this.spawn, cwd: task.dir })
         files = [target]
       }
-      return { ...plan, ok: true, taskDir: task.dir, taskId: task.id, files }
+      const fileNames = Object.fromEntries(files.map((file, index) => {
+        const ext = path.extname(file)
+        if (ext === ".zip") return [file, path.basename(file)]
+        const pageNumber = Number(path.basename(file).match(/-P(\d+)-/)?.[1]) || plan.pages[index]?.page || index + 1
+        const page = plan.pages.find(item => Number(item.page) === pageNumber)
+        const title = files.length > 1 ? page?.part || plan.info.title : plan.info.title || plan.info.bvid
+        return [file, `${files.length > 1 ? `P${pageNumber} ` : ""}${safeFileName(title)}${ext}`]
+      }))
+      return { ...plan, ok: true, taskDir: task.dir, taskId: task.id, files, fileNames }
     } catch (error) {
       await releaseMediaTask(this.tasksDir, task.dir).catch(cleanupError => {
         globalThis.logger?.warn?.(`[Lotus-Plugin] Bilibili task cleanup: ${cleanupError.message}`)
@@ -562,7 +570,8 @@ export function buildToolProcessEnv(pathDirs = [], baseEnv = process.env) {
 }
 
 export async function buildBBDownArgs(url, cwd, { page = null, config = {} } = {}) {
-  const args = [url, "--work-dir", cwd]
+  const pattern = "video-<bvid>-P<pageNumberWithZero>-<cid>"
+  const args = [url, "--work-dir", cwd, "--file-pattern", pattern, "--multi-file-pattern", pattern]
   const ffmpegPath = await resolveCommandPath("ffmpeg", config.tools_path)
   if (ffmpegPath) args.push("--ffmpeg-path", ffmpegPath)
   if (config.use_aria2) {

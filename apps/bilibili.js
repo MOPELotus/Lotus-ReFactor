@@ -294,7 +294,7 @@ export class LotusBilibili extends BasePlugin {
       }
 
       for (const file of result.files || []) {
-        await sendMediaFile(this.e, file, downloadConfig)
+        await sendMediaFile(this.e, file, { ...downloadConfig, file_name: result.fileNames?.[file] })
       }
     } catch (error) {
       await this.renderError(options.title || "B站下载", error)

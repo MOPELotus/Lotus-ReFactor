@@ -1,31 +1,59 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import os from "node:os"
+import { randomUUID } from "node:crypto"
 import { spawn } from "node:child_process"
 
 export function safeMediaName(value = "media") {
-  const cleaned = String(value).replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim()
+  let cleaned = String(value).toWellFormed().normalize("NFC")
+    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/g, " ").trim()
+  if (/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(cleaned)) cleaned = `_${cleaned}`
   let output = ""
-  for (const character of cleaned) {
-    if (Buffer.byteLength(output + character, "utf8") > 180) break
-    output += character
+  for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(cleaned)) {
+    if (Buffer.byteLength(output + segment, "utf8") > 180) break
+    output += segment
   }
+  output = output.replace(/[ .]+$/g, "")
+  if (/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(output)) output = `_${output}`
   return output || "media"
 }
 
 export async function sendMediaFile(e, file, config = {}) {
+  file = path.resolve(file)
   const stat = await fs.stat(file)
   const ext = path.extname(file).toLowerCase()
-  const segment = globalThis.segment
-  if ([".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) && segment?.image) {
-    return e.reply(segment.image(file))
+  const name = config.file_name || path.basename(file)
+  // Adapters turn local paths into unescaped file:// strings; NapCat then
+  // decodeURIComponent()s them. Keep display names separate from that path.
+  let transferDir
+  let transferFile = file
+  if (/[^A-Za-z0-9_./-]/.test(file)) {
+    const parent = /[^A-Za-z0-9_./-]/.test(path.dirname(file)) ? os.tmpdir() : path.dirname(file)
+    transferDir = await fs.mkdtemp(path.join(parent, ".lotus-media-upload-"))
+    const transferExt = /^\.[a-z0-9]{1,12}$/.test(ext) ? ext : ".bin"
+    transferFile = path.join(transferDir, `media-${randomUUID()}${transferExt}`)
+    try {
+      try { await fs.link(file, transferFile) } catch (error) {
+        if (!["EXDEV", "EPERM", "EACCES", "ENOTSUP", "EMLINK"].includes(error.code)) throw error
+        await fs.copyFile(file, transferFile, fs.constants.COPYFILE_FICLONE)
+      }
+    } catch (error) { await fs.rm(transferDir, { recursive: true, force: true }); throw error }
   }
-  if ([".mp4", ".mkv", ".flv", ".mov", ".m4v"].includes(ext)
-    && stat.size <= Number(config.video_size_limit_mb || 100) * 1024 * 1024 && segment?.video) {
-    return e.reply(segment.video(file))
+  try {
+    const segment = globalThis.segment
+    if ([".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) && segment?.image) {
+      return await e.reply(segment.image(transferFile, name))
+    }
+    if ([".mp4", ".mkv", ".flv", ".mov", ".m4v"].includes(ext)
+      && stat.size <= Number(config.video_size_limit_mb || 100) * 1024 * 1024 && segment?.video) {
+      return await e.reply(segment.video(transferFile, name))
+    }
+    if (e.isGroup && e.group?.sendFile) return await e.group.sendFile(transferFile, name)
+    if (e.friend?.sendFile) return await e.friend.sendFile(transferFile, name)
+    throw new Error("当前适配器不支持发送文件")
+  } finally {
+    if (transferDir) await fs.rm(transferDir, { recursive: true, force: true })
   }
-  if (e.isGroup && e.group?.sendFile) return e.group.sendFile(file, path.basename(file))
-  if (e.friend?.sendFile) return e.friend.sendFile(file, path.basename(file))
-  throw new Error("当前适配器不支持发送文件")
 }
 
 export async function runMediaProcess(command, args, { cwd, env, timeoutMs = 600000, spawnImpl = spawn } = {}) {
