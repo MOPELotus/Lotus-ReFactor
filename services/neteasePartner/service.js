@@ -253,6 +253,11 @@ export class NeteasePartnerService {
     })
   }
 
+  async hasRunToday() {
+    const state = await this.loadState()
+    return state.last_run_date === localDateKey(this.now())
+  }
+
   async shouldCatchUp(config = {}) {
     if (config.enable === false || config.auto_catch_up !== true) return false
     const scheduled = parseDailyCronTime(config.schedule)

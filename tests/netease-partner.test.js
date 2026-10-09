@@ -204,3 +204,13 @@ test("不足 20 首仅重试一轮，跳过已成功作品，最终合并计数�
     assert.equal(buildPartnerItems({ accounts: [report] }).length, 1)
   }
 })
+
+test("自动任务状态按日去重，次日恢复执行", async () => fixture(async dir => {
+  let date = new Date(2026, 9, 9, 12)
+  const service = new NeteasePartnerService({ stateFile: path.join(dir, "state.yaml"), now: () => date })
+  assert.equal(await service.hasRunToday(), false)
+  await service.markTaskRun()
+  assert.equal(await service.hasRunToday(), true)
+  date = new Date(2026, 9, 10, 12)
+  assert.equal(await service.hasRunToday(), false)
+}))

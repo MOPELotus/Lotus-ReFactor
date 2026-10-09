@@ -76,7 +76,9 @@ export class LotusNeteasePartner extends BasePlugin {
     }
     let report
     try {
-      report = await new NeteasePartnerService({ config: globalConfig.tuneweave }).executeTask(config, options.trigger || "自动任务", { recordRun: true })
+      const service = new NeteasePartnerService({ config: globalConfig.tuneweave })
+      if (await service.hasRunToday()) return { ok: true, skipped: true, reason: "already_run_today" }
+      report = await service.executeTask(config, options.trigger || "自动任务", { recordRun: true })
     } catch (error) {
       report = { trigger: options.trigger || "自动任务", time: formatLocalDateTime(), accounts: [{ nickname: "TuneWeave", total: 0, success: 0, skip: 0, fail: 1, details: [error.message] }] }
     }
