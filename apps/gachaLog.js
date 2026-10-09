@@ -22,6 +22,7 @@ import { ZzzGachaBridge } from "../services/pluginBridge/zzzGacha.js"
 import { GenshinGachaDisplayBridge } from "../services/pluginBridge/genshinGacha.js"
 import { StarRailGachaDisplayBridge } from "../services/pluginBridge/starRailGacha.js"
 import { StarRailGachaService } from "../services/starRailGacha/service.js"
+import { MiniappGachaService } from "../services/miniappGacha/service.js"
 
 export class LotusGachaLog extends BasePlugin {
   constructor() {
@@ -31,6 +32,10 @@ export class LotusGachaLog extends BasePlugin {
       event: "message",
       priority: LOTUS_INTERCEPT_PRIORITY,
       rule: [
+        {
+          reg: `^#?(获取|更新)(提瓦特)?小助手(抽卡|祈愿)?(记录|历史)${PROFILE_ID_SUFFIX_PATTERN}$`,
+          fnc: "miniappGachaLog",
+        },
         {
           reg: "^#更新(全部|所有)抽卡记录$",
           fnc: "allGachaLogs",
@@ -69,6 +74,22 @@ export class LotusGachaLog extends BasePlugin {
 
   async genshinGachaLog() {
     return this.updateGachaLog("gs")
+  }
+
+  async miniappGachaLog() {
+    const userId = String(this.e.user_id)
+    const profileId = parseProfileIdFromMessage(this.e.msg)
+    try {
+      const profile = await loadProfile(userId, profileId)
+      await replyText(this, `[荷花插件]正在同步 profile ${profileId} 的提瓦特小助手抽卡记录。`)
+      const result = await new MiniappGachaService().sync({ e: this.e, profile, profileId })
+      const messages = result.pools.map(pool => `${pool.name}记录：收到 ${pool.received} 条，新增 ${pool.added} 条，共 ${pool.total} 条`)
+      await replyText(this, `[荷花插件]profile ${profileId} · UID ${result.uid}\n${messages.length ? `${messages.join("\n")}\n导入成功，可使用 #抽卡记录${profileId === 1 ? "" : profileId} 查看。` : "提瓦特小助手抽卡记录为空，本地记录已保留。"}`)
+    } catch (error) {
+      const message = isMissingProfileError(error) ? profileLoginRequiredMessage(profileId) : translateGachaError(error)
+      await replyText(this, `[荷花插件]小助手抽卡记录同步失败：${message}`)
+    }
+    return true
   }
 
   async genshinGachaView() {

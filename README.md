@@ -36,6 +36,7 @@
 - [ikenxuan/kkkkkk-10086](https://github.com/ikenxuan/kkkkkk-10086)：媒体地址和异常处理行为参考。
 - [misaka20002/siliconflow-plugin](https://github.com/misaka20002/siliconflow-plugin)：分享页面 SSR 数据提取思路参考。
 - [Evil0ctal/Douyin_TikTok_Download_API](https://github.com/Evil0ctal/Douyin_TikTok_Download_API)：近期平台签名规则及公开浏览器签名样本参考。
+- [HDTianRu/TianRu-plugin](https://github.com/HDTianRu/TianRu-plugin)：提瓦特小助手抽卡记录导出接口及导入流程参考。
 
 抖音签名及业务实现由 Lotus 独立编写；参考平台参数、协议规则和数据结构，不复制或逐行翻译上述项目的功能代码。
 

@@ -5,6 +5,9 @@
 ## 功能特性
 
 - 原神通过对应 profile 的 stoken 生成 `authkey`。
+- `#更新小助手抽卡记录[profile]` 自动使用 Lotus profile 的 stoken 获取凭据，从提瓦特小助手后台导入原神国服记录，无需逍遥插件或手动链接。兼容 `#获取提瓦特小助手祈愿历史[profile]` 等原指令别名。
+- 小助手同步会将 UID 和含 authkey 的查询链接提交给小助手后台；不会发送 stoken。记录按 ID 去重合并到 Yunzai 的 `data/gachaJson/<qq>/<uid>/`，可直接用现有抽卡分析查看；本次收到数与新增数分别报告，空记录不清除本地数据。
+- Lotus 在 Yunzai 禁用列表中加入上游功能名 `提瓦特小助手抽卡记录`，避免 TianRu 的同名入口重复处理。
 - 星铁使用 profile Cookie 登录官方抽卡统计活动，读取五星记录与各卡池抽数，不依赖 `authkey`。
 - 绝区零优先使用 CK 直刷；只有获取或刷新抽卡链接时才生成 `authkey`。
 - 星铁记录以官方稳定记录 ID 增量合并；重复更新不会重复叠加，活动 token 和 Cookie 不落盘。
@@ -16,6 +19,7 @@
 
 ```text
 #更新抽卡记录[profile]
+#更新小助手抽卡记录[profile]
 *更新抽卡记录[profile]
 #星铁更新抽卡记录[profile]
 %更新抽卡记录[profile]

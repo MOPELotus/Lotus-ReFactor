@@ -70,6 +70,9 @@ export const LOTUS_CONFIG_DISABLED_PLUGIN_NAMES = Object.freeze([
   // FanSky_Qs team damage overlaps.
   "提瓦特小助手",
 
+  // TianRu-plugin Gclog constructor name (not its directory or class name).
+  "提瓦特小助手抽卡记录",
+
   // loveMys / related captcha handler overlaps.
   "mys请求错误处理",
   "[loveMys] 插件更新",
