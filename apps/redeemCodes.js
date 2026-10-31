@@ -24,9 +24,9 @@ export class LotusRedeemCodes extends BasePlugin {
     if (!game) return false
     const result = await this.service.query(game.id)
     if (result.status === "available" && result.codes.length) {
-      const rewards = result.codes.map((item, index) => item.reward ? `${index + 1}. ${item.reward}` : "").filter(Boolean)
-      const summary = [formatRedeemResult({ ...result, codes: [] }), ...(rewards.length ? ["", "各条兑换码奖励：", ...rewards] : [])].join("\n")
-      await replyForward(this, [summary, ...result.codes.map(item => item.code)], {
+      const [title, ...details] = formatRedeemResult({ ...result, codes: [] }).split("\n").filter(Boolean)
+      const codes = result.codes.flatMap(item => item.reward ? [item.code, item.reward] : [item.code])
+      await replyForward(this, [title, ...codes, ...details], {
         title: `${result.title || game.name}兑换码`,
       })
     } else {

@@ -212,7 +212,7 @@ test("direct transport rejects non-official or credential-bearing destinations b
   }
 })
 
-test("available codes are forwarded as individually copyable messages with metadata and rewards outside the code nodes", async () => {
+test("available codes preserve all content in order, splitting each part into a forward node and keeping codes individually copyable", async () => {
   globalThis.plugin = class { constructor(config) { Object.assign(this, config) } }
   const { LotusRedeemCodes } = await import("../apps/redeemCodes.js")
   const result = await fixture().service.query("sr")
@@ -225,15 +225,12 @@ test("available codes are forwarded as individually copyable messages with metad
   assert.equal(replies.length, 1)
   assert.equal(replies[0].type, "forward")
   const texts = replies[0].nodes.map(node => node.message)
-  assert.equal(texts.length, 3)
-  assert.match(texts[0], /2026-10-31 23:59:59/)
-  assert.match(texts[0], /1\. 星琼×100/)
-  assert.match(texts[0], /2\. 信用点×50000/)
-  assert.ok(!texts[0].includes("永远不会抛弃你"))
-  assert.deepEqual(texts.slice(1), ["永远不会抛弃你", "ABC123"])
+  assert.deepEqual(texts, formatRedeemResult(result).split("\n").filter(Boolean))
+  assert.deepEqual(texts.slice(1, 5), ["永远不会抛弃你", "星琼×100", "ABC123", "信用点×50000"])
+  assert.match(texts[5], /2026-10-31 23:59:59/)
   // If the adapter cannot build a forward, code messages still remain separate.
   replies.length = 0
   app.e.group = {}
   await app.redeemCodes()
-  assert.deepEqual(replies.slice(1), ["永远不会抛弃你", "ABC123"])
+  assert.deepEqual(replies, texts)
 })
