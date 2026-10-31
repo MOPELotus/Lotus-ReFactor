@@ -18,6 +18,15 @@ const ATLAS_CHALLENGE_SCOPE_ARGS = Object.freeze([
 
 export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
   version: CURRENT_GLOBAL_CONFIG_VERSION,
+  coin_shop: {
+    enable: true,
+    mode: "auto",
+    host: "127.0.0.1",
+    port: 18164,
+    path: "/lotus/coin-shop",
+    public_url: "",
+    session_hours: 8,
+  },
   render: {
     background: [
       "https://api.lvxiaodong.com/api/ys?return=json",

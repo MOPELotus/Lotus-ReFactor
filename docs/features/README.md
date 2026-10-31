@@ -30,6 +30,7 @@
 - [队伍伤害-星铁](team-damage-starrail.md)
 - [挑战查询-图鉴期数](challenge-query.md)
 - [前瞻兑换码-官方活动与有效期](redeem-codes.md)
+- [米游币兑换网页-商品与定时预约](coin-shop.md)
 
 ## 图鉴与成就
 

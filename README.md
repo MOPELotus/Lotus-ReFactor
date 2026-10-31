@@ -37,6 +37,7 @@
 - [misaka20002/siliconflow-plugin](https://github.com/misaka20002/siliconflow-plugin)
 - [Evil0ctal/Douyin_TikTok_Download_API](https://github.com/Evil0ctal/Douyin_TikTok_Download_API)
 - [HDTianRu/TianRu-plugin](https://github.com/HDTianRu/TianRu-plugin)
+- [Marchen-orz/MiyoQian](https://github.com/Marchen-orz/MiyoQian)
 
 敏感数据只允许写入 `data/` 或用户本地配置，不要提交 cookie、stoken、mid、打码平台 key、OTP secret 或远程 spawn 输出。
 

@@ -280,3 +280,13 @@ permissions:
       policy: master_only
     netease.partner:
       policy: master_only
+
+# 米游币兑换网页：auto 优先共用 TRSS HTTP 服务，否则启用独立端口。
+coin_shop:
+  enable: true
+  mode: auto
+  host: 127.0.0.1
+  port: 18164
+  path: /lotus/coin-shop
+  public_url: ""
+  session_hours: 8

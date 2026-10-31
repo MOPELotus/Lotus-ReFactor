@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>米游币兑换 · 荷花</title><link rel="stylesheet" href="style.css"><script src="app.js" defer></script></head>
+<body>
+  <main id="login" class="login" hidden><div class="mark">荷</div><p class="eyebrow">LOTUS · COIN SHOP</p><h1>让攒下的米游币，<br>遇见喜欢的好物。</h1><p id="login-message">请私聊机器人发送下方指令，获取你的专属登录链接。</p><code>#米游币兑换</code><p class="muted">登录后使用已绑定的 profile，无需再次填写 Cookie。</p></main>
+  <div id="dashboard" hidden>
+    <header class="topbar"><a class="brand" href="./"><span class="mark small">荷</span><span>米游币兑换<small>LOTUS COIN SHOP</small></span></a><div class="account"><label for="profile">当前账号</label><select id="profile" aria-label="当前 profile"></select><button id="logout" class="text-button">退出</button></div></header>
+    <main class="workspace">
+      <section class="intro"><div><p class="eyebrow">给喜欢的东西，留一个位置</p><h1>逛逛商城，提前安排。</h1><p>查看官方库存和开放时间，选好商品后，到点自动尝试兑换。</p></div><div class="clock"><span class="pulse"></span>北京时间 <span id="clock"></span></div></section>
+      <section class="metrics"><article><span>可用米游币</span><strong id="balance">—</strong><small id="balance-note">来自当前账号的实时余额</small></article><article><span>等待开放</span><strong id="upcoming">—</strong><small>当前列表中的下一批商品</small></article><article><span>我的预约</span><strong id="active-plans">—</strong><small id="next-plan">选好后再创建，不会自动下单</small></article></section>
+      <section class="catalog"><div class="section-head"><nav class="tabs" aria-label="页面"><button id="tab-goods" class="active">商品商城</button><button id="tab-plans">我的预约</button></nav><button id="refresh" class="secondary">刷新数据 ↻</button></div>
+        <div id="goods-view"><div class="filters"><label>游戏分区<select id="game"><option value="">全部商品</option></select></label><label>商品状态<select id="status"><option value="all">全部状态</option><option value="scheduled">等待开放</option><option value="available">正在兑换</option></select></label><label class="search">搜索商品<input id="search" type="search" placeholder="在当前列表中搜索"></label></div><p id="catalog-note" class="muted"></p><div id="goods" class="goods-grid" aria-live="polite"></div><div id="pagination" class="pagination"><button id="previous" class="secondary">上一页</button><span id="page-label"></span><button id="next" class="secondary">下一页</button></div></div>
+        <div id="plans-view" hidden><p class="muted">预约结果会保留在这里，并通知你的机器人账号。提交后结果不明时，请先核对米游社兑换记录。</p><div id="plans" aria-live="polite"></div></div>
+      </section><footer>价格、库存和时间来自米游社官方接口。预约不预扣米游币，提交兑换成功后才扣除；每个计划兑换 1 件。</footer>
+    </main>
+  </div>
+  <dialog id="detail"><form method="dialog" class="dialog-top"><span class="eyebrow">商品详情</span><button class="close" aria-label="关闭商品详情">×</button></form><div id="detail-content"></div></dialog>
+  <div id="toast" role="status" hidden></div>
+</body></html>
