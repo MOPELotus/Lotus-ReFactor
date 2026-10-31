@@ -37,7 +37,7 @@ export async function notifyUser(userId, payload, options = {}) {
     }
   }
 
-  for (const groupId of collectCandidateGroups(bot, normalizedUserId, options)) {
+  for (const groupId of options.allowGroupFallback === false ? [] : collectCandidateGroups(bot, normalizedUserId, options)) {
     const groupResult = await trySendGroup(bot, groupId, normalizedUserId, payload, options)
     attempts.push(groupResult)
     if (groupResult.ok) {

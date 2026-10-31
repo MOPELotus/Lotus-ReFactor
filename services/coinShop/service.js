@@ -19,7 +19,9 @@ export class CoinShopService {
     this.wait = options.wait || ((ms, signal) => delay(ms, undefined, { signal, ref: false }))
     this.notify = options.notify || (async (plan, text) => {
       const bot = globalThis.Bot?.[plan.botId] || globalThis.Bot
-      return notifyUser(plan.qq, text, { bot, prefer: "private", fallbackGroups: [] })
+      const result = await notifyUser(plan.qq, text, { bot, prefer: "private", allowGroupFallback: false })
+      if (!result.ok) throw new Error(`私聊通知失败：${result.reason}，兑换结果保留在网页记录中`)
+      return result
     })
     this.running = new Map()
     this.accountLocks = new Set()

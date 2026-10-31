@@ -437,3 +437,11 @@ test("a quota-exhausted item still wakes at the next official opening with long 
   await f.service.tracking.poll()
   assert.equal((await f.store.list()).length, 1)
 })
+
+test('coin shop default notifications fail privately rather than falling back to a common group',async t=>{
+ const previous=globalThis.Bot
+ t.after(()=>{globalThis.Bot=previous})
+ globalThis.Bot={test:{fl:new Map(),getGroupList:()=>{throw new Error('Exchange details must not reach group fallback')}}}
+ const service=new CoinShopService()
+ await assert.rejects(service.notify({qq:'123',botId:'test'},'private exchange result'),/私聊通知失败：not_friend/)
+})
