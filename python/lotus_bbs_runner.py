@@ -115,6 +115,34 @@ def patch_bbstools_version(version: str):
     setting.headers["User-Agent"] = f"{user_agent} miHoYoBBS/{version}".strip()
 
 
+def configure_bbstools_environment_proxy():
+    # Upstream passes a custom HTTPTransport, which makes HTTPX ignore env
+    # proxies. Let HTTPX build its transports so NO_PROXY is respected too.
+    if not any(os.environ.get(key) for key in (
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+        "http_proxy", "https_proxy", "all_proxy",
+    )):
+        return
+    try:
+        import httpx
+    except ImportError:
+        return  # requests already honors the environment by default.
+    import request
+
+    original_factory = request.get_new_session
+
+    def get_new_session(**kwargs):
+        if any(key in kwargs for key in ("transport", "proxy", "proxies")):
+            return original_factory(**kwargs)
+        options = {"timeout": 30, "follow_redirects": True, **kwargs}
+        return httpx.Client(**options)
+
+    old_session = request.http
+    request.get_new_session = get_new_session
+    request.http = get_new_session()
+    old_session.close()
+
+
 def run(args):
     module_dir = Path(args.module_dir).resolve()
     config_file = Path(args.config).resolve()
@@ -130,6 +158,7 @@ def run(args):
 
     install_json_logging(args.event_file, context)
     install_captcha_bridge(args.captcha_dir, context, args.captcha_timeout)
+    configure_bbstools_environment_proxy()
 
     import config
     patch_bbstools_version(args.mihoyobbs_version)
