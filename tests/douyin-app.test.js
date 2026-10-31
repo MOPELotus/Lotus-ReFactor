@@ -11,12 +11,14 @@ const { LotusDouyin } = await import("../apps/douyin.js")
 const id = "7372484719365098803"
 const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom"), Buffer.alloc(20)])
 
-test("two actual Douyin plugin instances send the same work to independent groups and clean after each send", async t => {
+test("two actual Douyin plugin instances queue the same work to independent groups and clean after each send", { timeout: 5000 }, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "lotus-app-test-"))
   t.after(() => fs.rm(root, { recursive: true, force: true }))
   const config = createDefaultGlobalConfig()
   const events = []
   const waiting = []
+  const entered = [Promise.withResolvers(), Promise.withResolvers()]
+  t.after(() => waiting.forEach(resolve => resolve?.()))
   const services = [1, 2].map(() => new DouyinService({
     tasksDir: root, visitor: { get: async () => "visitor" }, prepareVideo: async file => ({ file, warnings: [] }),
     fetch: async url => url.includes("detail") ? new Response(JSON.stringify({ status_code: 0, aweme_detail: { aweme_id: id, desc: "same", video: { duration: 1000, play_addr: { url_list: ["https://cdn.test/media"] } } } })) : new Response(mp4),
@@ -26,20 +28,27 @@ test("two actual Douyin plugin instances send the same work to independent group
     app.e = { user_id: groupId, group_id: groupId, isGroup: true, reply: async () => true, group: { sendFile: async file => {
       events.push({ groupId, file })
       await fs.access(file)
-      await new Promise(resolve => { waiting[groupId - 1] = resolve })
+      await new Promise(resolve => {
+        waiting[groupId - 1] = resolve
+        entered[groupId - 1].resolve()
+      })
       await fs.access(file)
     } } }
     return app
   })
   const tasks = apps.map((app, index) => app.handleWork(services[index], { id }, config, false))
-  while (waiting.filter(Boolean).length < 2) await new Promise(resolve => setTimeout(resolve, 1))
+  await Promise.race(entered.map(item => item.promise))
+  const firstIndex = events[0].groupId - 1
+  const secondIndex = 1 - firstIndex
+  assert.equal(events.length, 1, "identical work must wait until the first upload finishes")
+  waiting[firstIndex]()
+  await tasks[firstIndex]
+  await entered[secondIndex].promise
   assert.notEqual(events[0].file, events[1].file)
-  waiting[0]()
-  await tasks[0]
   assert.equal((await fs.readdir(root)).length, 1)
-  const stillSending = events.find(event => event.groupId === 2)
+  const stillSending = events.find(event => event.groupId === secondIndex + 1)
   assert.deepEqual(await fs.readFile(stillSending.file), mp4)
-  waiting[1]()
-  await tasks[1]
+  waiting[secondIndex]()
+  await tasks[secondIndex]
   assert.deepEqual(await fs.readdir(root), [])
 })
