@@ -117,7 +117,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     download_retries: 3,
     bbdown: {
       enable: true,
-      repo: "nilaoda/BBDown",
+      repo: "MOPELotus/BBDown",
       command: "BBDown",
     },
     ffmpeg: {

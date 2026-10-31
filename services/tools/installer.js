@@ -9,6 +9,8 @@ import { resolveData, rootPath } from "../../core/path.js"
 
 const toolInstallations = new Map()
 
+export const BBDOWN_VERSION = "1.6.4"
+
 const TOOL_NAMES = ["bbdown", "ffmpeg", "aria2"]
 const DEFAULT_INSTALL_ATTEMPTS = 3
 
@@ -86,7 +88,10 @@ export class ToolInstallerService {
     const toolsDir = resolveMaybeData(normalized.dir || "data/tools")
     const existing = await findCommandExecutable(tool.command, [binDir], this.platform)
     if (existing) {
-      const health = await inspectToolInstall(name, existing, binDir, toolsDir, this.platform)
+      const version = name === "bbdown" ? await this.readBBDownVersion(existing) : null
+      const health = name === "bbdown" && version !== BBDOWN_VERSION
+        ? { ok: false, reason: `版本 ${version || "未知"}，需要 ${BBDOWN_VERSION}` }
+        : await inspectToolInstall(name, existing, binDir, toolsDir, this.platform)
       if (health.ok) {
         await ensureExecutablePermissions(name, existing, binDir, this.platform)
         await emitProgress(onProgress, `工具链：${name} 已存在`)
@@ -102,8 +107,8 @@ export class ToolInstallerService {
 
     if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
     if (name === "ffmpeg") await removeSharedFfmpegArtifacts(toolsDir)
-    await emitProgress(onProgress, `工具链：查询 ${tool.repo} 最新版本`)
-    const release = await this.fetchLatestRelease(tool.repo, normalized.github_api)
+    await emitProgress(onProgress, `工具链：查询 ${tool.repo} ${name === "bbdown" ? BBDOWN_VERSION : "最新版本"}`)
+    const release = await this.fetchLatestRelease(tool.repo, normalized.github_api, name === "bbdown" ? BBDOWN_VERSION : null)
     const asset = pickReleaseAsset(name, release.assets || [], {
       platform: this.platform,
       arch: this.arch,
@@ -127,14 +132,21 @@ export class ToolInstallerService {
 
         await emitProgress(onProgress, `工具链：下载 ${asset.name}${attempt > 1 ? `（重试 ${attempt}/${attempts}）` : ""}`)
         await this.downloadAsset(asset.browser_download_url || asset.url, archive)
-        await emitProgress(onProgress, `工具链：解压 ${asset.name}`)
-        await extractArchive(this.spawn, archive, extractDir, {
-          timeoutMs: normalized.timeout_ms,
-        })
+        await emitProgress(onProgress, `工具链：准备 ${asset.name}`)
+        if (name === "bbdown" && !/\.(?:zip|tar\.gz|tar\.xz)$/i.test(asset.name)) {
+          await fs.copyFile(archive, path.join(extractDir, commandFileName(tool.command, this.platform)))
+        } else {
+          await extractArchive(this.spawn, archive, extractDir, { timeoutMs: normalized.timeout_ms })
+        }
 
         const executable = await findExtractedExecutable(extractDir, tool.command, this.platform)
         if (!executable) throw new Error(`${tool.command} executable not found in ${asset.name}`)
 
+        if (name === "bbdown") {
+          if (this.platform !== "win32") await fs.chmod(executable, 0o755)
+          const version = await this.readBBDownVersion(executable)
+          if (version !== BBDOWN_VERSION) throw new Error(`BBDown 下载版本不匹配：${version || "未知"}`)
+        }
         const target = await copyToolPayload(name, executable, binDir, tool.command, this.platform)
         await emitProgress(onProgress, `工具链：${name} 安装完成`)
 
@@ -158,9 +170,18 @@ export class ToolInstallerService {
     throw new Error(`${lastError?.message || `${tool.command} install failed`}；已自动重试 ${attempts} 次`)
   }
 
-  async fetchLatestRelease(repo, api = "https://api.github.com") {
+  async readBBDownVersion(executable) {
+    if (!executable) return ""
+    // 上游 1.6.3 的 --version 会因缺少 URL 失败，--help 同样包含版本号。
+    try {
+      const result = await runSpawn(this.spawn, executable, ["--help"], { timeoutMs: 15000 })
+      return parseBBDownVersion(result.stdout + "\n" + result.stderr)
+    } catch { return "" }
+  }
+
+  async fetchLatestRelease(repo, api = "https://api.github.com", tag = null) {
     const base = String(api || "https://api.github.com").replace(/\/+$/, "")
-    const response = await this.fetch(`${base}/repos/${repo}/releases/latest`, {
+    const response = await this.fetch(`${base}/repos/${repo}/releases/${tag ? `tags/${encodeURIComponent(tag)}` : "latest"}`, {
       headers: {
         Accept: "application/vnd.github+json",
         "User-Agent": "Lotus-Plugin tool installer",
@@ -205,7 +226,7 @@ export function normalizeToolsConfig(config = {}) {
     download_retries: Math.max(1, Number(config.download_retries || DEFAULT_INSTALL_ATTEMPTS)),
     bbdown: {
       enable: config.bbdown?.enable !== false,
-      repo: config.bbdown?.repo || "nilaoda/BBDown",
+      repo: config.bbdown?.repo || "MOPELotus/BBDown",
       command: config.bbdown?.command || "BBDown",
       asset_patterns: config.bbdown?.asset_patterns,
     },
@@ -242,9 +263,9 @@ export function defaultAssetPatterns(tool, platform = process.platform, arch = p
   const os = normalizePlatform(platform)
   const cpu = normalizeArch(arch)
   if (tool === "bbdown") {
-    if (os === "windows") return [/BBDown.*(?:win|windows).*x64.*\.zip$/i, /BBDown.*\.zip$/i]
-    if (os === "linux") return [/BBDown.*linux.*(?:x64|amd64).*\.tar\.gz$/i, /BBDown.*linux.*(?:x64|amd64).*\.zip$/i]
-    if (os === "darwin") return [/BBDown.*(?:osx|mac|darwin).*\.zip$/i, /BBDown.*(?:osx|mac|darwin).*\.tar\.gz$/i]
+    const system = os === "windows" ? "(?:win|windows)" : os === "darwin" ? "(?:osx|mac|darwin)" : "linux"
+    const architecture = cpu === "x64" ? "(?:x64|amd64)" : cpu
+    return [new RegExp(`^BBDown.*${system}[-_]${architecture}(?:\\.exe|\\.zip|\\.tar\\.gz)?$`, "i")]
   }
   if (tool === "ffmpeg") {
     if (os === "windows") return [/ffmpeg(?!.*shared).*win64.*gpl.*\.zip$/i, /ffmpeg(?!.*shared).*windows.*64.*\.zip$/i]
@@ -353,7 +374,7 @@ function runSpawn(spawnImpl, command, args = [], options = {}) {
     child.stderr?.on("data", chunk => {
       stderr += chunk.toString()
     })
-    child.on("error", reject)
+    child.on("error", error => { clearTimeout(timer); reject(error) })
     child.on("close", code => {
       clearTimeout(timer)
       if (code === 0 && !timedOut) {
@@ -410,8 +431,13 @@ async function inspectToolInstall(name, executable, binDir, toolsDir, platform =
 async function copyToolPayload(name, executable, binDir, command, platform = process.platform) {
   const target = path.join(binDir, commandFileName(command, platform))
   if (name !== "ffmpeg") {
-    await fs.copyFile(executable, target)
-    if (platform !== "win32") await fs.chmod(target, 0o755).catch(() => null)
+    // rename 替换软链接本身，避免覆盖插件目录外的链接目标；旧版本在下载失败时仍可用。
+    const staging = `${target}.install-${process.pid}`
+    try {
+      await fs.copyFile(executable, staging)
+      if (platform !== "win32") await fs.chmod(staging, 0o755)
+      await fs.rename(staging, target)
+    } finally { await fs.rm(staging, { force: true }).catch(() => null) }
     return target
   }
 
@@ -501,4 +527,8 @@ async function emitProgress(onProgress, message) {
   } catch (error) {
     logger?.debug?.(`[Lotus-Plugin] progress callback failed: ${error.message}`)
   }
+}
+
+export function parseBBDownVersion(output = "") {
+  return String(output).match(/BBDown(?:\s+version)?\s+v?(\d+\.\d+\.\d+)/i)?.[1] || ""
 }

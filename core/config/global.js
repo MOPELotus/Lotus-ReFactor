@@ -83,6 +83,9 @@ export function migrateGlobalConfig(config = {}) {
     ...normalizedConfig,
     version: CURRENT_GLOBAL_CONFIG_VERSION,
   }
+  if (patch.tools?.bbdown?.repo === "nilaoda/BBDown") {
+    patch.tools = { ...patch.tools, bbdown: { ...patch.tools.bbdown, repo: "MOPELotus/BBDown" } }
+  }
   if (legacyPermissions) {
     patch.permissions = hasExplicitPermissions
       ? mergeLegacyPermissionLists(normalizedConfig.permissions || {}, legacyPermissions)

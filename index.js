@@ -3,6 +3,7 @@ import { installLotusRuntimeInterception } from "./services/intercept/runtime.js
 import { ensureGlobalConfig } from "./core/config/global.js"
 import { autoStartTestNineServer } from "./services/testNine/server.js"
 import { checkTrackedSubmoduleRemoteUpdates, syncTrackedSubmodules } from "./services/pluginUpdate/service.js"
+import { scheduleBBDownStartupUpdate } from "./services/tools/startup.js"
 
 const pluginName = "Lotus-Plugin"
 const appsDir = new URL("./apps/", import.meta.url)
@@ -15,6 +16,10 @@ await ensureGlobalConfig().then(result => {
   if (result.created) logger?.mark?.(`[${pluginName}] created default config: ${result.file}`)
 }).catch(error => {
   logger?.warn?.(`[${pluginName}] global config init skipped: ${error.message}`)
+})
+
+void scheduleBBDownStartupUpdate(startupConfig).catch(error => {
+  logger?.warn?.(`[${pluginName}] BBDown startup check failed: ${error.message}`)
 })
 
 // 只检查并通知，不在开机阶段自动改写子仓库，避免隐藏更新或阻塞启动。

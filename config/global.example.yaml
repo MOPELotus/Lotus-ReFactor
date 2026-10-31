@@ -86,7 +86,7 @@ tools:
   download_retries: 3
   bbdown:
     enable: true
-    repo: nilaoda/BBDown
+    repo: MOPELotus/BBDown
     command: BBDown
   ffmpeg:
     enable: true
