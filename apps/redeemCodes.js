@@ -1,7 +1,7 @@
 const BasePlugin = globalThis.plugin
 
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
-import { replyText } from "../core/transport/reply.js"
+import { replyForward, replyText } from "../core/transport/reply.js"
 import { parseRedeemCommand } from "../services/redeemCodes/games.js"
 import { RedeemCodeService, formatRedeemResult } from "../services/redeemCodes/service.js"
 
@@ -23,7 +23,15 @@ export class LotusRedeemCodes extends BasePlugin {
     const game = parseRedeemCommand(this.e.msg)
     if (!game) return false
     const result = await this.service.query(game.id)
-    await replyText(this, formatRedeemResult(result))
+    if (result.status === "available" && result.codes.length) {
+      const rewards = result.codes.map((item, index) => item.reward ? `${index + 1}. ${item.reward}` : "").filter(Boolean)
+      const summary = [formatRedeemResult({ ...result, codes: [] }), ...(rewards.length ? ["", "各条兑换码奖励：", ...rewards] : [])].join("\n")
+      await replyForward(this, [summary, ...result.codes.map(item => item.code)], {
+        title: `${result.title || game.name}兑换码`,
+      })
+    } else {
+      await replyText(this, formatRedeemResult(result))
+    }
     return true
   }
 }

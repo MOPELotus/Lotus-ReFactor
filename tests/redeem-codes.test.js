@@ -211,3 +211,29 @@ test("direct transport rejects non-official or credential-bearing destinations b
     await assert.rejects(requestOfficialJson(url), /不支持的官方接口地址/)
   }
 })
+
+test("available codes are forwarded as individually copyable messages with metadata and rewards outside the code nodes", async () => {
+  globalThis.plugin = class { constructor(config) { Object.assign(this, config) } }
+  const { LotusRedeemCodes } = await import("../apps/redeemCodes.js")
+  const result = await fixture().service.query("sr")
+  result.codes = [{ code: "永远不会抛弃你", reward: "星琼×100" }, { code: "ABC123", reward: "信用点×50000" }]
+  const app = new LotusRedeemCodes({ service: { query: async () => result } })
+  const replies = []
+  app.reply = async message => { replies.push(message) }
+  app.e = { msg: "*兑换码", self_id: "123", group: { makeForwardMsg: async nodes => ({ type: "forward", nodes }) } }
+  assert.equal(await app.redeemCodes(), true)
+  assert.equal(replies.length, 1)
+  assert.equal(replies[0].type, "forward")
+  const texts = replies[0].nodes.map(node => node.message)
+  assert.equal(texts.length, 3)
+  assert.match(texts[0], /2026-10-31 23:59:59/)
+  assert.match(texts[0], /1\. 星琼×100/)
+  assert.match(texts[0], /2\. 信用点×50000/)
+  assert.ok(!texts[0].includes("永远不会抛弃你"))
+  assert.deepEqual(texts.slice(1), ["永远不会抛弃你", "ABC123"])
+  // If the adapter cannot build a forward, code messages still remain separate.
+  replies.length = 0
+  app.e.group = {}
+  await app.redeemCodes()
+  assert.deepEqual(replies.slice(1), ["永远不会抛弃你", "ABC123"])
+})
