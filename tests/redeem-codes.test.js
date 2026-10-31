@@ -169,3 +169,45 @@ test("message handler replies through Lotus and yields unrelated commands", asyn
   app.e.msg = "#某游戏兑换码"
   assert.equal(await app.redeemCodes(), false)
 })
+
+test("a TLS connection reset retries the same official request directly, retaining the current activity header", async () => {
+  let directCalls = 0
+  const provider = new MiyoliveProvider({
+    fetch: async () => { throw new TypeError("fetch failed", { cause: Object.assign(new Error("TLS socket disconnected"), { code: "ECONNRESET" }) }) },
+    directRequest: async (url, options) => {
+      directCalls++
+      assert.equal(url, "https://api-takumi.mihoyo.com/event/miyolive/index")
+      assert.equal(options.headers["x-rpc-act_id"], "act-new")
+      assert.equal(options.headers["x-rpc-client_type"], "2")
+      assert.ok(options.timeoutMs > 0 && options.timeoutMs <= 10000)
+      return { retcode: 0, data: { live: { code_ver: "new-code-version" } } }
+    },
+  })
+  assert.equal((await provider.request("https://api-takumi.mihoyo.com/event/miyolive/index", "act-new")).live.code_ver, "new-code-version")
+  assert.equal(directCalls, 1)
+})
+
+test("failed proxy and direct requests report the failing endpoint and remain errors rather than stale successes", async () => {
+  const provider = new MiyoliveProvider({
+    fetch: async () => { throw new TypeError("fetch failed", { cause: { code: "ECONNRESET" } }) },
+    directRequest: async () => { throw Object.assign(new Error("connect timed out"), { code: "ETIMEDOUT" }) },
+  })
+  await assert.rejects(provider.request("https://bbs-api.mihoyo.com/post/wapi/userPost"), /bbs-api\.mihoyo\.com\/post\/wapi\/userPost.*ECONNRESET.*ETIMEDOUT/)
+})
+
+test("official API application errors and HTTP client errors are not retried", async () => {
+  let calls = 0
+  const directRequest = async () => { calls++; throw new Error("unexpected direct request") }
+  const api = new MiyoliveProvider({ fetch: async () => ({ ok: true, json: async () => ({ retcode: -500012, message: "活动已结束" }) }), directRequest })
+  await assert.rejects(api.request("https://api-takumi.mihoyo.com/event/miyolive/index"), /活动已结束/)
+  const http = new MiyoliveProvider({ fetch: async () => ({ ok: false, status: 403 }), directRequest })
+  await assert.rejects(http.request("https://bbs-api.mihoyo.com/post/wapi/userPost"), /HTTP 403/)
+  assert.equal(calls, 0)
+})
+
+test("direct transport rejects non-official or credential-bearing destinations before connecting", async () => {
+  const { requestOfficialJson } = await import("../services/redeemCodes/http.js")
+  for (const url of ["https://example.com/", "http://bbs-api.mihoyo.com/", "https://user:secret@bbs-api.mihoyo.com/", "https://bbs-api.mihoyo.com:8443/"]) {
+    await assert.rejects(requestOfficialJson(url), /不支持的官方接口地址/)
+  }
+})

@@ -1,4 +1,7 @@
 // Public official APIs only. No account cookie or redemption API is needed.
+import { requestOfficialJson } from "./http.js"
+import { setTimeout as delay } from "node:timers/promises"
+
 const BBS = "https://bbs-api.mihoyo.com"
 const LIVE = "https://api-takumi.mihoyo.com/event/miyolive"
 
@@ -59,18 +62,42 @@ function normalizePost(item) {
 }
 
 export class MiyoliveProvider {
-  constructor({ fetch: fetcher = globalThis.fetch, now = Date.now } = {}) {
-    this.fetch = fetcher
-    this.now = now
+  constructor(options = {}) {
+    this.fetch = options.fetch || globalThis.fetch
+    this.now = options.now || Date.now
+    this.directRequest = options.directRequest === false ? null : options.directRequest || (options.fetch ? null : requestOfficialJson)
   }
 
   async request(url, actId = "") {
-    const response = await this.fetch(url, {
-      headers: { "x-rpc-client_type": "2", "x-rpc-act_id": actId, Referer: "https://www.miyoushe.com/" },
-      signal: AbortSignal.timeout(10000),
-    })
-    if (!response.ok) throw new Error(`官方接口 HTTP ${response.status}`)
-    const body = await response.json()
+    const deadline = Date.now() + 20000
+    const headers = { "x-rpc-client_type": "2", "x-rpc-act_id": actId, Referer: "https://www.miyoushe.com/" }
+    let body
+    try {
+      const response = await this.fetch(url, { headers, signal: AbortSignal.timeout(10000) })
+      if (!response.ok) {
+        const error = new Error(`官方接口 HTTP ${response.status}`)
+        error.retryable = response.status >= 500 || response.status === 429
+        throw error
+      }
+      body = await response.json()
+    } catch (error) {
+      const endpoint = `${new URL(url).hostname}${new URL(url).pathname}`
+      const detail = error.cause?.code || error.code || error.message
+      if (!this.directRequest || error.retryable === false) throw new Error(`${endpoint}：${detail}`, { cause: error })
+      globalThis.logger?.debug?.(`[Lotus-Plugin] 兑换码 ${endpoint} 请求失败（${detail}），改用直连重试`)
+      let lastError
+      for (const waitMs of [0, 150, 350]) {
+        if (waitMs) await delay(waitMs)
+        const remainingMs = deadline - Date.now()
+        if (remainingMs <= 0) break
+        try {
+          body = await this.directRequest(url, { headers, timeoutMs: Math.min(10000, remainingMs) })
+          lastError = null
+          break
+        } catch (retryError) { lastError = retryError }
+      }
+      if (!body) throw new Error(`${endpoint}：请求及直连重试均失败（${detail}；${lastError?.code || lastError?.message || "超时"}）`, { cause: lastError || error })
+    }
     if (body.retcode !== 0 || !body.data) throw new Error(`官方接口：${body.message || body.retcode}`)
     return body.data
   }
