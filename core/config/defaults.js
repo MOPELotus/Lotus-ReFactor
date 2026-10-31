@@ -25,6 +25,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     port: 18164,
     path: "/lotus/coin-shop",
     public_url: "",
+    icp_number: "",
     session_hours: 8,
   },
   render: {

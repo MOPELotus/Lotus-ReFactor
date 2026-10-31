@@ -8,6 +8,7 @@ export class CoinShopStore {
     this.file = file
     this.ready = null
     this.plans = []
+    this.trackers = []
     this.tail = Promise.resolve()
   }
 
@@ -15,8 +16,9 @@ export class CoinShopStore {
     if (!this.ready) this.ready = (async () => {
       try {
         const data = JSON.parse(await fs.readFile(this.file, "utf8"))
-        if (data.version !== 1 || !Array.isArray(data.plans)) throw new Error("米游币兑换计划文件格式异常")
+        if (![1, 2].includes(data.version) || !Array.isArray(data.plans) || (data.version === 2 && !Array.isArray(data.trackers))) throw new Error("米游币兑换计划文件格式异常")
         this.plans = data.plans
+        this.trackers = data.trackers || []
       } catch (error) { if (error.code !== "ENOENT") throw error }
     })()
     await this.ready
@@ -29,17 +31,31 @@ export class CoinShopStore {
   }
 
   async change(edit) {
+    return this.mutate("plans", edit)
+  }
+
+  async listTrackers() {
+    await this.load()
+    await this.tail
+    return structuredClone(this.trackers)
+  }
+
+  async changeTrackers(edit) {
+    return this.mutate("trackers", edit)
+  }
+
+  async mutate(kind, edit) {
     await this.load()
     const task = this.tail.catch(() => {}).then(async () => {
-      const next = structuredClone(this.plans)
+      const next = structuredClone(this[kind])
       const value = edit(next)
       await fs.mkdir(path.dirname(this.file), { recursive: true })
       const temporary = `${this.file}.${randomUUID()}.tmp`
       try {
-        await fs.writeFile(temporary, JSON.stringify({ version: 1, plans: next }, null, 2), { mode: 0o600 })
+        await fs.writeFile(temporary, JSON.stringify({ version: 2, plans: kind === "plans" ? next : this.plans, trackers: kind === "trackers" ? next : this.trackers }, null, 2), { mode: 0o600 })
         await fs.rename(temporary, this.file)
       } finally { await fs.rm(temporary, { force: true }).catch(() => {}) }
-      this.plans = next
+      this[kind] = next
       return structuredClone(value)
     })
     this.tail = task.then(() => {}, () => {})

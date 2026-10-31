@@ -1,19 +1,37 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>米游币兑换 · 荷花</title><link rel="stylesheet" href="style.css"><script src="app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>米游币兑换</title><link rel="stylesheet" href="style.css"><script src="app.js" defer></script></head>
 <body>
-  <main id="login" class="login" hidden><div class="mark">荷</div><p class="eyebrow">LOTUS · COIN SHOP</p><h1>让攒下的米游币，<br>遇见喜欢的好物。</h1><p id="login-message">请私聊机器人发送下方指令，获取你的专属登录链接。</p><code>#米游币兑换</code><p class="muted">登录后使用已绑定的 profile，无需再次填写 Cookie。</p></main>
+  <main id="login" class="login" hidden><h1>米游币兑换</h1><p id="login-message">请私聊机器人发送下方指令，获取你的专属登录链接。</p><code>#米游币兑换</code><p class="muted">登录后使用已绑定的 profile，无需再次填写 Cookie。</p></main>
   <div id="dashboard" hidden>
-    <header class="topbar"><a class="brand" href="./"><span class="mark small">荷</span><span>米游币兑换<small>LOTUS COIN SHOP</small></span></a><div class="account"><label for="profile">当前账号</label><select id="profile" aria-label="当前 profile"></select><button id="logout" class="text-button">退出</button></div></header>
+    <header class="topbar"><a class="brand" href="./">米游币兑换</a><div class="account"><label for="profile">当前账号</label><select id="profile" aria-label="当前 profile"></select><button id="logout" class="text-button">退出</button></div></header>
     <main class="workspace">
-      <section class="intro"><div><p class="eyebrow">给喜欢的东西，留一个位置</p><h1>逛逛商城，提前安排。</h1><p>查看官方库存和开放时间，选好商品后，到点自动尝试兑换。</p></div><div class="clock"><span class="pulse"></span>北京时间 <span id="clock"></span></div></section>
-      <section class="metrics"><article><span>可用米游币</span><strong id="balance">—</strong><small id="balance-note">来自当前账号的实时余额</small></article><article><span>等待开放</span><strong id="upcoming">—</strong><small>当前列表中的下一批商品</small></article><article><span>我的预约</span><strong id="active-plans">—</strong><small id="next-plan">选好后再创建，不会自动下单</small></article></section>
-      <section class="catalog"><div class="section-head"><nav class="tabs" aria-label="页面"><button id="tab-goods" class="active">商品商城</button><button id="tab-plans">我的预约</button></nav><button id="refresh" class="secondary">刷新数据 ↻</button></div>
+      <section class="intro"><div><h1>兑换管理</h1><p>查看商品库存、开放时间及兑换任务。</p></div><div class="clock"><span class="pulse"></span>北京时间 <span id="clock"></span></div></section>
+      <section class="metrics"><article><span>可用米游币</span><strong id="balance">—</strong><small id="balance-note">来自当前账号的实时余额</small></article><article><span>等待开放</span><strong id="upcoming">—</strong><small>当前列表中的下一批商品</small></article><article><span>我的预约</span><strong id="active-plans">—</strong><small id="next-plan">暂无进行中的兑换任务</small></article></section>
+      <section class="catalog"><div class="section-head"><nav class="tabs" aria-label="页面"><button id="tab-goods" class="active">商品商城</button><button id="tab-trackers">持续追踪</button><button id="tab-plans">兑换记录</button></nav><button id="refresh" class="secondary">刷新数据 ↻</button></div>
         <div id="goods-view"><div class="filters"><label>游戏分区<select id="game"><option value="">全部商品</option></select></label><label>商品状态<select id="status"><option value="all">全部状态</option><option value="scheduled">等待开放</option><option value="available">正在兑换</option></select></label><label class="search">搜索商品<input id="search" type="search" placeholder="在当前列表中搜索"></label></div><p id="catalog-note" class="muted"></p><div id="goods" class="goods-grid" aria-live="polite"></div><div id="pagination" class="pagination"><button id="previous" class="secondary">上一页</button><span id="page-label"></span><button id="next" class="secondary">下一页</button></div></div>
+        <div id="trackers-view" hidden><div class="section-head"><p class="muted">成功后继续追踪下一轮，也能跟随同名新商品。账号与游戏 UID 沿用 profile。</p><button id="new-tracker" class="primary">新增追踪规则</button></div><div id="trackers" aria-live="polite"></div></div>
         <div id="plans-view" hidden><p class="muted">预约结果会保留在这里，并通知你的机器人账号。提交后结果不明时，请先核对米游社兑换记录。</p><div id="plans" aria-live="polite"></div></div>
-      </section><footer>价格、库存和时间来自米游社官方接口。预约不预扣米游币，提交兑换成功后才扣除；每个计划兑换 1 件。</footer>
+      </section>
     </main>
   </div>
+  <footer class="site-footer"><!--coin-shop-footer--></footer>
   <dialog id="detail"><form method="dialog" class="dialog-top"><span class="eyebrow">商品详情</span><button class="close" aria-label="关闭商品详情">×</button></form><div id="detail-content"></div></dialog>
+  <dialog id="tracking-detail"><form method="dialog" class="dialog-top"><span class="eyebrow">持续追踪</span><button class="close" aria-label="关闭追踪设置">×</button></form>
+    <form id="tracking-form"><h2>新增追踪规则</h2><p class="muted">规则持续生效，轮询官方状态；每件商品每个限购周期兑换一次。</p>
+      <div class="tracking-grid">
+        <label class="field">追踪方式<select id="tracking-mode"><option value="category">某类商品</option><option value="goods">指定商品</option></select></label>
+        <label class="field">游戏分区<select id="tracking-game"></select></label>
+        <label class="field">商品类型<select id="tracking-type"><option value="2">游戏道具</option><option value="1">实物周边</option></select></label>
+        <label class="field" id="tracking-keywords-field">名称关键词（逗号分隔，留空追踪此类全部）<input id="tracking-keywords" placeholder="例如：菲林，原石"></label>
+        <label class="field" id="tracking-ids-field" hidden>商品 ID（逗号分隔）<input id="tracking-ids" placeholder="从商品详情添加，或填写官方商品 ID"></label>
+      </div>
+      <label class="confirmation" id="tracking-follow-field" hidden><input id="tracking-follow" type="checkbox" checked><span>自动跟随同名新商品，包括更新版本后的商品</span></label>
+      <label class="field">兑换目标（来自当前 profile）<select id="tracking-target" required></select></label>
+      <div class="tracking-grid"><label class="field">单件价格上限（可选）<input id="tracking-price" type="number" min="0" step="1" placeholder="不限"></label><label class="field">本规则累计预算（可选）<input id="tracking-budget" type="number" min="0" step="1" placeholder="不限"></label></div>
+      <details class="tracking-advanced"><summary>轮询与抢兑设置</summary><p class="muted">平时默认每 30 分钟扫描；已知的开放时间会单独唤醒，不受常规间隔限制。可填 60、180 等分钟数。</p><div class="tracking-grid"><label class="field">常规轮询间隔（分钟）<input id="tracking-poll" type="number" value="30" min="1" max="1440" required></label><label class="field">提前开始尝试（秒）<input id="tracking-lead" type="number" value="5" min="0" max="30" required></label><label class="field">连续请求间隔（毫秒）<input id="tracking-interval" type="number" value="500" min="250" max="5000" required></label><label class="field">开放后继续尝试（秒）<input id="tracking-after" type="number" value="20" min="5" max="60" required></label></div></details>
+      <label class="confirmation"><input id="tracking-confirm" type="checkbox" required><span>授权此规则持续使用当前 profile 的米游币兑换匹配商品，直到我暂停规则或达到预算。</span></label><p id="tracking-note" class="muted"></p><button id="tracking-submit" class="primary full" type="submit">开启持续追踪</button>
+    </form>
+  </dialog>
   <div id="toast" role="status" hidden></div>
 </body></html>

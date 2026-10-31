@@ -35,7 +35,7 @@ export class LotusCoinShop extends BasePlugin {
     try {
       await this.web.start((await this.getConfig()).coin_shop)
       const url = this.web.issueTicket(String(this.e.user_id), String(this.e.self_id || ""))
-      await replyText(this, `米游币兑换管理\n${url}\n\n专属登录链接 10 分钟内有效，使用一次后失效。请勿转发。\n进入网页后选择自己的 profile、商品和兑换目标，即可创建预约。`)
+      await replyText(this, `米游币兑换管理\n${url}\n\n专属登录链接 10 分钟内有效，使用一次后失效。请勿转发。\n进入网页后选择自己的 profile、商品和兑换目标，可开启商品或类别的持续追踪，也可创建单次预约。`)
     } catch (error) { await replyText(this, `[米游币兑换]${error.message}`) }
     return true
   }

@@ -289,4 +289,5 @@ coin_shop:
   port: 18164
   path: /lotus/coin-shop
   public_url: ""
+  icp_number: "" # 本站 ICP 备案号；留空不显示
   session_hours: 8

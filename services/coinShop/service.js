@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 import { loadLoggedInProfile, normalizeProfileId } from "../../core/config/profile.js"
 import { notifyUser } from "../../core/transport/notify.js"
-import { CoinShopClient } from "./client.js"
+import { CoinShopClient, isCoinShopLimited } from "./client.js"
 import { CoinShopStore } from "./store.js"
+import { CoinShopTracking } from "./tracking.js"
 
 const ACTIVE = new Set(["scheduled", "preparing", "submitting"])
 const accountId = profile => String(profile.account?.stuid || profile.account?.ltuid || "")
@@ -24,10 +25,14 @@ export class CoinShopService {
     this.accountLocks = new Set()
     this.initializing = null
     this.timer = null
+    this.tracking = new CoinShopTracking(this)
   }
 
   async initialize() {
     if (!this.initializing) this.initializing = (async () => {
+      if ((await this.store.listTrackers()).some(rule => rule.pollUnit !== "minutes" || !Number.isFinite(rule.pollMs) || rule.pollMs < 60000)) await this.store.changeTrackers(rules => {
+        for (const rule of rules) if (rule.pollUnit !== "minutes" || !Number.isFinite(rule.pollMs) || rule.pollMs < 60000) { rule.pollMs = 1800000; rule.pollUnit = "minutes" }
+      })
       const plans = await this.store.list()
       if (plans.some(p => p.status === "submitting" || p.status === "preparing")) {
         await this.store.change(items => {
@@ -37,12 +42,17 @@ export class CoinShopService {
           }
         })
       }
+      const uncertain = new Set((await this.store.list()).filter(plan => plan.status === "unknown" && plan.trackingId).map(plan => plan.trackingId))
+      if (uncertain.size) await this.store.changeTrackers(rules => {
+        for (const rule of rules) if (uncertain.has(rule.id)) { rule.enabled = false; rule.message = "有兑换结果待确认，请先核对米游社兑换记录" }
+      })
     })()
     return this.initializing
   }
 
   async start() {
     await this.initialize()
+    this.tracking.stopped = false
     if (this.timer) return
     this.timer = setInterval(() => void this.scan().catch(error => globalThis.logger?.warn?.(`[Lotus-Plugin] 米游币兑换调度失败：${error.message}`)), 1000)
     this.timer.unref?.()
@@ -50,6 +60,7 @@ export class CoinShopService {
   }
 
   stop() {
+    this.tracking.stopped = true
     clearInterval(this.timer)
     this.timer = null
     for (const controller of this.running.values()) controller.abort()
@@ -69,7 +80,7 @@ export class CoinShopService {
     throw new Error("暂不支持该商品类型")
   }
 
-  async reserve({ qq, profileId = 1, goodsId, uid = "", addressId = "", botId = "", immediate = false }) {
+  async reserve({ qq, profileId = 1, goodsId, uid = "", addressId = "", botId = "", immediate = false, tracking = null }) {
     await this.initialize()
     const id = normalizeProfileId(profileId)
     const profile = await this.loadProfile(String(qq), id)
@@ -89,12 +100,15 @@ export class CoinShopService {
       const roles = await this.client.roles(profile, good.gameBiz)
       const selectedUid = String(uid || profile.account.current_uid?.[gameKey[good.gameBiz]] || (roles.length === 1 ? roles[0].uid : ""))
       role = roles.find(item => item.uid === selectedUid)
+      if (tracking && (role?.uid !== tracking.role?.uid || role?.region !== tracking.role?.region || role?.gameBiz !== tracking.gameBiz)) throw new Error("profile 的游戏 UID 绑定已变化")
       if (!role) throw new Error("请查询商品的兑换目标，并指定当前账号绑定的角色 UID。")
     } else throw new Error("暂不支持该商品类型")
     if (immediate && good.status !== "available") throw new Error("商品当前不可兑换，请使用预约兑换等待下一批。")
     if (!immediate && good.status !== "scheduled" && good.status !== "available") throw new Error("官方尚未公布可预约的兑换时间。")
     const plan = {
       id: randomUUID().replaceAll("-", "").slice(0, 12), qq: String(qq), profileId: id, accountId: accountId(profile), botId: String(botId),
+      gameBiz: good.gameBiz,
+      ...(tracking ? { trackingId: tracking.id, cycleKey: tracking.cycleKey, preStartMs: tracking.leadMs, retryIntervalMs: tracking.intervalMs, windowMs: tracking.afterMs } : {}),
       goodsId: good.id, goodsName: good.name, type: good.type, price: good.price,
       role, addressId: good.type === 1 ? String(addressId) : "", addressLabel,
       immediate,
@@ -102,6 +116,7 @@ export class CoinShopService {
       createdAt: this.now(), status: "scheduled", message: "等待开放兑换", attempts: 0,
     }
     if (!plan.accountId) throw new Error("profile 缺少米游社账号 ID，请重新扫码登录。")
+    if (tracking && !(await this.store.listTrackers()).some(rule => rule.id === tracking.id && rule.enabled)) throw new Error("追踪已暂停")
     await this.store.change(plans => {
       if (plans.some(p => p.accountId === plan.accountId && p.goodsId === plan.goodsId && (ACTIVE.has(p.status) || p.status === "unknown"))) {
         throw new Error("该账号已有此商品的兑换计划或待确认结果，请先查看我的兑换计划。")
@@ -151,8 +166,9 @@ export class CoinShopService {
 
   async scan() {
     await this.initialize()
+    void this.tracking.poll().catch(error => globalThis.logger?.warn?.(`[Lotus-Plugin] 商城轮询失败：${error.message}`))
     for (const plan of await this.store.list()) {
-      if (plan.status !== "scheduled" || plan.opensAt > this.now() + 15000 || this.running.has(plan.id) || this.accountLocks.has(plan.accountId)) continue
+      if (plan.status !== "scheduled" || plan.opensAt > this.now() + Math.max(15000, (plan.preStartMs || 0) + 10000) || this.running.has(plan.id) || this.accountLocks.has(plan.accountId)) continue
       void this.run(plan).catch(error => globalThis.logger?.warn?.(`[Lotus-Plugin] 米游币兑换 ${plan.id} 执行失败：${error.message}`))
     }
   }
@@ -177,6 +193,8 @@ export class CoinShopService {
       if (good.price !== plan.price || good.type !== plan.type) throw new Error("商品价格或类型已变化，请重新预约。")
       if (await this.client.points(profile) < plan.price) throw new Error("米游币余额不足，预约停止。")
       if (plan.role) {
+        if (plan.trackingId && String(profile.account.current_uid?.[gameKey[plan.gameBiz]] || "") !== plan.role.uid) throw new Error("profile 的游戏 UID 绑定已变化")
+        if (good.gameBiz !== plan.role.gameBiz) throw new Error("商品游戏绑定已变化")
         const roles = await this.client.roles(profile, good.gameBiz)
         if (!roles.some(role => role.uid === plan.role.uid && role.region === plan.role.region && role.gameBiz === plan.role.gameBiz)) throw new Error("预约角色已不在账号绑定列表，请重新预约。")
       } else if (!(await this.client.addresses(profile)).some(address => address.id === plan.addressId)) throw new Error("预约收货地址已失效，请重新预约。")
@@ -185,27 +203,43 @@ export class CoinShopService {
         await this.store.update(plan.id, { status: "scheduled", opensAt: good.opensAt, message: "官方调整了开放时间，预约已同步" }, ["preparing"])
         return
       }
-      const waitMs = plan.opensAt - this.now()
-      if (waitMs > 0) await this.wait(waitMs, controller.signal)
-      const deadline = plan.opensAt + 20000
-      for (let attempt = 1; attempt <= 30 && this.now() <= deadline; attempt++) {
+      const startAt = plan.opensAt - (plan.preStartMs || 0)
+      // While warming up, refresh official state rather than sleeping until a fixed timestamp.
+      while (this.now() < startAt) {
+        await this.wait(Math.min(1000, startAt - this.now()), controller.signal)
+        if (plan.trackingId) {
+          const fresh = await this.client.detail(plan.goodsId, profile)
+          if (fresh.status === "available") break
+          if (fresh.status === "scheduled" && Math.abs(fresh.opensAt - plan.opensAt) > 1000) {
+            await this.store.update(plan.id, { status: "scheduled", opensAt: fresh.opensAt, message: "官方开放时间变化，继续轮询" }, ["preparing"])
+            return
+          }
+        }
+      }
+      const interval = plan.retryIntervalMs || 500
+      const deadline = plan.opensAt + (plan.windowMs || 20000)
+      const maxAttempts = plan.trackingId ? Math.ceil(((plan.preStartMs || 0) + (plan.windowMs || 20000)) / interval) + 2 : 30
+      for (let attempt = 1; attempt <= maxAttempts && this.now() <= deadline; attempt++) {
         if (controller.signal.aborted) return
         const latest = (await this.store.list()).find(p => p.id === plan.id)
-        if (latest?.status === "cancelled") return
+        if (latest?.status !== "preparing") return
+        if (plan.trackingId && !(await this.store.listTrackers()).some(rule => rule.id === plan.trackingId && rule.enabled)) {
+          await this.cancel(plan.qq, plan.id); return
+        }
         // Persist before POST. A crash or lost response must never trigger a replay.
-        if (!await this.store.update(plan.id, { status: "submitting", attempts: attempt, message: "正在提交兑换" }, ["preparing"])) return
+        if (!await this.store.update(plan.id, { status: "submitting", attempts: attempt, ...(attempt === 1 ? { firstAttemptAt: this.now() } : {}), message: this.now() < plan.opensAt ? "开放前连续尝试兑换" : "正在提交兑换" }, ["preparing"])) return
         submitting = true
         const result = await this.client.exchange(plan, profile, controller.signal)
         if (result.retcode === 0) { await this.finish(plan, "succeeded", "兑换成功，请查看米游社兑换记录或游戏内邮件。"); return }
         submitting = false
         const message = String(result.message || `兑换失败（${result.retcode}）`)
-        if (/验证|风控|安全|频繁/.test(message) || [1028, 1034].includes(result.retcode)) {
-          await this.finish(plan, "failed", `需要在米游社处理验证或风控：${message}`); return
+        if (isCoinShopLimited(result)) {
+          await this.finish(plan, "failed", `需要在米游社处理验证或风控：${message}`, { errorKind: "verification" }); return
         }
-        const retryable = /未到.*(时间|开始)|尚未.*(开始|开放)|系统繁忙|服务繁忙|稍后重试/.test(message)
-        if (!retryable || attempt === 30 || this.now() + 500 > deadline) { await this.finish(plan, "failed", message); return }
+        const retryable = /未到.*(时间|开始)|尚未.*(开始|开放)|系统繁忙|服务繁忙|稍后重试/.test(message) || (plan.trackingId && /未开始|未开放|已抢光|库存不足|已兑完|售罄/.test(message))
+        if (!retryable || attempt === maxAttempts || this.now() + interval > deadline) { await this.finish(plan, "failed", message); return }
         await this.store.update(plan.id, { status: "preparing", message })
-        await this.wait(500, controller.signal)
+        await this.wait(interval, controller.signal)
       }
       await this.finish(plan, "missed", "已超过本次兑换窗口，未继续提交。")
     } catch (error) {
@@ -213,15 +247,17 @@ export class CoinShopService {
       if (latest?.status === "cancelled") return
       await this.finish(plan, submitting ? "unknown" : "failed", submitting
         ? "兑换提交后连接异常，结果待确认。请查看米游社兑换记录，不会自动重发，以免重复扣币。"
-        : error.message)
+        : error.message, isCoinShopLimited(error) ? { errorKind: "verification" } : /绑定.*变化|账号已变化|角色已不在/.test(error.message) ? { errorKind: "binding" } : {})
     } finally {
       this.running.delete(plan.id)
       this.accountLocks.delete(plan.accountId)
     }
   }
 
-  async finish(plan, status, message) {
-    if (!await this.store.update(plan.id, { status, message, finishedAt: this.now() }, [...ACTIVE])) return
+  async finish(plan, status, message, extra = {}) {
+    const updated = await this.store.update(plan.id, { status, message, ...extra, finishedAt: this.now() }, [...ACTIVE])
+    if (!updated) return
+    await this.tracking.onFinish(updated, status, message)
     try { await this.notify(plan, `[米游币兑换]${plan.goodsName}\nprofile ${plan.profileId} · 计划 ${plan.id}\n${message}`) }
     catch (error) { globalThis.logger?.warn?.(`[Lotus-Plugin] 兑换结果通知失败 ${plan.id}：${error.message}`) }
   }

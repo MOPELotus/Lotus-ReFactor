@@ -70,7 +70,7 @@ export function validateGlobalConfig(config) {
   if (!isObject(shop) || typeof shop.enable !== "boolean" || !["auto", "shared", "standalone"].includes(shop.mode)
       || typeof shop.host !== "string" || !Number.isInteger(shop.port) || shop.port < 1 || shop.port > 65535
       || typeof shop.path !== "string" || !/^\/[a-zA-Z0-9_/-]+$/.test(shop.path) || shop.path === "/"
-      || typeof shop.public_url !== "string" || !Number.isFinite(shop.session_hours) || shop.session_hours < 1 || shop.session_hours > 24) {
+      || typeof shop.public_url !== "string" || (shop.icp_number !== undefined && typeof shop.icp_number !== "string") || !Number.isFinite(shop.session_hours) || shop.session_hours < 1 || shop.session_hours > 24) {
     errors.push("coin_shop requires a valid mode, host, port, path, public_url and session_hours")
   }
 

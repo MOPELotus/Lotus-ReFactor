@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id)
-const state = { csrf: "", profile: 1, page: 1, game: "", goods: [], plans: [], tab: "goods", nowOffset: 0, catalogRequest: 0 }
+const state = { csrf: "", profile: 1, page: 1, game: "", goods: [], plans: [], trackers: [], games: [], tab: "goods", nowOffset: 0, catalogRequest: 0 }
 const states = { available: "正在兑换", scheduled: "等待开放", sold_out: "已兑完", ended: "已结束", unknown: "状态待确认" }
 const planStates = { scheduled: "等待开放", preparing: "准备兑换", submitting: "正在提交", succeeded: "兑换成功", failed: "未成功", cancelled: "已取消", missed: "已错过", unknown: "结果待确认" }
 function el(tag, className, text) { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node }
@@ -56,7 +56,7 @@ async function loadCatalog() {
   $("catalog-note").textContent = "正在读取官方商品和余额…"
   const data = await api(`catalog?${new URLSearchParams({ profile: state.profile, game: state.game, page: state.page })}`)
   if (request !== state.catalogRequest) return
-  state.goods = data.goods; state.nowOffset = data.now - Date.now()
+  state.games = data.games; state.goods = data.goods; state.nowOffset = data.now - Date.now()
   $("balance").textContent = data.balance === null ? "—" : Number(data.balance).toLocaleString()
   $("balance-note").textContent = data.balanceError || "来自当前账号的实时余额"
   $("upcoming").textContent = data.goods.filter(good => good.status === "scheduled").length
@@ -92,20 +92,22 @@ async function openDetail(id) {
     submit.disabled = true
     try {
       await post("plans", { profileId: selectedProfile, goodsId: good.id, immediate: good.status === "available", uid: targets.type === "role" ? select.value : "", addressId: targets.type === "address" ? select.value : "" })
-      $("detail").close(); toast(good.status === "scheduled" ? "预约已保存，到点自动尝试兑换。" : "已提交兑换计划，请在我的预约中查看结果。")
+      $("detail").close(); toast(good.status === "scheduled" ? "预约已保存，到点自动尝试兑换。" : "已提交兑换计划，请在兑换记录中查看结果。")
       await loadPlans(); switchTab("plans")
     } finally { update() }
   }))
-  content.append(confirmation, submit)
+  const track = el("button", "secondary full", "持续追踪此商品 · 包括后续同名商品")
+  track.addEventListener("click", run(async () => { $("detail").close(); await openTracking(good) }))
+  content.append(track, confirmation, submit)
   $("detail").showModal()
 }
 async function loadPlans() {
   const data = await api("plans"); state.plans = data.plans
   const active = data.plans.filter(plan => ["scheduled", "preparing", "submitting"].includes(plan.status))
   $("active-plans").textContent = active.length
-  $("next-plan").textContent = active.length ? "最近一次：" + time(Math.min(...active.map(plan => plan.opensAt))) : "选好后再创建，不会自动下单"
+  $("next-plan").textContent = active.length ? "最近一次：" + time(Math.min(...active.map(plan => plan.opensAt))) : "暂无进行中的兑换任务"
   $("plans").replaceChildren()
-  if (!data.plans.length) { $("plans").append(el("div", "empty", "还没有预约。去商城选一件喜欢的商品吧。")); return }
+  if (!data.plans.length) { $("plans").append(el("div", "empty", "暂无兑换记录，可在商品商城中创建兑换任务。")); return }
   for (const plan of data.plans) {
     const row = el("article", "plan"), copy = el("div"), actions = el("div", "plan-actions")
     copy.append(el("span", `badge ${plan.status}`, planStates[plan.status] || plan.status), el("h3", "", plan.goodsName), el("p", "", `profile ${plan.profileId} · ${plan.price} 米游币 × 1 · ${time(plan.opensAt)}（北京时间）`), el("p", "", plan.role ? `游戏角色：${plan.role.uid} · ${plan.role.region}` : `收货地址：${plan.addressLabel}`), el("p", "", plan.message))
@@ -120,7 +122,7 @@ async function loadPlans() {
     row.append(copy, actions); $("plans").append(row)
   }
 }
-function switchTab(tab) { state.tab = tab; $("goods-view").hidden = tab !== "goods"; $("plans-view").hidden = tab !== "plans"; $("tab-goods").classList.toggle("active", tab === "goods"); $("tab-plans").classList.toggle("active", tab === "plans") }
+function switchTab(tab) { state.tab = tab; $("trackers-view").hidden = tab !== "trackers"; $("tab-trackers").classList.toggle("active", tab === "trackers"); $("goods-view").hidden = tab !== "goods"; $("plans-view").hidden = tab !== "plans"; $("tab-goods").classList.toggle("active", tab === "goods"); $("tab-plans").classList.toggle("active", tab === "plans") }
 async function init() {
   try {
     const ticket = new URLSearchParams(location.hash.slice(1)).get("ticket")
@@ -134,17 +136,73 @@ async function init() {
     for (const profile of usable) { const option = el("option", "", `profile ${profile.id} · ${profile.name}`); option.value = profile.id; $("profile").append(option) }
     state.profile = usable[0].id; $("profile").value = state.profile
     $("login").hidden = true; $("dashboard").hidden = false
-    await Promise.all([loadCatalog(), loadPlans()])
+    await Promise.all([loadCatalog(), loadPlans(), loadTrackers()])
   } catch (error) { if ($("dashboard").hidden) showLogin(error.message); else toast(error.message) }
 }
-$("profile").addEventListener("change", run(async () => { state.profile = Number($("profile").value); state.page = 1; $("detail").close(); await loadCatalog() }))
+$("profile").addEventListener("change", run(async () => { state.profile = Number($("profile").value); state.page = 1; $("detail").close(); $("tracking-detail").close(); await loadCatalog() }))
 $("game").addEventListener("change", run(async () => { state.game = $("game").value; state.page = 1; await loadCatalog() }))
 $("status").addEventListener("change", renderGoods); $("search").addEventListener("input", renderGoods)
 $("previous").addEventListener("click", run(async () => { state.page--; await loadCatalog() }))
 $("next").addEventListener("click", run(async () => { state.page++; await loadCatalog() }))
 $("tab-goods").addEventListener("click", () => switchTab("goods")); $("tab-plans").addEventListener("click", run(async () => { switchTab("plans"); await loadPlans() }))
-$("refresh").addEventListener("click", run(async () => { await Promise.all([loadCatalog(), loadPlans()]); toast("已刷新官方数据") }))
+$("refresh").addEventListener("click", run(async () => { await Promise.all([loadCatalog(), loadPlans(), loadTrackers()]); toast("已刷新官方数据") }))
 $("logout").addEventListener("click", run(async () => { await post("logout", {}); state.csrf = ""; showLogin("已退出。下次请私聊机器人获取新的专属登录链接。") }))
+$("tab-trackers").addEventListener("click", run(async () => { switchTab("trackers"); await loadTrackers() }))
+$("new-tracker").addEventListener("click", run(() => openTracking()))
+$("tracking-mode").addEventListener("change", trackingMode)
+for (const id of ["tracking-game", "tracking-type"]) $(id).addEventListener("change", run(loadTrackingTargets))
+$("tracking-form").addEventListener("submit", run(async event => {
+  event.preventDefault()
+  if (!$("tracking-form").reportValidity()) return
+  $("tracking-submit").disabled = true
+  try {
+    const split = id => $(id).value.split(/[,，\n]/).map(value => value.trim()).filter(Boolean)
+    await post("trackers", { profileId: state.profile, mode: $("tracking-mode").value, game: $("tracking-game").value, itemType: Number($("tracking-type").value), goodsIds: $("tracking-mode").value === "goods" ? split("tracking-ids") : [], keywords: split("tracking-keywords"), followSameName: $("tracking-follow").checked, addressId: $("tracking-type").value === "1" ? $("tracking-target").value : "", maxPrice: $("tracking-price").value, spendLimit: $("tracking-budget").value, pollMinutes: Number($("tracking-poll").value), leadSeconds: Number($("tracking-lead").value), intervalMs: Number($("tracking-interval").value), afterSeconds: Number($("tracking-after").value) })
+    $("tracking-detail").close(); await loadTrackers(); switchTab("trackers"); toast("已开启持续追踪，成功后继续关注后续商品。")
+  } finally { $("tracking-submit").disabled = false }
+}))
 setInterval(syncClock, 1000)
 setInterval(() => { if (state.csrf && state.tab === "plans" && !document.hidden) void loadPlans().catch(error => toast(error.message)) }, 3000)
+setInterval(() => { if (state.csrf && state.tab === "trackers" && !document.hidden) void loadTrackers().catch(error => toast(error.message)) }, 3000)
 void init()
+
+function trackingMode() {
+  const specific = $("tracking-mode").value === "goods"
+  $("tracking-ids-field").hidden = !specific; $("tracking-follow-field").hidden = !specific; $("tracking-keywords-field").hidden = specific
+  $("tracking-ids").required = specific
+}
+let targetRequest = 0
+async function loadTrackingTargets() {
+  const request = ++targetRequest
+  $("tracking-target").replaceChildren(); $("tracking-submit").disabled = true
+  $("tracking-note").textContent = "正在读取 profile 绑定…"
+  try {
+    const data = await api(`tracking-targets?${new URLSearchParams({ profile: state.profile, game: $("tracking-game").value, itemType: $("tracking-type").value })}`)
+    if (request !== targetRequest) return
+    for (const item of data.items) { const option = el("option", "", data.type === "address" ? item.label : `${item.nickname || "角色"} · ${item.uid} · ${item.regionName || item.region}`); option.value = data.type === "address" ? item.id : item.uid; $("tracking-target").append(option) }
+    $("tracking-target").disabled = data.type === "role"
+    $("tracking-submit").disabled = !data.items.length
+    $("tracking-note").textContent = data.type === "role" ? "使用当前 profile 的游戏 UID，规则不会自动切换角色。" : "请选择当前账号的收货地址。"
+  } catch (error) { if (request === targetRequest) $("tracking-note").textContent = error.message; throw error }
+}
+async function openTracking(good) {
+  $("tracking-form").reset()
+  $("tracking-game").replaceChildren()
+  for (const game of state.games) if (game.key && game.key !== "all") { const option = el("option", "", game.name); option.value = game.key; $("tracking-game").append(option) }
+  $("tracking-game").value = good?.game || ({ hk4e_cn: "hk4e", hkrpg_cn: "hkrpg", nap_cn: "nap" })[good?.gameBiz] || state.game || $("tracking-game").options[0]?.value || ""
+  if (good) { $("tracking-mode").value = "goods"; $("tracking-ids").value = good.id; $("tracking-type").value = good.type }
+  trackingMode(); $("tracking-detail").showModal(); await loadTrackingTargets()
+}
+async function loadTrackers() {
+  const { trackers } = await api("trackers"); state.trackers = trackers
+  $("trackers").replaceChildren()
+  if (!trackers.length) { $("trackers").append(el("div", "empty", "暂无追踪规则，可添加指定商品或商品类别的持续追踪。")); return }
+  for (const rule of trackers) {
+    const row = el("article", "plan"), copy = el("div"), actions = el("div", "plan-actions")
+    copy.append(el("span", `badge ${rule.enabled ? "available" : "cancelled"}`, rule.enabled ? rule.status === "exchanging" ? "正在尝试兑换" : "持续追踪中" : "已暂停"), el("h3", "", rule.mode === "goods" ? rule.names.join("、") : `${state.games.find(game => game.key === rule.game)?.name || rule.game} · ${rule.itemType === 1 ? "实物周边" : "游戏道具"} · ${rule.keywords.join(" / ") || "全部"}`), el("p", "", `profile ${rule.profileId} · ${rule.role ? "UID " + rule.role.uid : rule.addressLabel} · 已兑换 ${rule.successes} 次 · 累计 ${rule.spent} 米游币${rule.spendLimit !== null ? " / 预算 " + rule.spendLimit : ""}`), el("p", "", `每 ${rule.pollMs / 60000} 分钟轮询 · 提前 ${rule.leadMs / 1000} 秒开始 · 每 ${rule.intervalMs} 毫秒尝试${rule.maxPrice !== null ? " · 单件不超过 " + rule.maxPrice + " 米游币" : ""}`), el("p", "", rule.message))
+    if (rule.lastPolledAt) copy.append(el("p", "muted", "最近轮询：" + time(rule.lastPolledAt)))
+    const toggle = el("button", "secondary", rule.enabled ? "暂停追踪" : "恢复追踪")
+    toggle.addEventListener("click", run(async () => { await post(`trackers/${rule.id}/${rule.enabled ? "pause" : "resume"}`, {}); await loadTrackers() }))
+    actions.append(toggle); row.append(copy, actions); $("trackers").append(row)
+  }
+}

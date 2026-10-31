@@ -42,7 +42,7 @@ a {
   display:none!important
 }
 .topbar {
-  height:92px;
+  height:72px;
   background:#fff;
   border-bottom:1px solid var(--line);
   display:flex;
@@ -56,31 +56,6 @@ a {
   align-items:center;
   font-weight:700;
   font-size:18px
-}
-.brand small {
-  display:block;
-  font-size:10px;
-  color:var(--muted);
-  letter-spacing:2px;
-  font-weight:500;
-  margin-top:5px
-}
-.mark {
-  background:var(--accent);
-  color:#fff;
-  border-radius:18px;
-  width:72px;
-  height:72px;
-  display:grid;
-  place-items:center;
-  font-family:serif;
-  font-size:36px
-}
-.mark.small {
-  width:43px;
-  height:43px;
-  font-size:25px;
-  border-radius:12px
 }
 .account {
   display:flex;
@@ -113,9 +88,8 @@ a {
   font-weight:700
 }
 .intro h1 {
-  font-size:34px;
-  letter-spacing:-1px;
-  margin:12px 0
+  font-size:26px;
+  margin:0 0 10px
 }
 .intro p:not(.eyebrow) {
   color:var(--muted);
@@ -493,7 +467,7 @@ dialog::backdrop {
   margin-top:25px
 }
 .login h1 {
-  font-size:39px;
+  font-size:28px;
   font-weight:600;
   line-height:1.5
 }
@@ -544,7 +518,7 @@ dialog::backdrop {
     padding:28px 20px
   }
   .intro h1 {
-    font-size:29px
+    font-size:24px
   }
   .metrics article {
     padding:18px
@@ -623,7 +597,7 @@ dialog::backdrop {
     justify-content:start
   }
   .login h1 {
-    font-size:30px
+    font-size:26px
   }
   .clock {
     font-size:11px
@@ -638,3 +612,17 @@ dialog::backdrop {
     font-size:15px
   }
 }
+
+.tracking-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.tracking-advanced { margin: 20px 0; }
+.tracking-advanced summary { cursor: pointer; margin-bottom: 12px; }
+#tracking-detail { width: min(680px, calc(100vw - 32px)); }
+#tracking-detail input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; }
+#tracking-detail .field { min-width: 0; }
+#tracking-detail [hidden] { display: none; }
+#detail-content > .secondary { margin: 18px 0; }
+@media (max-width: 600px) { .tracking-grid { grid-template-columns: 1fr; } .tabs { flex-wrap: wrap; } #trackers-view > .section-head { align-items: flex-start; flex-direction: column; } }
+
+.site-footer { margin: 12px auto 0; padding: 0 24px 24px; }
+.site-footer:empty { display: none; }
+.site-footer a:hover { text-decoration: underline; }

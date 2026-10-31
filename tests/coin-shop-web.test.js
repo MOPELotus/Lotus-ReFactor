@@ -115,3 +115,21 @@ test("TRSS mounts only its own prefix before generic logging and uses the existi
   await web.close()
   assert.deepEqual(app.router.stack, [genericLogger])
 })
+
+test("tracking endpoints bind the session owner and profile target, enforce CSRF and hide account identifiers", async t => {
+  const f = await fixture(t), a = await f.login("123"), b = await f.login("456")
+  const input = { qq: "456", accountId: "forged", role: { uid: "forged" }, profileId: 1, mode: "category", game: "nap", itemType: 2, keywords: ["菲林"] }
+  const blocked = await a.request("trackers", { method: "POST", headers: { "X-CSRF-Token": "wrong" }, body: JSON.stringify(input) })
+  assert.equal(blocked.status, 403)
+  const response = await a.request("trackers", { method: "POST", body: JSON.stringify(input) })
+  assert.equal(response.status, 200)
+  const { tracker } = await response.json()
+  assert.equal(tracker.role.uid, "10001")
+  assert.equal(tracker.qq, undefined)
+  assert.equal(tracker.accountId, undefined)
+  assert.deepEqual((await (await b.request("trackers")).json()).trackers, [])
+  assert.equal((await b.request(`trackers/${tracker.id}/pause`, { method: "POST", body: "{}" })).status, 400)
+  assert.equal((await a.request(`trackers/${tracker.id}/pause`, { method: "POST", body: "{}" })).status, 200)
+  assert.equal((await (await a.request("trackers")).json()).trackers[0].enabled, false)
+  assert.equal(f.posts.length, 0)
+})

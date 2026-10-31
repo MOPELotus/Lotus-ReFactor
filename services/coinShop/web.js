@@ -22,7 +22,7 @@ export class CoinShopWeb {
 
   async start(config = {}, bot = globalThis.Bot) {
     if (this.server || this.shared) return this.status()
-    this.config = { enable: true, mode: "auto", host: "127.0.0.1", port: 18164, path: "/lotus/coin-shop", public_url: "", session_hours: 8, ...config }
+    this.config = { enable: true, mode: "auto", host: "127.0.0.1", port: 18164, path: "/lotus/coin-shop", public_url: "", icp_number: "", session_hours: 8, ...config }
     const cfg = this.config
     if (cfg.enable === false) return { enabled: false }
     if (!/^\/[a-zA-Z0-9_/-]+$/.test(cfg.path) || cfg.path === "/" || cfg.path.includes("//")) throw new Error("商城挂载路径格式错误")
@@ -121,7 +121,10 @@ export class CoinShopWeb {
         const file = route === "/" ? "index.html" : route.slice(1)
         const data = await fs.readFile(new URL(`./web/${file}`, import.meta.url))
         res.setHeader("Content-Type", file.endsWith("html") ? "text/html; charset=utf-8" : file.endsWith("js") ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8")
-        res.end(data)
+        if (file.endsWith("html")) {
+          const number = String(this.config.icp_number || "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char])
+          res.end(data.toString("utf8").replace("<!--coin-shop-footer-->", number ? `<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">${number}</a>` : ""))
+        } else res.end(data)
         return
       }
       if (!route.startsWith("/api/")) { this.json(res, 404, { error: "页面不存在" }); return }
@@ -160,6 +163,22 @@ export class CoinShopWeb {
       }
       if (req.method === "GET" && route === "/api/plans") {
         this.json(res, 200, { plans: (await this.service.listPlans(session.qq)).map(publicPlan), now: this.now() }); return
+      }
+      if (req.method === "GET" && route === "/api/trackers") {
+        this.json(res, 200, { trackers: (await this.service.tracking.list(session.qq)).map(publicPlan) }); return
+      }
+      if (req.method === "GET" && route === "/api/tracking-targets") {
+        this.json(res, 200, await this.service.tracking.destinations({ qq: session.qq, profileId: normalizeProfileId(url.searchParams.get("profile") || 1), game: url.searchParams.get("game"), itemType: Number(url.searchParams.get("itemType")) })); return
+      }
+      if (req.method === "POST" && route === "/api/trackers") {
+        const input = await this.body(req)
+        const { profileId, mode, game, itemType, goodsIds, keywords, maxPrice, spendLimit, followSameName, addressId, pollMinutes, leadSeconds, intervalMs, afterSeconds } = input
+        const tracker = await this.service.tracking.create({ qq: session.qq, botId: session.botId, profileId, mode, game, itemType, goodsIds, keywords, maxPrice, spendLimit, followSameName, addressId, pollMinutes, leadSeconds, intervalMs, afterSeconds })
+        this.json(res, 200, { tracker: publicPlan(tracker) }); return
+      }
+      const trackerMatch = route.match(/^\/api\/trackers\/([a-f0-9]{12})\/(pause|resume)$/)
+      if (req.method === "POST" && trackerMatch) {
+        this.json(res, 200, { tracker: publicPlan(await this.service.tracking.setEnabled(session.qq, trackerMatch[1], trackerMatch[2] === "resume")) }); return
       }
       const profileId = normalizeProfileId(url.searchParams.get("profile") || 1)
       if (req.method === "GET" && route === "/api/catalog") {

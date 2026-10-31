@@ -259,3 +259,181 @@ test("new goods enrich the first opening from detail rather than displaying the 
   assert.equal(uncertain.status, "unknown")
   assert.equal(uncertain.opensAt, 0)
 })
+
+test("tracking polls continuously, follows a new goods ID, starts before opening and deduplicates each successful cycle", async t => {
+  const f = await fixture(t)
+  f.good.game = "hkrpg"
+  f.good.opensAt = f.now() + 4000
+  f.client.listAll = async () => [{ ...f.good }]
+  const rule = await f.service.tracking.create({ qq: "123", mode: "goods", game: "hkrpg", itemType: 2, goodsIds: [f.good.id] })
+  await f.service.tracking.poll()
+  let [plan] = await f.store.list()
+  assert.equal(plan.trackingId, rule.id)
+  let attempts = 0
+  f.client.exchange = async (p, profile) => { f.posts.push({ plan: p, at: f.now() }); return ++attempts < 3 ? { retcode: -1, message: "尚未开放" } : { retcode: 0 } }
+  await f.service.run(plan)
+  assert.equal(f.posts[0].at, plan.opensAt - 4000)
+  assert.equal(f.posts[1].at - f.posts[0].at, 500)
+  assert.equal((await f.store.list())[0].status, "succeeded")
+  assert.equal((await f.service.tracking.list("123"))[0].enabled, true)
+  f.advance(1800001)
+  await f.service.tracking.poll()
+  assert.equal((await f.store.list()).length, 1)
+  f.good.id = "9999"
+  f.good.status = "available"
+  await f.service.tracking.poll()
+  assert.equal((await f.store.list()).length, 1, "poll interval is respected")
+  f.advance(1800001)
+  await f.service.tracking.poll()
+  assert.equal((await f.store.list()).length, 2)
+  assert.deepEqual(await f.service.tracking.list("other"), [])
+})
+
+test("category tracking respects game-bound UID, budgets, pause, ownership and restart persistence", async t => {
+  const f = await fixture(t)
+  f.good.game = "hkrpg"
+  f.good.status = "available"
+  f.profile.account.current_uid.gs = "wrong-game-uid"
+  f.client.listAll = async () => [{ ...f.good }]
+  const rule = await f.service.tracking.create({ qq: "123", mode: "category", game: "hkrpg", itemType: 2, keywords: ["星琼"], spendLimit: 1800 })
+  assert.equal(rule.role.uid, "10001")
+  await assert.rejects(f.service.tracking.setEnabled("other", rule.id, false), /未找到/)
+  const reloaded = new CoinShopStore(f.store.file)
+  assert.equal((await reloaded.listTrackers())[0].role.uid, "10001")
+  await f.service.tracking.poll()
+  await f.service.run((await f.store.list())[0])
+  f.advance(1800001); f.good.id = "9999"
+  await f.service.tracking.poll()
+  assert.equal((await f.store.list()).length, 1, "successful spending consumes the rule budget")
+  await f.service.tracking.setEnabled("123", rule.id, false)
+  assert.equal((await f.service.tracking.list("123"))[0].status, "paused")
+  await f.service.tracking.setEnabled("123", rule.id, true)
+  f.profile.account.current_uid.sr = "20002"
+  f.advance(1800001); await f.service.tracking.poll()
+  assert.equal((await f.service.tracking.list("123"))[0].enabled, false)
+})
+
+test("unknown tracking submissions and verification pause the rule and never replay", async t => {
+  for (const verification of [false, true]) {
+    const f = await fixture(t)
+    f.good.game = "hkrpg"; f.good.status = "available"
+    f.client.listAll = async () => [{ ...f.good }]
+    const rule = await f.service.tracking.create({ qq: "123", mode: "category", game: "hkrpg", itemType: 2 })
+    await f.service.tracking.poll()
+    f.client.exchange = async () => { if (verification) return { retcode: 1034, message: "需要验证" }; throw new Error("lost response") }
+    await f.service.run((await f.store.list())[0])
+    assert.equal((await f.service.tracking.list("123"))[0].enabled, false)
+    assert.equal((await f.store.list())[0].status, verification ? "failed" : "unknown")
+    if (!verification) await assert.rejects(f.service.tracking.setEnabled("123", rule.id, true), /待确认/)
+    f.advance(1800001); await f.service.tracking.poll()
+    assert.equal((await f.store.list()).length, 1)
+  }
+})
+
+test("pausing during asynchronous tracker preparation cannot create an active submission", async t => {
+  const f = await fixture(t)
+  f.good.game = "hkrpg"; f.good.status = "available"
+  f.client.listAll = async () => [{ ...f.good }]
+  const rule = await f.service.tracking.create({ qq: "123", mode: "category", game: "hkrpg", itemType: 2 })
+  f.client.points = async () => { await f.service.tracking.setEnabled("123", rule.id, false); return 10000 }
+  await f.service.tracking.poll()
+  assert.equal((await f.store.list()).length, 0)
+  assert.equal(f.posts.length, 0)
+})
+
+test("v1 plan stores migrate without losing existing records when tracking rules are added", async t => {
+  const f = await fixture(t)
+  const file = path.join(f.root, "legacy.json")
+  await fs.writeFile(file, JSON.stringify({ version: 1, plans: [{ id: "old", status: "succeeded" }] }))
+  const store = new CoinShopStore(file)
+  await Promise.all([store.changeTrackers(rules => rules.push({ id: "rule" })), store.update("old", { message: "kept" })])
+  const saved = JSON.parse(await fs.readFile(file, "utf8"))
+  assert.equal(saved.version, 2)
+  assert.equal(saved.plans[0].message, "kept")
+  assert.equal(saved.trackers[0].id, "rule")
+})
+
+test("restart pauses tracking rules with interrupted submissions before polling other goods", async t => {
+  const f = await fixture(t)
+  await f.store.changeTrackers(rules => rules.push({ id: "tracking", qq: "123", enabled: true }))
+  await f.store.change(plans => plans.push({ id: "interrupted", trackingId: "tracking", status: "submitting" }))
+  await f.service.initialize()
+  assert.equal((await f.store.list())[0].status, "unknown")
+  assert.equal((await f.store.listTrackers())[0].enabled, false)
+})
+
+test("minute polling sleeps between scans but wakes for a known opening even with a three-hour interval", async t => {
+  const f = await fixture(t)
+  f.good.game = "hkrpg"; f.good.opensAt = f.now() + 3600000
+  let reads = 0
+  f.client.listAll = async () => { reads++; return [{ ...f.good }] }
+  const rule = await f.service.tracking.create({ qq: "123", mode: "category", game: "hkrpg", itemType: 2, pollMinutes: 180 })
+  assert.equal(rule.pollMs, 10800000)
+  await f.service.tracking.poll()
+  assert.equal(reads, 1)
+  assert.equal(f.service.tracking.snapshots.get(rule.id).nextPollAt, f.good.opensAt - 15000)
+  f.advance(30 * 60000); await f.service.tracking.poll()
+  assert.equal(reads, 1, "no requests during the ordinary polling interval")
+  f.advance(30 * 60000 - 15000); await f.service.tracking.poll()
+  assert.equal(reads, 2)
+  const [plan] = await f.store.list()
+  assert.equal(plan.opensAt, f.good.opensAt)
+  assert.equal(f.posts.length, 0)
+  await f.service.run(plan)
+  assert.equal(f.posts[0].at, f.good.opensAt - 5000)
+})
+
+test("HTTP 429 reads are not retried, and a frequency limit pauses all tracking rules on the account", async t => {
+  let reads = 0
+  const client = new CoinShopClient({ getJson: async () => { reads++; throw new Error("官方接口 HTTP 429") } })
+  await assert.rejects(client.points({}), /HTTP 429/)
+  assert.equal(reads, 1)
+  const f = await fixture(t)
+  const create = () => f.service.tracking.create({ qq: "123", mode: "category", game: "hkrpg", itemType: 2 })
+  const a = await create(), b = await create()
+  f.client.listAll = async () => { throw new Error("操作频繁，请稍后再试") }
+  await f.service.tracking.poll()
+  assert.equal((await f.service.tracking.list("123")).filter(rule => rule.enabled).length, 0)
+  assert.deepEqual((await f.store.listTrackers()).map(rule => rule.id), [a.id, b.id])
+  assert.equal(f.posts.length, 0)
+})
+
+test("default polling is thirty minutes and old second-based preview rules migrate to that interval", async t => {
+  const f = await fixture(t)
+  const rule = await f.service.tracking.create({ qq: "123", mode: "category", game: "hkrpg", itemType: 2 })
+  assert.equal(rule.pollMs, 1800000)
+  await assert.rejects(f.service.tracking.create({ qq: "123", mode: "category", game: "hkrpg", itemType: 2, pollMinutes: 0 }), /超出/)
+  await f.store.changeTrackers(rules => { rules[0].pollMs = 300000; delete rules[0].pollUnit })
+  const restarted = new CoinShopService({ store: f.store, client: f.client, loadProfile: async () => f.profile })
+  await restarted.initialize()
+  assert.equal((await f.store.listTrackers())[0].pollMs, 1800000)
+  const short = await restarted.tracking.create({ qq: "123", mode: "category", game: "hkrpg", itemType: 2, pollMinutes: 5 })
+  restarted.initializing = null
+  await restarted.initialize()
+  assert.equal((await f.store.listTrackers()).find(rule => rule.id === short.id).pollMs, 300000, "explicit minute settings are preserved")
+})
+
+test("physical exchange matches official numeric address fields and encodes non-ASCII device names", async () => {
+  let submitted
+  const client = new CoinShopClient({ postJson: async (body, headers) => { submitted = { body, headers }; return { retcode: 0 } } })
+  await client.exchange({ type: 1, goodsId: "1", addressId: "1234" }, { account: {}, device: { name: "荷花的手机" } })
+  assert.equal(submitted.body.address_id, 1234)
+  assert.equal(submitted.body.exchange_num, 1)
+  assert.equal(submitted.headers["x-rpc-device_name"], encodeURIComponent("荷花的手机"))
+  await assert.rejects(client.exchange({ type: 1, goodsId: "1", addressId: "invalid" }, {}), /地址 ID/)
+})
+
+test("a quota-exhausted item still wakes at the next official opening with long ordinary polling", async t => {
+  const f = await fixture(t)
+  f.good.game = "hkrpg"; f.good.exchanged = 1; f.good.opensAt = f.now() + 3600000
+  f.client.listAll = async () => [{ ...f.good }]
+  const rule = await f.service.tracking.create({ qq: "123", mode: "category", game: "hkrpg", itemType: 2, pollMinutes: 180 })
+  await f.service.tracking.poll()
+  assert.equal(f.service.tracking.snapshots.get(rule.id).nextPollAt, f.good.opensAt - 15000)
+  f.advance(3600000 - 15000); await f.service.tracking.poll()
+  assert.equal((await f.store.list()).length, 0)
+  assert.equal(f.service.tracking.snapshots.get(rule.id).nextPollAt, f.good.opensAt + 1000)
+  f.advance(16000); f.good.status = "available"; f.good.exchanged = 0
+  await f.service.tracking.poll()
+  assert.equal((await f.store.list()).length, 1)
+})
