@@ -10,6 +10,11 @@ export const LOTUS_CONFIG_DISABLED_PLUGIN_NAMES = Object.freeze([
   // miao wiki overlaps. Keep 角色查询/角色面板 for cards and panel transform.
   "角色资料",
 
+  // Lotus owns official livestream codes for all games. The unused redemption
+  // action bundled with genshin's exchange app is intentionally disabled too.
+  "兑换码",
+  "[ZZZ-Plugin]Code",
+
   // Nwflower/Atlas overlaps
   "Atlas图鉴",
   "Atlas图鉴管理",
