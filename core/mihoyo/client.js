@@ -91,14 +91,16 @@ export class MihoyoClient {
     if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
     const response = await this.fetch(url, options)
     const text = await response.text()
+    const target = new URL(url)
+    const endpoint = `${target.origin}${target.pathname}`
     let data
     try {
       data = text ? JSON.parse(text.replace(/^\((.*)\)$/s, "$1")) : null
     } catch {
-      throw new Error(`invalid json response from ${url}`)
+      if (response.ok) throw new Error(`invalid json response from ${endpoint} (HTTP ${response.status})`)
     }
     if (!response.ok) {
-      const error = new Error(`http ${response.status} ${response.statusText}`)
+      const error = new Error(`http ${response.status} ${response.statusText} from ${endpoint}`)
       error.data = data
       throw error
     }
