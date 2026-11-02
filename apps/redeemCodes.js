@@ -4,6 +4,7 @@ import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import { replyForward, replyText } from "../core/transport/reply.js"
 import { parseRedeemCommand } from "../services/redeemCodes/games.js"
 import { RedeemCodeService, formatRedeemResult } from "../services/redeemCodes/service.js"
+import { planetLaunchMessages } from "../services/redeemCodes/planetLaunch.js"
 
 const defaultService = new RedeemCodeService()
 
@@ -14,9 +15,20 @@ export class LotusRedeemCodes extends BasePlugin {
       dsc: "官方前瞻兑换码与有效期",
       event: "message",
       priority: LOTUS_INTERCEPT_PRIORITY,
-      rule: [{ reg: "^[#*%％/]?.*(兑换码|[cC][oO][dD][eE])$", fnc: "redeemCodes" }],
+      rule: [
+        { reg: "^#星布谷地公测兑换码$", fnc: "planetLaunchCodes" },
+        { reg: "^[#*%％/]?.*(兑换码|[cC][oO][dD][eE])$", fnc: "redeemCodes" },
+      ],
     })
     this.service = options.service || defaultService
+    this.now = options.now || Date.now
+  }
+
+  async planetLaunchCodes() {
+    const { expired, messages } = planetLaunchMessages(this.now())
+    if (expired) await replyText(this, messages.join("\n"))
+    else await replyForward(this, messages, { title: "星布谷地公测兑换码" })
+    return true
   }
 
   async redeemCodes() {

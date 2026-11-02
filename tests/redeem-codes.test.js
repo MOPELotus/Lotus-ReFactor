@@ -234,3 +234,36 @@ test("available codes preserve all content in order, splitting each part into a 
   await app.redeemCodes()
   assert.deepEqual(replies, texts)
 })
+
+test("planet launch command works offline as a separate command with an individually copyable code", async () => {
+  globalThis.plugin = class { constructor(config) { Object.assign(this, config) } }
+  const { LotusRedeemCodes } = await import("../apps/redeemCodes.js")
+  const app = new LotusRedeemCodes({
+    now: () => Date.parse("2026-11-02T00:00:00+08:00"),
+    service: { query: () => { throw new Error("launch code must not query livestream APIs") } },
+  })
+  const rule = app.rule.find(item => new RegExp(item.reg).test("#星布谷地公测兑换码"))
+  assert.equal(rule.fnc, "planetLaunchCodes")
+  const replies = []
+  app.reply = async message => replies.push(message)
+  app.e = { msg: "#星布谷地公测兑换码", self_id: "123", group: { makeForwardMsg: async nodes => ({ type: "forward", nodes }) } }
+  assert.equal(await app[rule.fnc](), true)
+  const texts = replies[0].nodes.map(node => node.message)
+  assert.equal(texts[1], "XBGD1204")
+  assert.equal(texts[2], "奇物海哨×10")
+  assert.ok(texts.some(text => /公测开服后可兑换/.test(text)))
+  assert.ok(texts.some(text => /2027-01-03 10:00:00 前/.test(text)))
+  assert.equal(parseRedeemCommand("#星布谷地公测兑换码"), null)
+})
+
+test("planet launch code is suppressed exactly at the official expiry", async () => {
+  const { planetLaunchMessages } = await import("../services/redeemCodes/planetLaunch.js")
+  const deadline = Date.parse("2027-01-03T10:00:00+08:00")
+  assert.ok(planetLaunchMessages(deadline - 1).messages.includes("XBGD1204"))
+  for (const now of [deadline, deadline + 1, Date.parse("2027-02-01T00:00:00+08:00")]) {
+    const result = planetLaunchMessages(now)
+    assert.equal(result.expired, true)
+    assert.equal(result.messages.includes("XBGD1204"), false)
+    assert.ok(result.messages.some(text => /已过期/.test(text)))
+  }
+})
