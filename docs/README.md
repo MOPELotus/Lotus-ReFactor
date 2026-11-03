@@ -5,8 +5,9 @@
 ## 安装与运行
 
 - [安装与部署](installation.md)
-- [初始化](initialization.md)
+- [初始化与开机自动维护](initialization.md)
   - [工具链-TuneWeave/FFmpeg](features/tools.md)
+- [主人独立管理面板](miyoushe.md#主人配置)
 
 ## 账号、Profile 与安全
 
@@ -19,7 +20,7 @@
 
 ## 米游社功能
 
-- [米游社总页与插件面板](miyoushe.md)
+- [米游社用户功能页](miyoushe.md)
 - [签到与调度总览](checkin.md)
   - [自动签到-多 profile](features/checkin.md)
   - [签到调度-随机与固定](features/scheduler.md)
