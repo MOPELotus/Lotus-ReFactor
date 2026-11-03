@@ -14,6 +14,8 @@ export class CoinShopWeb {
     this.service = options.service
     this.miyoushe = options.miyoushe || new MiyousheManagement(options)
     this.isOwner = options.isOwner || (session => session.owner === true)
+    this.readPanel = options.readPanel || readPanelConfig
+    this.savePanel = options.savePanel || savePanelConfig
     this.loadProfile = options.loadProfile || loadLoggedInProfile
     this.listProfiles = options.listProfiles || listProfileIds
     this.now = options.now || Date.now
@@ -28,7 +30,6 @@ export class CoinShopWeb {
     if (this.server || this.shared) return this.status()
     this.config = { enable: true, mode: "auto", host: "127.0.0.1", port: 18164, path: "/lotus/coin-shop", public_url: "", icp_number: "", session_hours: 8, ...config }
     const cfg = this.config
-    if (cfg.enable === false) return { enabled: false }
     if (!/^\/[a-zA-Z0-9_/-]+$/.test(cfg.path) || cfg.path === "/" || cfg.path.includes("//")) throw new Error("商城挂载路径格式错误")
     cfg.path = cfg.path.replace(/\/$/, "")
     if (cfg.public_url && !/^https?:$/.test(new URL(cfg.public_url).protocol)) throw new Error("商城外部地址需使用 HTTP 或 HTTPS")
@@ -41,6 +42,7 @@ export class CoinShopWeb {
       if (!Array.isArray(stack)) throw new Error("无法安全挂载 TRSS 共用端口，请改用 standalone 模式")
       const length = stack.length
       app.use(cfg.path, handler)
+      app.use(this.panelPath(), handler)
       const layers = stack.splice(length)
       // Handle only our path before TRSS's generic request logger, so session
       // cookies and one-time login tickets never enter the host's request logs.
@@ -52,7 +54,7 @@ export class CoinShopWeb {
       await new Promise((resolve, reject) => { server.once("error", reject); server.listen(cfg.port, cfg.host, resolve) })
       this.server = server
     }
-    try { await this.service.start() }
+    try { if (cfg.enable !== false) await this.service.start() }
     catch (error) { await this.close(); throw error }
     return this.status()
   }
@@ -67,13 +69,23 @@ export class CoinShopWeb {
     return { enabled: Boolean(this.server || this.shared), mode: this.shared ? "shared" : "standalone", port, url }
   }
 
-  issueTicket(qq, botId = "", owner = false) {
+  panelPath() { return this.config.path.replace(/\/[^/]+$/, "") + "/panel" }
+
+  issuePanelTicket(qq, botId = "", owner = false) {
+    if (owner !== true) throw Object.assign(new Error("只有机器人主人可以获取管理面板链接"), { status: 403 })
+    return this.issueTicket(qq, botId, true, "panel")
+  }
+
+  issueTicket(qq, botId = "", owner = false, purpose = "user") {
     if (!this.status().enabled) throw new Error("米游币网页尚未启动，请检查本机 coin_shop 配置")
+    if (purpose === "user" && this.config.enable === false) throw new Error("米游社功能网页已关闭")
+    if (!["user", "panel"].includes(purpose) || purpose === "panel" && owner !== true) throw new Error("面板登录权限无效")
     this.prune()
-    for (const [key, ticket] of this.tickets) if (ticket.qq === String(qq)) this.tickets.delete(key)
+    for (const [key, ticket] of this.tickets) if (ticket.qq === String(qq) && ticket.purpose === purpose) this.tickets.delete(key)
     const value = secret()
-    this.tickets.set(digest(value), { qq: String(qq), botId: String(botId), owner: owner === true, expires: this.now() + 10 * 60000 })
-    return `${this.status().url}#ticket=${value}`
+    this.tickets.set(digest(value), { qq: String(qq), botId: String(botId), owner: owner === true, purpose, expires: this.now() + 10 * 60000 })
+    const url = purpose === "panel" ? new URL(this.panelPath() + "/", this.status().url).href : this.status().url
+    return `${url}#ticket=${value}`
   }
 
   prune() {
@@ -117,13 +129,16 @@ export class CoinShopWeb {
       this.prune()
       const original = req.originalUrl || req.url
       const url = new URL(original, "http://localhost")
-      const base = this.config.path
+      const panel = url.pathname === this.panelPath() || url.pathname.startsWith(this.panelPath() + "/")
+      if (!panel && this.config.enable === false) { this.json(res, 404, { error: "用户页面已关闭" }); return }
+      const base = panel ? this.panelPath() : this.config.path
+      const purpose = panel ? "panel" : "user", sessionCookie = panel ? "lotus_panel" : cookieName
       if (url.pathname === base) { res.writeHead(302, { Location: base + "/" }); res.end(); return }
       if (!url.pathname.startsWith(base + "/")) { this.json(res, 404, { error: "页面不存在" }); return }
       const route = url.pathname.slice(base.length)
       if (req.method === "GET" && ["/", "/app.js", "/style.css"].includes(route)) {
         const file = route === "/" ? "index.html" : route.slice(1)
-        const data = await fs.readFile(new URL(`./web/${file}`, import.meta.url))
+        const data = await fs.readFile(new URL(`./${panel ? "panel" : "web"}/${file}`, import.meta.url))
         res.setHeader("Content-Type", file.endsWith("html") ? "text/html; charset=utf-8" : file.endsWith("js") ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8")
         if (file.endsWith("html")) {
           const number = String(this.config.icp_number || "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char])
@@ -141,27 +156,29 @@ export class CoinShopWeb {
         const input = await this.body(req)
         const ticket = typeof input.ticket === "string" ? this.tickets.get(digest(input.ticket)) : null
         if (!ticket) throw Object.assign(new Error("登录链接无效或已过期，请私聊机器人获取新链接"), { status: 401 })
+        if (ticket.purpose !== purpose || panel && !await this.isOwner(ticket)) throw Object.assign(new Error("登录链接不适用于此页面"), { status: 403 })
         this.tickets.delete(digest(input.ticket))
         const sessionId = secret(), csrf = secret()
-        const maxAge = Math.floor(this.config.session_hours * 3600)
+        const maxAge = panel ? 1800 : Math.floor(this.config.session_hours * 3600)
         this.sessions.set(digest(sessionId), { ...ticket, csrf, expires: this.now() + maxAge * 1000 })
-        res.setHeader("Set-Cookie", `${cookieName}=${sessionId}; Path=${base}/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${this.status().url.startsWith("https:") ? "; Secure" : ""}`)
-        this.json(res, 200, { csrf, qq: ticket.qq, owner: await this.isOwner(ticket), now: this.now() })
+        res.setHeader("Set-Cookie", `${sessionCookie}=${sessionId}; Path=${base}/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${this.status().url.startsWith("https:") ? "; Secure" : ""}`)
+        this.json(res, 200, { csrf, qq: ticket.qq, owner: await this.isOwner(ticket), now: this.now(), expiresAt: this.now() + maxAge * 1000 })
         return
       }
-      const value = String(req.headers.cookie || "").split(/;\s*/).find(part => part.startsWith(cookieName + "="))?.slice(cookieName.length + 1)
+      const value = String(req.headers.cookie || "").split(/;\s*/).find(part => part.startsWith(sessionCookie + "="))?.slice(sessionCookie.length + 1)
       const session = value ? this.sessions.get(digest(value)) : null
-      if (!session) throw Object.assign(new Error("请私聊机器人发送 #米游社功能，获取专属登录链接"), { status: 401 })
+      if (!session) throw Object.assign(new Error(panel ? "管理会话已失效，请主人私聊发送 #荷花管理面板 获取新链接" : "请私聊机器人发送 #米游社功能，获取专属登录链接"), { status: 401 })
+      if (session.purpose !== purpose || panel && !await this.isOwner(session)) throw Object.assign(new Error("只有机器人主人可以访问管理面板"), { status: 403 })
       if (mutating && req.headers["x-csrf-token"] !== session.csrf) throw Object.assign(new Error("页面凭证已失效，请刷新页面"), { status: 403 })
-      if (req.method === "GET" && route === "/api/session") { this.json(res, 200, { csrf: session.csrf, qq: session.qq, owner: await this.isOwner(session), now: this.now() }); return }
+      if (req.method === "GET" && route === "/api/session") { this.json(res, 200, { csrf: session.csrf, qq: session.qq, owner: await this.isOwner(session), now: this.now(), expiresAt: session.expires }); return }
       if (req.method === "POST" && route === "/api/logout") {
-        this.sessions.delete(digest(value)); res.setHeader("Set-Cookie", `${cookieName}=; Path=${base}/; HttpOnly; SameSite=Strict; Max-Age=0`)
+        this.sessions.delete(digest(value)); res.setHeader("Set-Cookie", `${sessionCookie}=; Path=${base}/; HttpOnly; SameSite=Strict; Max-Age=0`)
         this.json(res, 200, { ok: true }); return
       }
-      if (route === "/api/panel/config") {
-        if (!await this.isOwner(session)) throw Object.assign(new Error("只有机器人主人可以管理全局配置"), { status: 403 })
-        if (req.method === "GET") { this.json(res, 200, await readPanelConfig()); return }
-        if (req.method === "POST") { this.json(res, 200, await savePanelConfig(await this.body(req, 65536))); return }
+      if (panel) {
+        if (route === "/api/config" && req.method === "GET") { this.json(res, 200, await this.readPanel()); return }
+        if (route === "/api/config" && req.method === "POST") { this.json(res, 200, await this.savePanel(await this.body(req, 65536))); return }
+        this.json(res, 404, { error: "页面不存在" }); return
       }
       if (route === "/api/miyoushe/captcha" && req.method === "GET") {
         this.json(res, 200, await this.miyoushe.captchaStatus(session.qq, normalizeProfileId(url.searchParams.get("profile") || 1))); return

@@ -130,23 +130,22 @@ async function loadPlans() {
 function switchTab(tab) {
   if (tab !== "overview") stopCaptchaPolling()
   state.tab = tab
-  for (const name of ["overview", "goods", "trackers", "plans", "settings"]) { $(name + "-view").hidden = name !== tab; $("tab-" + name).classList.toggle("active", name === tab) }
+  for (const name of ["overview", "goods", "trackers", "plans"]) { $(name + "-view").hidden = name !== tab; $("tab-" + name).classList.toggle("active", name === tab) }
 }
 async function init() {
   try {
     const ticket = new URLSearchParams(location.hash.slice(1)).get("ticket")
     if (location.hash) history.replaceState(null, "", location.pathname + location.search)
     const session = ticket ? await post("session", { ticket }) : await api("session")
-    state.csrf = session.csrf; state.owner = session.owner; $("tab-settings").hidden = !session.owner; state.nowOffset = session.now - Date.now()
+    state.csrf = session.csrf; state.nowOffset = session.now - Date.now()
     const { profiles } = await api("profiles")
     const usable = profiles.filter(profile => profile.loggedIn)
-    if (!usable.length && !state.owner) { showLogin("尚未绑定可用账号，请先在机器人中扫码登录。"); return }
+    if (!usable.length) { showLogin("尚未绑定可用账号，请先在机器人中扫码登录。"); return }
     $("profile").replaceChildren()
     for (const profile of usable) { const option = el("option", "", `profile ${profile.id} · ${profile.name}`); option.value = profile.id; $("profile").append(option) }
     state.profile = usable[0]?.id || 1; $("profile").value = state.profile; $("profile").disabled = !usable.length
     $("login").hidden = true; $("dashboard").hidden = false
     if (usable.length) await Promise.allSettled([loadOverview(), loadCatalog(), loadPlans(), loadTrackers()])
-    else { switchTab("settings"); await loadPanel() }
   } catch (error) { if ($("dashboard").hidden) showLogin(error.message); else toast(error.message) }
 }
 $("profile").addEventListener("change", run(async () => { stopCaptchaPolling(); $("overview-captcha")?.replaceChildren(el("p", "muted", "正在读取当前 profile 的验证码状态…")); state.profile = Number($("profile").value); state.page = 1; $("detail").close(); $("tracking-detail").close(); await Promise.all([loadOverview(), loadCatalog()]) }))
@@ -230,7 +229,7 @@ function stopCaptchaPolling() {
 function renderCaptchaStatus(container, data = {}) {
   const events = Array.isArray(data.events) ? data.events : []
   container.replaceChildren(el("h2", "", "验证码进度"))
-  container.append(el("p", "muted", data.running ? "任务执行中，验证进度会自动更新。人工验证链接也会尝试私聊发送。" : data.status === "completed" ? "本次任务已结束。" : data.status === "failed" ? "本次任务未完成，请查看执行记录。" : "暂无正在处理的验证码。"))
+  container.append(el("p", "muted", data.running ? "任务执行中，验证进度会自动更新。人工验证链接也会尝试私聊发送。" : data.status === "completed" ? "本次任务已结束。" : data.status === "failed" ? "本次任务未完成，可重新尝试或联系机器人主人。" : "暂无正在处理的验证码。"))
   const latestManual = events.map(event => event.type).lastIndexOf("captcha:manual-link")
   const lastTerminal = Math.max(events.map(event => event.type).lastIndexOf("captcha:success"), events.map(event => event.type).lastIndexOf("captcha:fail"))
   events.forEach((event, index) => {
@@ -282,6 +281,8 @@ async function loadOverview() {
   if (request !== overviewRequest || profile !== state.profile) return
   const view = $("overview-view"), account = el("article", "overview-section"), missions = el("article", "overview-section")
   account.append(el("h2", "", "账号状态"), el("p", "", `profile ${profile} · ${data.account.loggedIn ? "已登录" : "未登录"} · ${data.account.deviceBound ? "设备已绑定" : "待绑定设备"}`), el("p", "muted", data.account.roles.map(role => `${role.nickname || role.game} · ${role.uid}`).join(" / ") || "暂无绑定游戏角色"))
+  const today = data.todaySchedule || {}
+  account.append(el("p", "muted", !today.enabled ? "自动签到已关闭。" : today.time ? `今日签到安排：${today.time} · ${today.running ? "正在执行" : today.done ? today.ok ? "已完成" : "执行未成功" : "等待执行"}` : "今日签到时间尚未安排，请稍后查看。"))
   missions.append(el("h2", "", "当前社区任务"))
   if (data.missions) {
     $("balance").textContent = Number(data.missions.balance).toLocaleString()
@@ -305,43 +306,19 @@ async function loadOverview() {
   const cloud = el("div", "option-grid");form.append(el("h3", "", "云游戏"),cloud)
   add("cloud.genshin", "云原神", settings.cloud.genshin, cloud);add("cloud.zzz", "云绝区零", settings.cloud.zzz, cloud)
   form.append(el("p", "muted", "海外与云游戏需先通过现有聊天指令绑定各自凭证。"))
-  const schedule = el("label", "field", "签到时间"), mode = el("select"), fixed = el("input"); fixed.type = "time"; fixed.value = settings.schedule.fixed_time || "00:00"
-  for (const [value, label] of [["inherit","跟随全局"],["random","随机时间"],["fixed","固定时间"]]) { const option = el("option", "", label); option.value=value;mode.append(option) }
-  mode.value=settings.schedule.mode; schedule.append(mode, fixed);form.append(schedule)
   const actions = el("div", "section-head"), save = el("button", "primary", "保存设置"), start = el("button", "secondary", data.running ? "任务执行中" : "立即执行签到与任务")
   save.type="submit";start.type="button";start.id="miyoushe-run";start.disabled=data.running;actions.append(save,start);form.append(actions)
   form.addEventListener("submit",run(async event => {
     event.preventDefault();save.disabled=true
-    try { const patch={ tasks:{},cn:{},os:{},cloud:{},forums:[],schedule:{mode:mode.value,fixed_time:fixed.value} }
+    try { const patch={ tasks:{},cn:{},os:{},cloud:{},forums:[] }
       for(const [key,input] of fields){const [group,field]=key.split(".");if(group==="forum"){if(input.checked)patch.forums.push(Number(field))}else if(field)patch[group][field]=input.checked;else patch[key]=input.checked}
       await post("miyoushe/settings",{profileId:profile,settings:patch});toast("已保存，与聊天管理同步")
     }finally{save.disabled=false}
   }))
   start.addEventListener("click",run(async()=>{start.disabled=true;try{await post("miyoushe/run",{profileId:profile});if(profile!==state.profile)return;start.textContent="任务执行中";toast("任务已启动，验证码进度会自动更新");if(state.tab==="overview")startCaptchaPolling(profile)}catch(error){start.disabled=false;throw error}}))
-  const logs=el("article","overview-section");logs.append(el("h2","","最近执行"));for(const item of data.logs)logs.append(el("p",item.ok?"complete":"muted",item.time+" · "+item.message));if(!data.logs.length)logs.append(el("p","muted","暂无执行记录"))
   const captcha = el("article", "overview-section captcha-status"); captcha.id = "overview-captcha"
   renderCaptchaStatus(captcha, data.captcha)
-  view.replaceChildren(account,missions,captcha,form,logs)
+  view.replaceChildren(account,missions,captcha,form)
   if (data.running && state.tab === "overview") startCaptchaPolling(profile)
 }
-async function loadPanel() {
-  const data=await api("panel/config"),view=$("settings-view"),form=el("form","panel-form"),inputs=new Map(),clears=new Set()
-  view.replaceChildren(el("h2","","荷花插件配置"),el("p","muted","与锅巴共用配置。密钥留空保持原值，启动项保存后需重启机器人。"),form)
-  let section = null
-  for(const schema of data.schemas){
-    if(!schema.field){const details=el("details","panel-section"),summary=el("summary","",schema.label||"设置");section=el("div","panel-fields");details.append(summary,section);form.append(details);continue}
-    const field=el("label","field",schema.label),value=data.values[schema.field];let input
-    if(schema.component==="Select"){input=el("select");for(const choice of schema.componentProps?.options||[]){const option=el("option","",choice.label);option.value=choice.value;input.append(option)}input.value=value}
-    else if(schema.component==="Switch"){input=el("input");input.type="checkbox";input.checked=Boolean(value)}
-    else if(schema.component==="InputTextArea"){input=el("textarea");input.rows=3;input.value=value??""}
-    else{input=el("input");input.type=schema.component==="InputPassword"?"password":schema.component==="InputNumber"?"number":"text";input.value=value??"";if(data.configured.includes(schema.field))input.placeholder="已配置，留空保持"}
-    inputs.set(schema.field,{input,schema});field.append(input)
-    if(schema.bottomHelpMessage)field.append(el("small","muted",schema.bottomHelpMessage))
-    if(data.configured.includes(schema.field)){const clear=checkField("清除此密钥",false);clear.input.addEventListener("change",()=>clear.input.checked?clears.add(schema.field):clears.delete(schema.field));field.append(clear.field)}
-    ;(section || form).append(field)
-  }
-  const save=el("button","primary panel-group","保存全局配置");save.type="submit";form.append(save)
-  form.addEventListener("submit",run(async event=>{event.preventDefault();save.disabled=true;try{const patch={clearSecrets:[...clears]};for(const [key,{input,schema}]of inputs){patch[key]=schema.component==="Switch"?input.checked:schema.component==="InputNumber"?Number(input.value):input.value}const result=await post("panel/config",patch);toast(result.message)}finally{save.disabled=false}}))
-}
 $("tab-overview").addEventListener("click",run(async()=>{switchTab("overview");await loadOverview()}))
-$("tab-settings").addEventListener("click",run(async()=>{switchTab("settings");await loadPanel()}))

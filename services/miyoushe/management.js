@@ -1,6 +1,7 @@
 import { loadLoggedInProfile, normalizeProfileId, saveProfile, withProfileWrite } from "../../core/config/profile.js"
 import { ProfileSigninService } from "../checkin/profileSignin.js"
-import { readCheckinAudit } from "../checkin/audit.js"
+import { SchedulerService, dateString } from "../../core/scheduler/service.js"
+import { loadGlobalConfig } from "../../core/config/global.js"
 import { MiyousheClient } from "./client.js"
 import { SIGNIN_GAMES } from "./tasks.js"
 import { createCaptchaEventReporter } from "../../core/captcha/notify.js"
@@ -32,23 +33,28 @@ export function publicMiyousheSettings(profile) {
     cn: Object.fromEntries(SIGNIN_GAMES.map(g => [g.key, Boolean(profile.games?.cn?.[g.key]?.checkin)])),
     os: Object.fromEntries(SIGNIN_GAMES.filter(g => g.osAct).map(g => [g.key, Boolean(profile.games?.os?.[g.key]?.checkin)])),
     osEnabled: Boolean(profile.games?.os?.enable), cloud: Object.fromEntries(["genshin", "zzz"].map(k => [k, Boolean(profile.cloud_games?.cn?.[k]?.enable)])),
-    schedule: { ...profile.schedule }, notify: Boolean(profile.profile?.notify?.enable) }
+    notify: Boolean(profile.profile?.notify?.enable) }
 }
 export class MiyousheManagement {
-  constructor(options = {}) { this.loadProfile = options.loadProfile || loadLoggedInProfile; this.saveProfile = options.saveProfile || saveProfile; this.client = options.client || new MiyousheClient(options); this.runner = options.runner || new ProfileSigninService({ render: false }); this.runs = new Map(); this.captchaJobs = new Map(); this.notify = options.notify || notifyUser; this.bot = options.bot; this.now = options.now || Date.now; this.readAudit = options.readAudit || readCheckinAudit }
+  constructor(options = {}) { this.loadProfile = options.loadProfile || loadLoggedInProfile; this.saveProfile = options.saveProfile || saveProfile; this.client = options.client || new MiyousheClient(options); this.runner = options.runner || new ProfileSigninService({ render: false }); this.runs = new Map(); this.captchaJobs = new Map(); this.notify = options.notify || notifyUser; this.bot = options.bot; this.now = options.now || Date.now; this.scheduler = options.scheduler || new SchedulerService(); this.loadConfig = options.loadConfig || loadGlobalConfig }
   key(qq, id) { return `${qq}:${normalizeProfileId(id)}` }
   async overview(qq, profileId = 1) {
     const id = normalizeProfileId(profileId), profile = await this.loadProfile(String(qq), id)
     let missions = null, missionError = ""
     try { missions = await this.client.missions(profile) } catch (error) { missionError = error.message }
     const account = profile.account || {}
+    const date = dateString(new Date(this.now())), plan = await this.scheduler.getPlan(date)
+    const entry = plan?.entries?.find(item => String(item.qq) === String(qq) && Number(item.profileId || 1) === id)
+    const config = await this.loadConfig()
     return { profileId: id, nickname: profile.user?.nickname || "", account: { loggedIn: Boolean(account.cookie), refreshable: Boolean(account.stoken), deviceBound: Boolean(profile.device?.bound), roles: Object.entries(account.game_roles || {}).flatMap(([game, rows]) => (Array.isArray(rows) ? rows : []).map(role => ({ game, uid: String(role.uid || role.game_uid || role), nickname: role.nickname || "" }))) },
       settings: publicMiyousheSettings(profile), games: SIGNIN_GAMES.map(({ key, name, osAct }) => ({ key, name, overseas: Boolean(osAct) })),
       missions: missions ? { balance: missions.total_points, received: missions.already_received_points, remaining: missions.can_get_points,
         items: (missions.states || []).map(m => ({ id: m.mission_id, key: m.mission_key || "", name: missionLabel(m), done: Boolean(m.is_get_award), count: m.happened_times, automatic: Number(m.mission_id) === 58 || [59, 60, 61].includes(Number(m.mission_id)) })) } : null,
-      missionError, running: this.runs.has(this.key(qq, id)), captcha: this.captchaState(qq, id), logs: (await this.readAudit({ qq: String(qq), limit: 100 })).filter(row => row.profileId === id).slice(0, 10) }
+      missionError, running: this.runs.has(this.key(qq, id)), captcha: this.captchaState(qq, id),
+      todaySchedule: { date, enabled: Boolean(profile.enabled) && config.scheduler?.enable !== false, time: entry?.time || "", done: Boolean(entry?.done), running: Boolean(entry?.runningAt), ok: entry?.done ? entry.ok === true : null } }
   }
   async settings(qq, profileId, input) {
+    if (Object.hasOwn(input, "schedule")) throw Object.assign(new Error("签到模式与时间由机器人主人统一安排，用户页面不提供修改"), { status: 403 })
     const id = normalizeProfileId(profileId)
     return withProfileWrite(String(qq), id, async () => {
       const profile = await this.loadProfile(String(qq), id)
@@ -64,11 +70,6 @@ export class MiyousheManagement {
         profile.games[side][game.key].checkin = input[side][game.key]
       }
       if (input.cloud !== undefined) for (const key of ["genshin", "zzz"]) if (key in input.cloud) { if (typeof input.cloud[key] !== "boolean") throw new Error("云游戏开关无效"); profile.cloud_games.cn[key].enable = input.cloud[key] }
-      if (input.schedule !== undefined) {
-        const { mode, fixed_time = "" } = input.schedule
-        if (!["inherit", "random", "fixed"].includes(mode) || mode === "fixed" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(fixed_time)) throw new Error("签到时间无效")
-        profile.schedule.mode = mode; profile.schedule.fixed_time = mode === "fixed" ? fixed_time : ""
-      }
       await this.saveProfile(profile)
       return publicMiyousheSettings(profile)
     })
