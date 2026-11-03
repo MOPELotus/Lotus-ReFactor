@@ -46,8 +46,13 @@ export class NeteasePartnerService {
       const result = await this.tuneweave.request(`/v1/auth/qr/${encodeURIComponent(key)}`)
       if (signal?.aborted) throw new Error("网易云扫码登录已取消")
       if (result.state === "confirmed") {
-        if (!result.profile?.authenticated || !result.profile.user_id) throw new Error("TuneWeave 登录未核验账号身份。")
-        const account = await this.saveAccount({ uid: result.profile.user_id, nickname: result.profile.nickname, qq, tuneweave_account: alias })
+        // NetEase QR confirmation persists the session but may omit the UID.
+        // Resolve that session's identity before linking it to plugin accounts.
+        const profile = result.profile?.authenticated && result.profile.user_id ? result.profile
+          : await this.tuneweave.request(`/v1/account?platform=netease&account=${encodeURIComponent(alias)}`)
+        if (signal?.aborted) throw new Error("网易云扫码登录已取消")
+        if (!profile?.authenticated || !profile.user_id || (profile.account && profile.account !== alias) || (profile.platform && profile.platform !== "netease")) throw new Error("TuneWeave 登录未核验账号身份，请重新登录。")
+        const account = await this.saveAccount({ uid: profile.user_id, nickname: profile.nickname, qq, tuneweave_account: alias })
         await saveMusicAccount("netease", { alias, uid: account.uid, nickname: account.nickname, credential: result.caller_credential?.value || "" })
         return { ok: true, account }
       }
