@@ -51,7 +51,6 @@ export function validateGlobalConfig(config) {
     errors.push("version must be a positive integer")
   }
 
-  validateRenderConfig(config.render, errors)
   validateGlobalScheduler(config.scheduler, errors)
   validateCaptchaConfig(config.captcha, errors)
   validateToolsConfig(config.tools, errors)
@@ -157,20 +156,6 @@ function validateCloudGames(cloud = {}, errors) {
   }
   for (const game of ["genshin", "zzz"]) {
     if (!isObject(cloud.cn[game])) errors.push(`cloud_games.cn.${game} must be an object`)
-  }
-}
-
-function validateRenderConfig(render = {}, errors) {
-  if (!isObject(render)) {
-    errors.push("render must be an object")
-    return
-  }
-  if (!isString(render.background) && !isStringArray(render.background)) {
-    errors.push("render.background must be a string or string array")
-  }
-  if (!isString(render.theme_color)) errors.push("render.theme_color must be a string")
-  if (!isPositiveInteger(render.background_timeout_ms)) {
-    errors.push("render.background_timeout_ms must be a positive integer")
   }
 }
 

@@ -9,7 +9,6 @@ import {
   profileLoginRequiredMessage,
   PROFILE_ID_SUFFIX_PATTERN,
 } from "../core/config/profile.js"
-import { getRenderBackgrounds } from "../core/render/background.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
 import { replyForward, replyImage, replyText } from "../core/transport/reply.js"
 import { getRoleUid, pickRole, splitProfileSuffix } from "../services/pluginBridge/common.js"
@@ -87,7 +86,6 @@ export class LotusAchievements extends BasePlugin {
     this.service = options.service || new GenshinAchievementService(options)
     this.renderCategory = options.renderCategory || renderTemplate
     this.resolveCategoryUid = options.resolveCategoryUid || resolveGenshinUid
-    this.getCategoryBackgrounds = options.getCategoryBackgrounds || getRenderBackgrounds
   }
 
   async index() {
@@ -201,7 +199,6 @@ export class LotusAchievements extends BasePlugin {
       let offset = 0
       let pageCount = 0
       const images = []
-      const backgrounds = await this.getCategoryBackgrounds(1)
       while (true) {
         const result = await this.service.buildCategory({
           uid,
@@ -209,7 +206,6 @@ export class LotusAchievements extends BasePlugin {
           offset,
           limit: ACHIEVEMENT_CATEGORY_PAGE_LIMIT,
         })
-        result.renderData.backgrounds = backgrounds
         pageCount += 1
         const page = result.renderData.page || { index: pageCount, total: pageCount, hasNext: false }
         if (pageCount === 1 && page.total > 1) {

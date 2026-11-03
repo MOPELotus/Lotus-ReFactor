@@ -6,7 +6,6 @@ import {
 import { DEFAULT_GLOBAL_CONFIG } from "./core/config/defaults.js"
 
 const ARRAY_FIELDS = new Set([
-  "render.background",
   "captcha.providers",
   "captcha.test_nine.model_files",
   "remote.allowed_paths",
@@ -25,7 +24,6 @@ const ARRAY_FIELDS = new Set([
 const NUMBER_FIELDS = new Set([
   "music.search_limit", "music.session_timeout_ms", "music.download_timeout_ms", "music.max_size_mb",
   "bilibili.download.concurrency",
-  "render.background_timeout_ms",
   "captcha.refresh.max_attempts",
   "captcha.retry.provider_attempts",
   "captcha.retry.chain_attempts",
@@ -103,11 +101,6 @@ const SCOPE_LABELS = {
 }
 
 const GUOBA_SCHEMAS = [
-  group("渲染"),
-  textArea("render.background", "随机背景接口", "每行一个接口、本地路径或图片目录 JSON；会随机选择并自动兜底。"),
-  input("render.theme_color", "主题色", "用于状态卡和强调色。"),
-  number("render.background_timeout_ms", "背景加载超时", "单位毫秒。"),
-
   group("签到调度"),
   sw("scheduler.enable", "启用自动调度", "关闭后只允许手动签到。"),
   cron("scheduler.plan_generate_cron", "生成计划时间", "每天按此 cron 生成次日签到表。"),

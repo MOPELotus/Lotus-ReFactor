@@ -2,7 +2,6 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { resourcesPath } from "../path.js"
 import { formatLocalDateTime } from "../time.js"
-import { createRenderBackgroundProvider } from "./background.js"
 import { buildAtlasPages } from "./atlas-pages.js"
 
 const DEFAULT_RENDER_OPTIONS = Object.freeze({
@@ -15,22 +14,10 @@ let skiaRendererPromise = null
 export async function renderTemplate(templateName, data = {}, options = {}) {
   const saveId = sanitizeSaveId(options.saveId || templateName)
   const fontPath = toFileUrl(path.join(resourcesPath, "fonts", "MiSans-VF.ttf"))
-  const hasExplicitBackground = Boolean(data.bg || data.backgrounds || data.backgroundProvider || templateName === "atlas-page" || templateName === "atlas-item" && data.view)
-  const backgroundProvider = data.backgroundProvider || (hasExplicitBackground || options.randomBackground !== true
-    ? null
-    : await createRenderBackgroundProvider())
-  const bg = data.bg || firstBackground(data.backgrounds) || (backgroundProvider ? await backgroundProvider() : path.join(resourcesPath, "miao-theme", "bg", "bg-sr.webp"))
   const payload = {
     pluginName: "荷花插件",
     generatedAt: formatLocalDateTime(),
     ...data,
-    bg,
-    backgrounds: Array.isArray(data.backgrounds) && data.backgrounds.length
-      ? data.backgrounds
-      : bg
-        ? [bg]
-        : [],
-    backgroundProvider,
     fontPath,
   }
 
@@ -79,10 +66,6 @@ export async function renderAtlasBook(data, options = {}) {
 function isSkiaCanvasLoadError(error) {
   const text = `${error?.message || ""}\n${error?.stack || ""}`
   return /skia-canvas|skia\.node|Cannot find module|ERR_DLOPEN_FAILED/i.test(text)
-}
-
-function firstBackground(backgrounds) {
-  return Array.isArray(backgrounds) ? backgrounds.find(Boolean) || "" : ""
 }
 
 export async function renderStatusCard(data = {}, options = {}) {
