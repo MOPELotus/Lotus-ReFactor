@@ -35,12 +35,6 @@ export class ToolInstallerService {
 
     const items = []
     for (const name of TOOL_NAMES) {
-      const item = config[name] || {}
-      if (item.enable === false) {
-        await emitProgress(onProgress, `工具链：${name} 已禁用`)
-        items.push({ name, ok: true, skipped: true, reason: "disabled" })
-        continue
-      }
       await emitProgress(onProgress, `工具链：检查 ${name}`)
       items.push(await this.ensureTool(name, config, { onProgress }).catch(async error => {
         await emitProgress(onProgress, `工具链：${name} 失败：${error.message}`)
@@ -131,7 +125,7 @@ export class ToolInstallerService {
         await fs.rm(archive, { force: true }).catch(() => null)
 
         await emitProgress(onProgress, `工具链：下载 ${asset.name}${attempt > 1 ? `（重试 ${attempt}/${attempts}）` : ""}`)
-        await this.downloadAsset(asset.browser_download_url || asset.url, archive)
+        await this.downloadAsset(asset.browser_download_url || asset.url, archive, { timeoutMs: normalized.timeout_ms })
         if (!/^sha256:[a-f0-9]{64}$/i.test(asset.digest || "")) throw new Error("发布包缺少 SHA-256，保留原工具")
         if (await sha256File(archive) !== asset.digest.slice(7).toLowerCase()) throw new Error("FFmpeg 发布包 SHA-256 不匹配")
         await emitProgress(onProgress, `工具链：准备 ${asset.name}`)
@@ -183,10 +177,10 @@ export class ToolInstallerService {
     return response.json()
   }
 
-  async downloadAsset(url, target) {
+  async downloadAsset(url, target, { timeoutMs = 300000 } = {}) {
     const temp = `${target}.part-${process.pid}-${Date.now()}`
     const response = await this.fetch(url, {
-      signal: AbortSignal.timeout(300000),
+      signal: AbortSignal.timeout(timeoutMs),
       headers: {
         "User-Agent": "Lotus-Plugin tool installer",
       },
@@ -217,7 +211,6 @@ export function normalizeToolsConfig(config = {}) {
     timeout_ms: Number(config.timeout_ms || 300000),
     download_retries: Math.max(1, Number(config.download_retries || DEFAULT_INSTALL_ATTEMPTS)),
     ffmpeg: {
-      enable: config.ffmpeg?.enable !== false,
       repo: config.ffmpeg?.repo || "BtbN/FFmpeg-Builds",
       command: config.ffmpeg?.command || "ffmpeg",
       asset_patterns: config.ffmpeg?.asset_patterns,

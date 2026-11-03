@@ -86,7 +86,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     },
     gtmanual: {
       enable: true,
-      address: "https://gt.lotusshared.cn/",
       verify_addr: "https://gt.lotusshared.cn/GTest/register?key=114514",
       timeout_ms: 180000,
       poll_interval_ms: 1500,
@@ -105,7 +104,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     timeout_ms: 300000,
     download_retries: 3,
     ffmpeg: {
-      enable: true,
       repo: "BtbN/FFmpeg-Builds",
       command: "ffmpeg",
     },
@@ -125,8 +123,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     shells: ["pwsh", "powershell", "cmd", "bash", "sh", "zsh"],
   },
   bilibili: {
-    cookie: "",
-    sessdata: "",
     search_limit: 10,
     download: {
       enable: true,
@@ -176,7 +172,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     session_timeout_ms: 120000,
     download_timeout_ms: 180000,
     max_size_mb: 128,
-    voice_one_second: false,
   },
   netease_partner: {
     enable: false,
@@ -188,10 +183,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     delay_ms_min: 8000,
     delay_ms_max: 11000,
     comments: ["打卡支持"],
-  },
-  logging: {
-    retention_days: 14,
-    redact_sensitive: true,
   },
   atlas: {
     data_root: "data/atlas",
@@ -243,9 +234,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
         policy: "master_only",
       },
       "scheduler.manage": {
-        policy: "master_only",
-      },
-      "permissions.manage": {
         policy: "master_only",
       },
       "remote.spawn": {

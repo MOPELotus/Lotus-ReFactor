@@ -23,7 +23,7 @@ export async function prepareStartupEnvironment(config, options = {}) {
   // Legacy opt-out flags must not strand installations upgrading from old versions.
   // Remote endpoints still belong to their deployment owner.
   const effective = { ...config,
-    tools: { ...config.tools, ffmpeg: { ...config.tools?.ffmpeg, enable: true } },
+    tools: { ...config.tools },
     captcha: { ...config.captcha, test_nine: { ...local, enable: isLocal } },
   }
   let preparedModels

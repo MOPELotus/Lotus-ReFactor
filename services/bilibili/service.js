@@ -23,10 +23,9 @@ export class BilibiliService {
     this.fetch = options.fetch || globalThis.fetch
     this.tuneweave = options.tuneweave || new TuneWeaveService({ config: options.tuneweaveConfig, fetch: this.fetch })
     this.tuneAccount = options.tuneAccount || ""
-    this.sessdata = options.sessdata || ""
-    this.cookie = normalizeBiliCookie(options.cookie || options.sessdata || "")
+    this.searchLimit = Number(options.searchLimit || 10)
     this.now = options.now || (() => new Date())
-        this.accountFile = options.accountFile || resolveData("bilibili", "account.yaml")
+    this.accountFile = options.accountFile || resolveData("bilibili", "account.yaml")
     this.tasksDir = options.tasksDir || resolveData("bilibili", "tasks")
     this.spawn = options.spawn || spawn
   }
@@ -112,7 +111,7 @@ export class BilibiliService {
     }
   }
 
-  async search(keyword, { page = 1, limit = 10 } = {}) {
+  async search(keyword, { page = 1, limit = this.searchLimit } = {}) {
     const items = await this.tuneRequest("/v1/search", { platform: "bilibili", type: "video", q: keyword, limit: String(limit), offset: String((page - 1) * limit) })
     return items.filter(item => item.type === "video").map(({ data }) => ({ title: stripHtml(data.title), ref: data.ref, bvid: data.extensions?.bvid || data.id.replace(/^bvid:/, ""), author: data.creators?.map(c => c.name).join(" / ") || "", play: data.play_count, duration: Number(data.duration_ms || 0) / 1000, url: `https://www.bilibili.com/video/${data.extensions?.bvid || data.id.replace(/^bvid:/, "")}` }))
   }
@@ -276,7 +275,6 @@ export class BilibiliService {
   async requestJson(url) {
     if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
     const headers = { ...COMMON_HEADERS }
-    if (this.cookie) headers.Cookie = this.cookie
     const response = await this.fetch(url, { headers })
     const text = await response.text()
     const json = text ? JSON.parse(text) : null
@@ -354,7 +352,6 @@ export function normalizeDownloadConfig(config = {}) {
     max_estimated_size_mb: Number(source.max_estimated_size_mb || 0),
     multi_page_policy: ["zip", "all", "first"].includes(source.multi_page_policy) ? source.multi_page_policy : "zip",
     timeout_ms: Number(source.timeout_ms || 600000),
-    cookie: config.cookie || config.sessdata || source.cookie || source.sessdata || "",
   }
 }
 

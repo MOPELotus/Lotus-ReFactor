@@ -1,7 +1,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { createHash } from "node:crypto"
 import YAML from "yaml"
-import { resolveConfig } from "../path.js"
+import { resolveConfig, resolveData } from "../path.js"
 import {
   CURRENT_GLOBAL_CONFIG_VERSION,
   createDefaultGlobalConfig,
@@ -38,6 +39,7 @@ export async function ensureGlobalConfig(options = {}) {
   try {
     const raw = await fs.readFile(file, "utf8")
     const parsed = YAML.parse(raw) || {}
+    await preserveLegacyBilibiliCredentials(parsed)
     const config = assertValidGlobalConfig(migrateGlobalConfig(parsed))
     const normalized = YAML.stringify(config)
     if (raw !== normalized) {
@@ -63,6 +65,7 @@ export async function ensureGlobalConfig(options = {}) {
 export async function saveGlobalConfig(config, options = {}) {
   const { fileName = GLOBAL_CONFIG_FILE } = options
   const file = globalConfigFilePath(fileName)
+  await preserveLegacyBilibiliCredentials(config)
   const migrated = assertValidGlobalConfig(migrateGlobalConfig(config))
 
   await fs.mkdir(path.dirname(file), { recursive: true })
@@ -79,6 +82,16 @@ export function migrateGlobalConfig(config = {}) {
   const normalizedConfig = normalizeLegacyGlobalShape(config)
   delete normalizedConfig.python
   delete normalizedConfig.render
+  delete normalizedConfig.logging
+  delete normalizedConfig.logRetentionDays
+  if (normalizedConfig.permissions?.scopes) delete normalizedConfig.permissions.scopes["permissions.manage"]
+  if (normalizedConfig.bilibili) {
+    for (const key of ["cookie", "sessdata", "sessData"]) delete normalizedConfig.bilibili[key]
+    if (normalizedConfig.bilibili.download) for (const key of ["cookie", "sessdata"]) delete normalizedConfig.bilibili.download[key]
+  }
+  if (normalizedConfig.music) delete normalizedConfig.music.voice_one_second
+  if (normalizedConfig.tools?.ffmpeg) delete normalizedConfig.tools.ffmpeg.enable
+  if (normalizedConfig.captcha?.gtmanual) delete normalizedConfig.captcha.gtmanual.address
   if (normalizedConfig.tools) { delete normalizedConfig.tools.auto_install; delete normalizedConfig.tools.bbdown; delete normalizedConfig.tools.aria2 }
   if (normalizedConfig.bilibili?.download) { delete normalizedConfig.bilibili.download.use_aria2; delete normalizedConfig.bilibili.download.extra_args }
   if (normalizedConfig.tuneweave) delete normalizedConfig.tuneweave.auto_update
@@ -104,6 +117,20 @@ export function migrateGlobalConfig(config = {}) {
   return assertValidGlobalConfig(mergeConfig(base, {
     ...patch,
   }))
+}
+
+// Preserve retired credentials privately before rewriting an old configuration.
+// They cannot be imported into TuneWeave automatically; QR login owns new sessions.
+async function preserveLegacyBilibiliCredentials(config) {
+  const source = config?.bilibili || {}, credentials = {}
+  for (const key of ["cookie", "sessdata", "sessData"]) if (typeof source[key] === "string" && source[key].trim()) credentials[key] = source[key]
+  for (const key of ["cookie", "sessdata"]) if (typeof source.download?.[key] === "string" && source.download[key].trim()) credentials[`download_${key}`] = source.download[key]
+  if (!Object.keys(credentials).length) return
+  const content = YAML.stringify(credentials), id = createHash("sha256").update(content).digest("hex").slice(0, 16)
+  const directory = resolveData("bilibili", "legacy")
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 })
+  try { await fs.writeFile(path.join(directory, `config-${id}.yaml`), content, { flag: "wx", mode: 0o600 }) }
+  catch (error) { if (error.code !== "EEXIST") throw error }
 }
 
 export function normalizeLegacyGlobalShape(config = {}) {

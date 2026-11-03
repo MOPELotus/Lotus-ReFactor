@@ -51,7 +51,6 @@ captcha:
     timeout_ms: 60000
   gtmanual:
     enable: true
-    address: https://gt.lotusshared.cn/
     verify_addr: https://gt.lotusshared.cn/GTest/register?key=114514
     timeout_ms: 180000
     poll_interval_ms: 1500
@@ -67,7 +66,6 @@ tools:
   timeout_ms: 300000
   download_retries: 3
   ffmpeg:
-    enable: true
     repo: BtbN/FFmpeg-Builds
     command: ffmpeg
 remote:
@@ -91,8 +89,6 @@ remote:
     - sh
     - zsh
 bilibili:
-  cookie: ""
-  sessdata: ""
   search_limit: 10
   download:
     enable: true
@@ -135,7 +131,6 @@ music:
   session_timeout_ms: 120000
   download_timeout_ms: 180000
   max_size_mb: 128
-  voice_one_second: false
 netease_partner:
   enable: false
   schedule: "0 5 0 * * ? *"
@@ -147,9 +142,6 @@ netease_partner:
   delay_ms_max: 11000
   comments:
     - 打卡支持
-logging:
-  retention_days: 14
-  redact_sensitive: true
 atlas:
   data_root: data/atlas
   locale: 简体中文
@@ -234,8 +226,6 @@ permissions:
     scheduler.run_due:
       policy: master_only
     scheduler.manage:
-      policy: master_only
-    permissions.manage:
       policy: master_only
     remote.spawn:
       policy: master_only

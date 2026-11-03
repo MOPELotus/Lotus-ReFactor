@@ -133,7 +133,7 @@ function logCaptchaEvent(event = {}) {
 
 function providerName(provider) {
   const names = {
-    test_nine: "方案一 test_nine",
+    test_nine: "方案一 本地识别",
     ttocr: "方案二 ttocr",
     gtmanual: "方案三 GT-Manual",
     vision_ai: "视觉 AI",

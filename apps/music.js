@@ -86,7 +86,6 @@ export class LotusMusic extends BasePlugin {
           if(share) {try {const result=await e.reply(share);cardSent=result!==false&&!result?.error&&!(Array.isArray(result)&&result.some(r=>r?.error))}catch{}}
           if(!cardSent)await replyImage(e,await renderStatusCard({title:track.name,subtitle:track.artists?.map(a=>a.name).join(" / "),badge:MUSIC_PLATFORMS[track.platform],avatar:track.album?.cover_url,userId:e.user_id,message:`完整音频 · ${Math.round(media.duration)} 秒`,items:[{label:"实际音源",value:MUSIC_PLATFORMS[media.stream.resolved_platform]||media.stream.resolved_platform}]}),`${track.name} · ${track.artists?.map(a=>a.name).join(" / ")}`)
           const record=await(globalThis.segment?.record?globalThis.segment.record(media.voiceFile):{type:"record",file:media.voiceFile})
-          if(session.config.voice_one_second===true){if(record.data)record.data.duration=1;else record.duration=1}
           const result=await e.reply(record)
           if(result===false||result?.error||Array.isArray(result)&&result.some(r=>r?.error))throw new Error("语音发送失败")
         } finally {if(media)await session.api.cleanup(media)}

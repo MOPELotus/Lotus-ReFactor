@@ -61,11 +61,10 @@ export function validateGlobalConfig(config) {
   if (!isObject(config.tuneweave) || !isString(config.tuneweave.api_url) || !isPositiveInteger(config.tuneweave.request_timeout_ms)) errors.push("tuneweave requires api_url and positive request_timeout_ms")
   if (!isPositiveInteger(config.tuneweave?.update_delay_ms) || config.tuneweave.update_delay_ms > 2147483647) errors.push("tuneweave.update_delay_ms must be a positive timer interval")
   const music = config.music
-  if (!isObject(music) || typeof music.enable !== "boolean" || typeof music.voice_one_second !== "boolean" || !["netease", "qq", "kugou", "kuwo", "migu", "soda"].includes(music.default_platform) || !["auto", "standard", "higher", "high", "lossless", "hires"].includes(music.quality)) errors.push("music platform, quality or switches are invalid")
+  if (!isObject(music) || typeof music.enable !== "boolean" || !["netease", "qq", "kugou", "kuwo", "migu", "soda"].includes(music.default_platform) || !["auto", "standard", "higher", "high", "lossless", "hires"].includes(music.quality)) errors.push("music platform, quality or switches are invalid")
   for (const field of ["search_limit", "session_timeout_ms", "download_timeout_ms", "max_size_mb"]) if (!isPositiveInteger(music?.[field])) errors.push(`music.${field} must be a positive integer`)
   if (music?.search_limit > 30) errors.push("music.search_limit must not exceed 30")
   validateNeteasePartnerConfig(config.netease_partner, errors)
-  validateLoggingConfig(config.logging, errors)
   validateAtlasConfig(config.atlas, errors)
   validatePermissionConfig(config.permissions, errors)
   const shop = config.coin_shop
@@ -260,7 +259,7 @@ function validateCaptchaConfig(captcha = {}, errors) {
   if (isObject(captcha.ttocr) && Number(captcha.ttocr.poll_interval_ms) < 1000) {
     errors.push("captcha.ttocr.poll_interval_ms must be at least 1000")
   }
-  validateProvider(captcha.gtmanual, "captcha.gtmanual", errors, ["address", "verify_addr"])
+  validateProvider(captcha.gtmanual, "captcha.gtmanual", errors, ["verify_addr"])
   validateProvider(captcha.vision_ai, "captcha.vision_ai", errors, ["api", "key"])
 }
 
@@ -304,7 +303,6 @@ function validateToolConfig(tool = {}, prefix, errors) {
     errors.push(`${prefix} must be an object`)
     return
   }
-  if (typeof tool.enable !== "boolean") errors.push(`${prefix}.enable must be boolean`)
   for (const field of ["repo", "command"]) {
     if (!isString(tool[field])) errors.push(`${prefix}.${field} must be a string`)
   }
@@ -335,8 +333,6 @@ function validateBilibiliConfig(bilibili = {}, errors) {
     errors.push("bilibili must be an object")
     return
   }
-  if (!isString(bilibili.cookie)) errors.push("bilibili.cookie must be a string")
-  if (!isString(bilibili.sessdata)) errors.push("bilibili.sessdata must be a string")
   if (!isPositiveInteger(bilibili.search_limit)) errors.push("bilibili.search_limit must be a positive integer")
 
   if (!isObject(bilibili.download)) {
@@ -434,15 +430,6 @@ function validateNeteasePartnerConfig(netease = {}, errors) {
   if (!Array.isArray(netease.comments) || !netease.comments.every(isString)) {
     errors.push("netease_partner.comments must be an array of strings")
   }
-}
-
-function validateLoggingConfig(logging = {}, errors) {
-  if (!isObject(logging)) {
-    errors.push("logging must be an object")
-    return
-  }
-  if (!isPositiveInteger(logging.retention_days)) errors.push("logging.retention_days must be a positive integer")
-  if (typeof logging.redact_sensitive !== "boolean") errors.push("logging.redact_sensitive must be boolean")
 }
 
 function validateAtlasConfig(atlas = {}, errors) {

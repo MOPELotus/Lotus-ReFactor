@@ -277,12 +277,8 @@ async function createService() {
   const config = await loadGlobalConfig()
   const service = new BilibiliService({
     tuneweaveConfig: config.tuneweave,
-    cookie: config.bilibili?.cookie || config.bilibili?.sessdata || "",
+    searchLimit: config.bilibili?.search_limit,
   })
-  if (!service.cookie) {
-    const stored = await service.loadAccount().catch(() => null)
-    if (stored?.cookie) service.cookie = stored.cookie
-  }
   return service
 }
 
