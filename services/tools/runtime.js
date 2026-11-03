@@ -30,7 +30,7 @@ export async function prepareStartupEnvironment(config, options = {}) {
   const modelEnv = options.modelEnv || new TestNineEnvService({ config: local, onProgress: progress })
   const guardedModelEnv = { ensureEnv: async () => {
     signal?.throwIfAborted()
-    preparedModels = await modelEnv.ensureEnv({ onProgress: progress })
+    preparedModels = await modelEnv.ensureEnv({ onProgress: progress, checkUpdates: true })
     signal?.throwIfAborted()
     return preparedModels
   } }
@@ -45,7 +45,9 @@ export async function prepareStartupEnvironment(config, options = {}) {
   signal?.throwIfAborted()
   if (preparedModels?.ok) {
     try {
-      const ready = await (options.captchaServer || new TestNineServerService({ config: local, envService: { ensureEnv: async () => preparedModels } })).start()
+      const server = options.captchaServer || new TestNineServerService({ config: local, envService: { ensureEnv: async () => preparedModels } })
+      if (preparedModels.models?.changed && server.status?.().running) server.stop()
+      const ready = await server.start()
       signal?.throwIfAborted()
       if (!ready.ok) throw new Error("local server not ready")
     } catch (error) {

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import fsSync from "node:fs"
 import path from "node:path"
+import { createHash, randomUUID } from "node:crypto"
 import { spawn } from "node:child_process"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
@@ -76,31 +77,44 @@ export class ToolInstallerService {
     const binDir = resolveMaybeData(normalized.bin_dir || "data/tools/bin")
     const toolsDir = resolveMaybeData(normalized.dir || "data/tools")
     const existing = await findCommandExecutable(tool.command, [binDir], this.platform)
+    let health, release, asset
     if (existing) {
-      const health = await inspectToolInstall(name, existing, binDir, toolsDir, this.platform)
+      const real = await fs.realpath(existing)
+      if (path.dirname(real) !== path.resolve(binDir)) {
+        const probe = await findCommandExecutable("ffprobe", [binDir], this.platform)
+        if (!probe) throw new Error("外部 FFmpeg 缺少 ffprobe，请由部署者修复")
+        try {
+          await runSpawn(this.spawn, existing, ["-version"], { timeoutMs: 15000 })
+          await runSpawn(this.spawn, probe, ["-version"], { timeoutMs: 15000 })
+        } catch { throw new Error("外部 FFmpeg 环境异常，请由部署者修复") }
+        return { name, ok: true, status: "ready", path: existing, external: true }
+      }
+      health = await inspectToolInstall(name, existing, binDir, toolsDir, this.platform)
       if (health.ok) {
         await ensureExecutablePermissions(name, existing, binDir, this.platform)
-        await emitProgress(onProgress, `工具链：${name} 已存在`)
-        return {
-          name,
-          ok: true,
-          status: "ready",
-          path: existing,
-        }
+        try { await runSpawn(this.spawn, existing, ["-version"], { timeoutMs: 15000 }); await runSpawn(this.spawn, path.join(binDir, commandFileName("ffprobe", this.platform)), ["-version"], { timeoutMs: 15000 }) }
+        catch { health = { ok: false, reason: "工具无法正常执行" } }
       }
-      await emitProgress(onProgress, `工具链：${name} 需要修复：${health.reason}`)
+      if (!health.ok) await emitProgress(onProgress, `工具链：${name} 需要修复：${health.reason}`)
     }
 
     if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
     if (name === "ffmpeg") await removeSharedFfmpegArtifacts(toolsDir)
     await emitProgress(onProgress, `工具链：查询 ${tool.repo} 最新版本`)
-    const release = await this.fetchLatestRelease(tool.repo, normalized.github_api, null)
-    const asset = pickReleaseAsset(name, release.assets || [], {
+    release = await this.fetchLatestRelease(tool.repo, normalized.github_api, null)
+    asset = pickReleaseAsset(name, release.assets || [], {
       platform: this.platform,
       arch: this.arch,
       patterns: tool.asset_patterns,
     })
     if (!asset) throw new Error(`no release asset matched ${name} ${this.platform}/${this.arch}`)
+    const receiptFile = path.join(toolsDir, `${name}-install.json`)
+    let receipt
+    try { receipt = JSON.parse(await fs.readFile(receiptFile, "utf8")) } catch (error) { if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error }
+    if (health?.ok && receipt?.repo === tool.repo && receipt.assetId === asset.id && receipt.updatedAt === asset.updated_at && receipt.digest === asset.digest) {
+      const files = await fingerprintPayload(binDir, this.platform)
+      if (JSON.stringify(files) === JSON.stringify(receipt.files)) return { name, ok: true, status: "ready", path: existing, asset: asset.name }
+    }
 
     const archiveDir = path.join(toolsDir, "downloads")
     const extractDir = path.join(toolsDir, name)
@@ -118,13 +132,22 @@ export class ToolInstallerService {
 
         await emitProgress(onProgress, `工具链：下载 ${asset.name}${attempt > 1 ? `（重试 ${attempt}/${attempts}）` : ""}`)
         await this.downloadAsset(asset.browser_download_url || asset.url, archive)
+        if (!/^sha256:[a-f0-9]{64}$/i.test(asset.digest || "")) throw new Error("发布包缺少 SHA-256，保留原工具")
+        if (await sha256File(archive) !== asset.digest.slice(7).toLowerCase()) throw new Error("FFmpeg 发布包 SHA-256 不匹配")
         await emitProgress(onProgress, `工具链：准备 ${asset.name}`)
         await extractArchive(this.spawn, archive, extractDir, { timeoutMs: normalized.timeout_ms })
 
         const executable = await findExtractedExecutable(extractDir, tool.command, this.platform)
         if (!executable) throw new Error(`${tool.command} executable not found in ${asset.name}`)
+        await runSpawn(this.spawn, executable, ["-version"], { timeoutMs: 15000 })
+        await runSpawn(this.spawn, path.join(path.dirname(executable), commandFileName("ffprobe", this.platform)), ["-version"], { timeoutMs: 15000 })
 
         const target = await copyToolPayload(name, executable, binDir, tool.command, this.platform)
+        const receiptTemp = `${receiptFile}.${randomUUID()}.tmp`
+        try {
+          await fs.writeFile(receiptTemp, JSON.stringify({ repo: tool.repo, assetId: asset.id, updatedAt: asset.updated_at, digest: asset.digest, files: await fingerprintPayload(binDir, this.platform) }), { flag: "wx" })
+          await fs.rename(receiptTemp, receiptFile)
+        } finally { await fs.rm(receiptTemp, { force: true }) }
         await emitProgress(onProgress, `工具链：${name} 安装完成`)
 
         return {
@@ -150,6 +173,7 @@ export class ToolInstallerService {
   async fetchLatestRelease(repo, api = "https://api.github.com", tag = null) {
     const base = String(api || "https://api.github.com").replace(/\/+$/, "")
     const response = await this.fetch(`${base}/repos/${repo}/releases/${tag ? `tags/${encodeURIComponent(tag)}` : "latest"}`, {
+      signal: AbortSignal.timeout(30000),
       headers: {
         Accept: "application/vnd.github+json",
         "User-Agent": "Lotus-Plugin tool installer",
@@ -162,6 +186,7 @@ export class ToolInstallerService {
   async downloadAsset(url, target) {
     const temp = `${target}.part-${process.pid}-${Date.now()}`
     const response = await this.fetch(url, {
+      signal: AbortSignal.timeout(300000),
       headers: {
         "User-Agent": "Lotus-Plugin tool installer",
       },
@@ -388,14 +413,39 @@ async function copyToolPayload(name, executable, binDir, command, platform = pro
 
   const sourceDir = path.dirname(executable)
   const entries = await fs.readdir(sourceDir, { withFileTypes: true })
-  for (const entry of entries) {
-    if (!entry.isFile() || !shouldCopyFfmpegPayloadFile(entry.name, platform)) continue
-    const source = path.join(sourceDir, entry.name)
-    const dest = path.join(binDir, entry.name)
-    await fs.copyFile(source, dest)
-    if (platform !== "win32") await fs.chmod(dest, 0o755).catch(() => null)
+  const staging = await fs.mkdtemp(path.join(binDir, ".ffmpeg-install-")), replaced = []
+  try {
+    for (const entry of entries) {
+      if (!entry.isFile() || !shouldCopyFfmpegPayloadFile(entry.name, platform)) continue
+      const next = path.join(staging, entry.name), dest = path.join(binDir, entry.name), backup = `${next}.previous`
+      await fs.copyFile(path.join(sourceDir, entry.name), next)
+      if (platform !== "win32") await fs.chmod(next, 0o755)
+      let existed = true
+      try { await fs.rename(dest, backup) } catch (error) { if (error.code === "ENOENT") existed = false; else throw error }
+      replaced.push({ dest, backup, existed })
+      await fs.rename(next, dest)
+    }
+  } catch (error) {
+    for (const item of replaced.reverse()) {
+      await fs.rm(item.dest, { force: true })
+      if (item.existed) await fs.rename(item.backup, item.dest)
+    }
+    throw error
+  } finally {
+    await fs.rm(staging, { recursive: true, force: true })
   }
   return target
+}
+
+async function sha256File(file) {
+  const hash = createHash("sha256")
+  for await (const chunk of fsSync.createReadStream(file)) hash.update(chunk)
+  return hash.digest("hex")
+}
+
+async function fingerprintPayload(binDir, platform) {
+  const entries = (await fs.readdir(binDir, { withFileTypes: true })).filter(entry => entry.isFile() && shouldCopyFfmpegPayloadFile(entry.name, platform)).sort((a, b) => a.name.localeCompare(b.name))
+  return Object.fromEntries(await Promise.all(entries.map(async entry => [entry.name, await sha256File(path.join(binDir, entry.name))])))
 }
 
 async function ensureExecutablePermissions(name, executable, binDir, platform = process.platform) {

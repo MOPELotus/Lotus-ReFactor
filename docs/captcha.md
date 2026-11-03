@@ -57,7 +57,7 @@ JS 签到、米游社业务和全局 `mys.req.err` handler 都使用同一套 pr
 
 人工链接只在本次任务等待验证期间有效。等待超时后需重新发送原指令并使用新链接；终态通知不再提供已停止轮询的旧链接。通知仅包含安全的状态摘要和数字错误码，服务方的原始响应、凭据及人工结果轮询地址不进入通知。
 
-本地服务使用 `onnxruntime-node` 和 Sharp，覆盖九宫格、D-FINE 图标以及 YOLO/DINO 图标匹配。无需 Python 或 venv；任务在 worker 中串行执行，超时或取消会释放 worker。本机自动服务只绑定 loopback 地址。统一开机维护会自动准备本地服务，不再受旧 `auto_start` 开关限制。如需连接另行部署的 test_nine，填写远程 endpoint 即可；插件不会为远程地址启动本地监听，仍按 `captcha.providers` 顺序执行。`enable: false` 才会跳过 test_nine。
+本地服务使用 `onnxruntime-node` 和 Sharp，覆盖九宫格、D-FINE 图标以及 YOLO/DINO 图标匹配。无需 Python 或 venv；任务在 worker 中串行执行，超时或取消会释放 worker。本机自动服务只绑定 loopback 地址。统一开机维护会自动准备本地服务，旧的自动启动与模型下载开关已移除。如需连接另行部署的 test_nine，填写远程 endpoint 即可；插件不会为远程地址启动本地监听，仍按 `captcha.providers` 顺序执行。`enable: false` 才会跳过 test_nine。
 
 图像预处理使用 JS 实现与 Pillow 对齐的双线性、双三次和 Lanczos 重采样，包括缩小时的抗锯齿、两阶段 8 位舍入及 float32 归一化。九宫格保留原 Python 流程的 quality 75 JPEG 切片往返；底部 40px 目标对这一步尤其敏感。YOLO/DINO 的裁剪框按原流程截断为整数，越界部分补黑，点击使用框中心。
 
