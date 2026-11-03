@@ -4,7 +4,7 @@ import { loadGlobalConfig } from "../core/config/global.js"
 import { PermissionService } from "../core/permissions/service.js"
 import { renderStatusCard } from "../core/render/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
-import { initializeEnvironment } from "../services/tools/environment.js"
+import { prepareStartupEnvironment } from "../services/tools/runtime.js"
 import { startTuneWeaveLifecycle } from "../services/tuneweave/runtime.js"
 
 export class LotusTools extends BasePlugin {
@@ -37,12 +37,12 @@ export class LotusTools extends BasePlugin {
       return true
     }
 
-    await replyText(this, "[荷花插件]正在检查本地验证码模型、TuneWeave 和 FFmpeg，按配置补齐缺失项目。")
+    await replyText(this, "[荷花插件]正在立即检查插件环境，补齐缺失组件并更新至所需版本。")
     const progress = async message => {
       logger?.mark?.(`[Lotus-Plugin] init tools: ${message}`)
       await replyText(this, `[荷花插件]${message}`)
     }
-    const result = await initializeEnvironment(globalConfig, { onProgress: progress })
+    const result = await prepareStartupEnvironment(globalConfig, { notify: progress })
     const image = await renderToolsResult(result, this.e.user_id)
     await replyImage(this, image, result.ok ? "[荷花插件]插件环境初始化完成。" : "[荷花插件]插件环境有项目初始化失败。")
     return true

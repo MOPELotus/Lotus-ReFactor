@@ -2,6 +2,7 @@ import { initializeEnvironment } from "./environment.js"
 import { TestNineEnvService } from "../testNine/env.js"
 import { TestNineServerService } from "../testNine/server.js"
 import { cleanupLegacyEnvironment } from "./legacyCleanup.js"
+import { TuneWeaveService } from "../tuneweave/service.js"
 
 function localCaptchaEndpoint(value = "http://127.0.0.1:9645/pass_uni") {
   try {
@@ -13,12 +14,18 @@ function localCaptchaEndpoint(value = "http://127.0.0.1:9645/pass_uni") {
 // Shared by the existing delayed TuneWeave lifecycle. This function neither
 // schedules another timer nor touches an externally managed captcha service.
 export async function prepareStartupEnvironment(config, options = {}) {
-  const { signal, service, notify = async () => {} } = options
+  const { signal, notify = async () => {} } = options
+  const service = options.service || new TuneWeaveService({ config: config.tuneweave })
   const progress = async message => { signal?.throwIfAborted(); try { await notify(message) } catch {} }
   signal?.throwIfAborted()
-  const local = config.captcha?.test_nine || {}
+  const local = { ...config.captcha?.test_nine, enable: true, auto_start: true, download_models: true }
   const isLocal = localCaptchaEndpoint(local.endpoint)
-  const effective = isLocal ? config : { ...config, captcha: { ...config.captcha, test_nine: { ...local, auto_start: false } } }
+  // Legacy opt-out flags must not strand installations upgrading from old versions.
+  // Remote endpoints still belong to their deployment owner.
+  const effective = { ...config,
+    tools: { ...config.tools, auto_install: true, ffmpeg: { ...config.tools?.ffmpeg, enable: true } },
+    captcha: { ...config.captcha, test_nine: { ...local, auto_start: isLocal } },
+  }
   let preparedModels
   const modelEnv = options.modelEnv || new TestNineEnvService({ config: local, onProgress: progress })
   const guardedModelEnv = { ensureEnv: async () => {
@@ -29,7 +36,6 @@ export async function prepareStartupEnvironment(config, options = {}) {
   } }
   const tuneweave = { initialize: async ({ onProgress }) => {
     signal?.throwIfAborted()
-    if (config.tuneweave?.auto_update === false) return { ok: true, message: "自动维护已关闭" }
     try { service.localUrl() } catch { return { ok: true, message: "外部服务由部署者维护" } }
     const result = await service.initialize({ onProgress })
     signal?.throwIfAborted()
