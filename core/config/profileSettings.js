@@ -6,6 +6,7 @@ import {
   saveProfile,
   withProfileWrite,
 } from "./profile.js"
+import { PermissionService } from "../permissions/service.js"
 
 const GAME_KEYS = {
   原神: "genshin",
@@ -49,6 +50,7 @@ export async function updateProfileSettings({ e, message, nickname = "", store =
   const profileId = parseProfileIdFromSettingsMessage(message)
   const action = parseProfileSettingsCommand(message)
   if (!action.ok) return { ok: false, reason: action.reason, profile: null, profileId }
+  if (action.type === "schedule" && !new PermissionService().isMaster(e)) return { ok: false, reason: "master_only", message: "签到模式与时间由机器人主人统一安排。", profile: null, profileId }
   if (action.type === "bindNotifyGroup" && !e?.group_id) {
     return { ok: false, reason: "group_required", profile: null, profileId }
   }

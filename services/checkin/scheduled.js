@@ -28,7 +28,7 @@ export class ScheduledSigninService {
   }
 
   async runDuePlan(planDate, now, options = {}) {
-    const plan = await this.scheduler.getPlan(planDate)
+    const plan = await this.scheduler.getOrCreatePlan(planDate, { reconcile: true })
     if (!plan) {
       return {
         ok: true,
@@ -94,6 +94,7 @@ export class ScheduledSigninService {
     return runScheduleTask(`tomorrow-plan:${date}`, () => runPlanTask(date, async () => {
       const plan = await this.scheduler.getOrCreatePlan(date, {
         force: options.force,
+        reconcile: true,
       })
       const shouldNotify = options.forceNotify || config.scheduler?.random?.notify_before !== false
       const notifications = shouldNotify ? await this.notifyPlan(plan, options) : []

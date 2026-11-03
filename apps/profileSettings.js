@@ -65,7 +65,7 @@ export class LotusProfileSettings extends BasePlugin {
       return true
     }
     if (!result.ok) {
-      await replyText(this, `[荷花插件]配置指令无法识别：${result.reason}`)
+      await replyText(this, `[荷花插件]${result.message || `配置指令无法识别：${result.reason}`}`)
       return true
     }
     await tryAddLateSchedule(result.profile, result.action)
