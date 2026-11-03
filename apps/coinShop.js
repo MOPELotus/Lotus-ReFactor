@@ -2,6 +2,7 @@ const BasePlugin = globalThis.plugin
 
 import { loadGlobalConfig } from "../core/config/global.js"
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
+import { USER_WEB_COMMAND_REG, OWNER_WEB_COMMAND_REG } from "../core/intercept/web-commands.js"
 import { replyText } from "../core/transport/reply.js"
 import { CoinShopService } from "../services/coinShop/service.js"
 import { CoinShopWeb } from "../services/coinShop/web.js"
@@ -16,7 +17,7 @@ export class LotusCoinShop extends BasePlugin {
   constructor(options = {}) {
     super({
       name: "[Lotus-Plugin] Coin Shop", dsc: "米游社功能与插件控制面板", event: "message", priority: LOTUS_INTERCEPT_PRIORITY,
-      rule: [{ reg: "^#(米游社功能|荷花面板|米游币兑换|米游币商城)$", fnc: "coinShop" }, { reg: "^#(荷花管理面板|荷花配置)$", fnc: "panel" }],
+      rule: [{ reg: USER_WEB_COMMAND_REG, fnc: "coinShop" }, { reg: OWNER_WEB_COMMAND_REG, fnc: "panel" }],
     })
     this.web = options.web || globalThis[serviceKey].web
     this.getConfig = options.getConfig || loadGlobalConfig

@@ -1,4 +1,5 @@
 import { PROFILE_ID_REQUIRED_SUFFIX_PATTERN } from "../config/profile.js"
+import { WEB_COMMAND_EXCLUSION } from "./web-commands.js"
 
 // 个人查询的无后缀形式也由 Lotus 接管，并与显式 profile 1 走同一条路径。
 // 无后缀分支要求命令不以数字结尾，避免把游戏 UID 误判成 profile 指令。
@@ -39,7 +40,7 @@ export const PERSONAL_QUERY_RULES = Object.freeze([
   { reg: `^${Z}(?:枯萎苗圃|枯萎|苗圃)\\s*${P}$`, fnc: "zzzHollowZero" },
   { reg: `^${Z}(?:迷失之地|迷失)\\s*${P}$`, fnc: "zzzHollowZeroS2" },
   { reg: `^${Z}(?:区域收集|收集|探索|探索度)\\s*${P}$`, fnc: "zzzExplorationDetail" },
-])
+].map(rule => ({ ...rule, reg: rule.reg.replace(/^\^/, `^${WEB_COMMAND_EXCLUSION}`) })))
 
 const compiled = PERSONAL_QUERY_RULES.map(rule => ({ ...rule, pattern: new RegExp(rule.reg) }))
 
