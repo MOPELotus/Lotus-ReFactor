@@ -57,11 +57,15 @@ export async function startTuneWeaveLifecycle(options = {}) {
         handle.attempts++
         try {
           if (handle.disposed) return { skipped: true, reason: "cancelled" }
-          await send("正在按现有配置检查 JS 验证码模型、TuneWeave 与 FFmpeg，补齐升级环境。")
-          const result = await (options.prepare || prepareStartupEnvironment)(config, { ...options, service, notify: send, signal: controller.signal })
+          // Routine checks are silent. Report actual changes after preparation,
+          // rather than forwarding each component's inspection messages.
+          const result = await (options.prepare || prepareStartupEnvironment)(config, { ...options, service, notify: async () => {}, signal: controller.signal })
           if (handle.disposed) return { skipped: true, reason: "cancelled" }
           const failures = (result.items || []).filter(item => !item.ok).map(item => `${item.name}${item.name === "本地验证码服务" ? `（${item.reason}）` : ""}`)
-          await send(result.ok ? "启动环境检查完成，所需组件已就绪。" : `启动环境尚未就绪：${failures.join("、") || "环境检查"}；已保留原文件，可发送 #初始化环境 重试。`)
+          const changed = (result.items || []).filter(item => item.changed || item.status === "installed").map(item => `${item.name}${item.name === "TuneWeave" && item.status ? ` ${item.status}` : ""}`)
+          if (result.cleanup?.removed) changed.push("旧环境清理")
+          if (!result.ok) await send(`启动环境尚未就绪：${failures.join("、") || "环境检查"}；已保留原文件，可发送 #初始化环境 重试。`)
+          else if (changed.length) await send(`启动环境更新完成：${changed.join("、")}，已通过就绪检查。`)
           if (!result.ok && handle.attempts < (options.maxAttempts ?? 3)) schedule(options.retryDelayMs ?? 300000)
           return result
         } catch (error) {

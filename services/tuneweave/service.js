@@ -123,7 +123,7 @@ export class TuneWeaveService {
       await onProgress("正在启动本机 TuneWeave 服务。")
       const ready = await this.startInstalled(release?.version)
       if (compareTuneWeaveVersions(ready.version, TUNEWEAVE_REQUIRED_VERSION) < 0) return this.updateInstalled({ notify: onProgress, status: ready })
-      return ready
+      return { ...ready, installed: Boolean(release) }
     })
   }
 

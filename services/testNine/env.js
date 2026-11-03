@@ -59,6 +59,6 @@ export class TestNineEnvService {
         await fs.rename(temp, item.path)
       } finally { await fs.rm(temp, { force: true }) }
     }
-    return this.modelStatus(cfg)
+    return { ...await this.modelStatus(cfg), changed: true }
   }
 }

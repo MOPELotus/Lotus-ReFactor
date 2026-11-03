@@ -10,7 +10,7 @@ export async function initializeEnvironment(config, { onProgress, modelEnv, ...m
     try {
       await onProgress?.("正在检查本地验证码模型。")
       const env = await (modelEnv || new TestNineEnvService({ config: local, onProgress })).ensureEnv()
-      models = { name: "本地验证码", ok: env.ok, status: `${env.runtime} · 模型 ${env.models?.items?.filter(item => item.ok).length || 0}/${env.models?.items?.length || 0}`, reason: env.reason }
+      models = { name: "本地验证码", ok: env.ok, changed: env.models?.changed === true, status: `${env.runtime} · 模型 ${env.models?.items?.filter(item => item.ok).length || 0}/${env.models?.items?.length || 0}`, reason: env.reason }
     } catch (error) { models = { name: "本地验证码", ok: false, reason: error.message } }
   }
   const media = await initializeMediaTools(config, { onProgress, ...mediaOptions })
@@ -27,7 +27,7 @@ export async function initializeMediaTools(config, { onProgress, installer, tune
   }
   try {
     const ready = await (tuneweave || new TuneWeaveService({ config: config.tuneweave })).initialize({ onProgress })
-    result.items.push({ name: "TuneWeave", ok: ready.ok, status: ready.version, reason: ready.message })
+    result.items.push({ name: "TuneWeave", ok: ready.ok, changed: ready.updated === true || ready.installed === true, status: ready.version, reason: ready.message })
   } catch (error) {
     result.items.push({ name: "TuneWeave", ok: false, reason: error.message })
   }
