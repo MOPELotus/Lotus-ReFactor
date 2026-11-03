@@ -18,6 +18,8 @@ import { isProfileCheckinEnabled } from "../core/scheduler/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { registerProfileWithGenshin } from "../services/genshinBridge/profile.js"
 import { ScheduledSigninService } from "../services/checkin/scheduled.js"
+import { loadGlobalConfig } from "../core/config/global.js"
+import { PermissionService } from "../core/permissions/service.js"
 
 const loginLocks = new Map()
 
@@ -154,6 +156,11 @@ export class LotusLogin extends BasePlugin {
   }
 
   async refreshCookie() {
+    const config = await loadGlobalConfig()
+    if (!new PermissionService({ permissions: config.permissions }).can(this.e, "checkin.refresh")) {
+      await replyText(this, "[荷花插件]当前不允许刷新登录信息，请联系机器人主人。")
+      return true
+    }
     const userId = String(this.e.user_id)
     const hasSuffix = /\d+$/.test(String(this.e.msg || ""))
     const profileIds = hasSuffix

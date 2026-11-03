@@ -2,6 +2,7 @@ import { loadLoggedInProfile, normalizeProfileId, saveProfile, withProfileWrite 
 import { ProfileSigninService } from "../checkin/profileSignin.js"
 import { SchedulerService, dateString } from "../../core/scheduler/service.js"
 import { loadGlobalConfig } from "../../core/config/global.js"
+import { PermissionService } from "../../core/permissions/service.js"
 import { MiyousheClient } from "./client.js"
 import { SIGNIN_GAMES } from "./tasks.js"
 import { createCaptchaEventReporter } from "../../core/captcha/notify.js"
@@ -53,11 +54,12 @@ export class MiyousheManagement {
       missionError, running: this.runs.has(this.key(qq, id)), captcha: this.captchaState(qq, id),
       todaySchedule: { date, enabled: Boolean(profile.enabled) && config.scheduler?.enable !== false, time: entry?.time || "", done: Boolean(entry?.done), running: Boolean(entry?.runningAt), ok: entry?.done ? entry.ok === true : null } }
   }
-  async settings(qq, profileId, input) {
+  async settings(qq, profileId, input, actor = { user_id: String(qq) }) {
     if (Object.hasOwn(input, "schedule")) throw Object.assign(new Error("签到模式与时间由机器人主人统一安排，用户页面不提供修改"), { status: 403 })
     const id = normalizeProfileId(profileId)
     return withProfileWrite(String(qq), id, async () => {
       const profile = await this.loadProfile(String(qq), id)
+      if (input.enabled === true && !profile.enabled && !new PermissionService({ permissions: (await this.loadConfig()).permissions }).can(actor, "checkin.register")) throw Object.assign(new Error("当前不允许注册自动签到，请联系机器人主人"), { status: 403 })
       const setBoolean = (key, target, field) => { if (input[key] !== undefined) { if (typeof input[key] !== "boolean") throw new Error(`${key} 必须为布尔值`); target[field] = input[key] } }
       setBoolean("enabled", profile, "enabled"); setBoolean("community", profile.mihoyobbs, "enable"); setBoolean("osEnabled", profile.games.os, "enable"); setBoolean("notify", profile.profile.notify, "enable")
       if (input.tasks !== undefined) for (const key of ["checkin", "read", "like", "cancel_like", "share"]) if (key in input.tasks) { if (typeof input.tasks[key] !== "boolean") throw new Error("任务开关必须为布尔值"); profile.mihoyobbs.tasks[key] = input.tasks[key] }

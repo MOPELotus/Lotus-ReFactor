@@ -7,6 +7,7 @@ import {
   withProfileWrite,
 } from "./profile.js"
 import { PermissionService } from "../permissions/service.js"
+import { loadGlobalConfig } from "./global.js"
 
 const GAME_KEYS = {
   原神: "genshin",
@@ -45,12 +46,13 @@ const ROLE_GAME_KEYS = {
   zzz: "zzz",
 }
 
-export async function updateProfileSettings({ e, message, nickname = "", store = {} } = {}) {
+export async function updateProfileSettings({ e, message, nickname = "", store = {}, config } = {}) {
   const userId = String(e?.user_id || "")
   const profileId = parseProfileIdFromSettingsMessage(message)
   const action = parseProfileSettingsCommand(message)
   if (!action.ok) return { ok: false, reason: action.reason, profile: null, profileId }
   if (action.type === "schedule" && !new PermissionService().isMaster(e)) return { ok: false, reason: "master_only", message: "签到模式与时间由机器人主人统一安排。", profile: null, profileId }
+  if (action.type === "register" && !new PermissionService({ permissions: (config || await loadGlobalConfig()).permissions }).can(e, "checkin.register")) return { ok: false, reason: "permission_denied", message: "当前不允许注册自动签到，请联系机器人主人。", profile: null, profileId }
   if (action.type === "bindNotifyGroup" && !e?.group_id) {
     return { ok: false, reason: "group_required", profile: null, profileId }
   }

@@ -188,7 +188,7 @@ export class CoinShopWeb {
       }
       if (route === "/api/miyoushe/settings" && req.method === "POST") {
         const { profileId = 1, settings } = await this.body(req)
-        this.json(res, 200, { settings: await this.miyoushe.settings(session.qq, profileId, settings || {}) }); return
+        this.json(res, 200, { settings: await this.miyoushe.settings(session.qq, profileId, settings || {}, { user_id: session.qq, isMaster: await this.isOwner(session) }) }); return
       }
       if (route === "/api/miyoushe/run" && req.method === "POST") {
         const { profileId = 1 } = await this.body(req)
