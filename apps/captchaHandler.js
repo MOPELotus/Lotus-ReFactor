@@ -4,7 +4,7 @@ import {
   LOTUS_CAPTCHA_HANDLER_NAMESPACE,
   LOTUS_INTERCEPT_PRIORITY,
 } from "../core/intercept/priority.js"
-import { replyCaptchaEvent } from "../core/captcha/notify.js"
+import { createRequestCaptchaReporter } from "../core/captcha/notify.js"
 import { solveMysRequestCaptcha } from "../core/captcha/mysHandler.js"
 import { installLotusCaptchaHandlerOverride } from "../services/intercept/runtime.js"
 
@@ -31,14 +31,13 @@ export class LotusCaptchaHandler extends BasePlugin {
   }
 
   async mysReqErrHandler(e, args, reject) {
+    const onCaptchaEvent = createRequestCaptchaReporter(e)
     try {
       return await solveMysRequestCaptcha({
         e,
         args,
         reject,
-        onCaptchaEvent: async event => {
-          await replyCaptchaEvent({ e }, event)
-        },
+        onCaptchaEvent,
       })
     } catch (error) {
       logger?.error?.(`[Lotus-Plugin] mys captcha handler failed: ${error.stack || error.message}`)

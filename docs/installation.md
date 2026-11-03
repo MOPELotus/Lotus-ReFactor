@@ -45,6 +45,8 @@ onlyBuiltDependencies:
 
 插件首次加载时会自动生成 `config/global.yaml`。如果已经安装锅巴插件，可以直接在锅巴面板里修改荷花插件的全局配置。
 
+本地验证码的 `onnxruntime-node` 使用包内自带的 CPU 运行库，无需 CUDA。Linux x64 安装脚本可能额外下载 CUDA 组件，可在安装时设置环境变量 `ONNXRUNTIME_NODE_INSTALL=skip` 跳过，例如 `ONNXRUNTIME_NODE_INSTALL=skip pnpm install`；这不会关闭图片渲染所用的显卡。
+
 如果 clone 时没有拉子模块：
 
 ```bash

@@ -6,6 +6,8 @@ import { PermissionService } from "../core/permissions/service.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
 import { formatLocalDateTime } from "../core/time.js"
 import { notifyUser } from "../core/transport/notify.js"
+import { collectMasterIds } from "../core/transport/masters.js"
+import { waitForTuneWeaveStartup } from "../services/tuneweave/runtime.js"
 import { replyImage, replyText, replyForward } from "../core/transport/reply.js"
 import { buildPartnerItems, buildPartnerLogMessages, NeteasePartnerService } from "../services/neteasePartner/service.js"
 
@@ -46,7 +48,6 @@ export class LotusNeteasePartner extends BasePlugin {
           log: false,
         },
       ]
-      await new TuneWeaveService({ config: globalConfig.tuneweave }).resume()
       await this.scheduleStartupCatchUp(config)
     } catch (error) {
       logger?.warn?.(`[Lotus-Plugin] load netease partner task failed: ${error.message}`)
@@ -59,7 +60,10 @@ export class LotusNeteasePartner extends BasePlugin {
     if (!await service.shouldCatchUp(config).catch(() => false)) return
     logger?.mark?.("[Lotus-Plugin] netease partner catch-up scheduled in 60s")
     setTimeout(() => {
-      this.scheduledTask({ trigger: "启动补跑" }).catch(error => {
+      void waitForTuneWeaveStartup(globalConfig).then(result => {
+        if (result.ok === false) { logger?.warn?.("[Lotus-Plugin] TuneWeave 启动维护未成功，跳过合伙人启动补跑"); return }
+        return this.scheduledTask({ trigger: "启动补跑" })
+      }).catch(error => {
         logger?.error?.(`[Lotus-Plugin] netease partner catch-up failed: ${error.stack || error.message}`)
       })
     }, 60 * 1000)
@@ -105,17 +109,18 @@ export class LotusNeteasePartner extends BasePlugin {
     const config = await loadGlobalConfig()
     if (!await this.requireMaster(config)) return true
     const result = await new TuneWeaveService({ config: config.tuneweave }).status()
-    await replyText(this, `[荷花插件]TuneWeave ${result.ok ? "就绪" : "未就绪"} · ${result.version || "未知版本"}\n${result.apiUrl}\n${result.message}`)
+    await replyText(this, `[荷花插件]TuneWeave ${result.requiresUpdate ? "待更新" : result.ok ? "就绪" : "未就绪"} · ${result.version || "未知版本"}\n${result.apiUrl}\n${result.message}`)
     return true
   }
 
   async partnerLogin() {
+    const e = this.e
     const globalConfig = await loadGlobalConfig()
-    if (!await this.requireMaster(globalConfig)) return true
+    if (!await this.requireMaster(globalConfig, e)) return true
     const service = new NeteasePartnerService({ config: globalConfig.tuneweave })
     try {
       const config = globalConfig.netease_partner || {}
-      const qr = await service.createQrLogin(this.e.user_id)
+      const qr = await service.createQrLogin(e.user_id)
       const image = await renderTemplate("qr-login", {
         title: "网易云登录",
         subtitle: "音乐合伙人",
@@ -124,13 +129,13 @@ export class LotusNeteasePartner extends BasePlugin {
         qrDataUrl: qr.qrimg,
         profileId: "netease",
       }, {
-        saveId: `lotus-netease-qr-${this.e.user_id || "master"}`,
+        saveId: `lotus-netease-qr-${e.user_id || "master"}`,
       })
-      await replyImage(this, image, "[荷花插件]网易云登录二维码已生成。")
+      await replyImage(e, image, "[荷花插件]网易云登录二维码已生成。")
       const result = await service.waitQrLogin({
         alias: qr.alias,
         key: qr.key,
-        qq: this.e.user_id,
+        qq: e.user_id,
         timeoutMs: config.login_timeout_ms,
         pollMs: config.login_poll_ms,
       })
@@ -145,9 +150,9 @@ export class LotusNeteasePartner extends BasePlugin {
           skip: 0,
           fail: 0,
         }],
-      }, "完成")
+      }, "完成", e)
     } catch (error) {
-      await this.renderError("合伙人登录", error)
+      await this.renderError("合伙人登录", error, e)
     }
     return true
   }
@@ -180,20 +185,20 @@ export class LotusNeteasePartner extends BasePlugin {
     return true
   }
 
-  async requireMaster(globalConfig) {
+  async requireMaster(globalConfig, e = this.e) {
     const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e, "netease.partner")
+      .explain(e, "netease.partner")
     if (permission.ok) return true
     await this.renderReport("网易云合伙人", {
       trigger: "权限检查",
       accounts: [{ nickname: `拒绝：${permission.reason}`, total: 0, success: 0, skip: 0, fail: 1 }],
-    }, "拒绝")
+    }, "拒绝", e)
     return false
   }
 
-  async renderReport(title, report, badge) {
-    const image = await this.renderReportImage(title, report, badge, this.e.user_id)
-    await replyImage(this, image, `[荷花插件]${title}报告已生成。`)
+  async renderReport(title, report, badge, e = this.e) {
+    const image = await this.renderReportImage(title, report, badge, e.user_id)
+    await replyImage(e, image, `[荷花插件]${title}报告已生成。`)
   }
 
   async renderReportImage(title, report, badge, userId = "master") {
@@ -230,55 +235,19 @@ export class LotusNeteasePartner extends BasePlugin {
     }
   }
 
-  async renderError(title, error) {
+  async renderError(title, error, e = this.e) {
     const image = await renderStatusCard({
       title,
       subtitle: "网易云音乐合伙人",
       badge: "失败",
       message: error.message,
-      userId: this.e.user_id,
+      userId: e.user_id,
       items: [
         { label: "建议", value: "使用 #TuneWeave状态 检查服务，必要时 #初始化TuneWeave 或 #合伙人登录。" },
       ],
     }, {
-      saveId: `lotus-netease-partner-error-${this.e.user_id || "master"}`,
+      saveId: `lotus-netease-partner-error-${e.user_id || "master"}`,
     })
-    await replyImage(this, image, `[荷花插件]${title}失败。`)
+    await replyImage(e, image, `[荷花插件]${title}失败。`)
   }
-}
-
-async function collectMasterIds() {
-  const values = []
-  const config = globalThis.Bot?.config || {}
-  appendIds(values, config.masterQQ)
-  appendIds(values, config.master)
-  appendIds(values, config.masters)
-  appendIds(values, config.master_qq)
-  appendIds(values, config.owner)
-  if (!values.length) {
-    // The bot config getter is available even when Bot.config is not populated.
-    const { pathToFileURL } = await import("node:url")
-    const { default: path } = await import("node:path")
-    const cfg = (await import(pathToFileURL(path.join(process.cwd(), "lib/config/config.js")).href)).default
-    appendIds(values, cfg.masterQQ)
-    appendIds(values, cfg.master)
-  }
-  return [...new Set(values.map(value => String(value).trim().split(":").at(-1)).filter(value => value && value !== "stdin"))]
-}
-
-function appendIds(target, value) {
-  if (Array.isArray(value)) {
-    for (const item of value) appendIds(target, item)
-    return
-  }
-  if (value instanceof Set) {
-    for (const item of value) appendIds(target, item)
-    return
-  }
-  if (value && typeof value === "object") {
-    for (const item of Object.values(value)) appendIds(target, item)
-    return
-  }
-  if (value === undefined || value === null || value === "") return
-  target.push(value)
 }

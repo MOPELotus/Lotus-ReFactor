@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises"
+
 export async function requestJson(url, options = {}, context = {}) {
   const fetchImpl = context.fetch || globalThis.fetch
   if (typeof fetchImpl !== "function") throw new Error("fetch is unavailable")
@@ -9,7 +11,7 @@ export async function requestJson(url, options = {}, context = {}) {
   try {
     const response = await fetchImpl(url, {
       ...options,
-      signal: controller.signal,
+      signal: context.signal ? AbortSignal.any([context.signal, controller.signal]) : controller.signal,
     })
     const text = await response.text()
     let data = null
@@ -76,6 +78,7 @@ export function appendKey(fields, key) {
 }
 
 export function sleep(ms, context = {}) {
+  context.signal?.throwIfAborted()
   if (typeof context.sleep === "function") return context.sleep(ms)
-  return new Promise(resolve => setTimeout(resolve, ms))
+  return delay(ms, undefined, { signal: context.signal })
 }

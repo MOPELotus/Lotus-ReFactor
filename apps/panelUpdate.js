@@ -11,7 +11,7 @@ import {
 } from "../core/config/profile.js"
 import { loadGlobalConfig } from "../core/config/global.js"
 import { renderStatusCard } from "../core/render/service.js"
-import { AccountService } from "../core/login/account.js"
+import { refreshAccountAndSync, isAccountChangedError } from "../core/login/refresh.js"
 import { PermissionService } from "../core/permissions/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { MiaoPanelBridge } from "../services/pluginBridge/miaoPanel.js"
@@ -208,8 +208,9 @@ async function loadMiaoPlayer() {
 async function refreshProfileBeforePanel(userId, profileId, profile) {
   if (!profile?.account?.stoken) return profile
   try {
-    return await new AccountService().refresh(userId, profileId)
+    return await refreshAccountAndSync(userId, profileId, { expectedProfile: profile })
   } catch (error) {
+    if (isAccountChangedError(error)) throw error
     logger?.debug?.(`[Lotus-Plugin] panel pre-refresh skipped: ${error.message}`)
     return profile
   }

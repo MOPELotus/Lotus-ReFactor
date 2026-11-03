@@ -1,4 +1,3 @@
-import crypto from "node:crypto"
 import { spawn } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
@@ -6,41 +5,28 @@ import QRCode from "qrcode"
 import YAML from "yaml"
 import { resolveData, rootPath } from "../../core/path.js"
 import { formatLocalIso } from "../../core/time.js"
+import { TuneWeaveService } from "../tuneweave/service.js"
+import { downloadRanges } from "../media/range-download.js"
 import { createMediaTask, releaseMediaTask, recoverMediaTasks } from "../media/tasks.js"
 import { packMediaFiles, runMediaProcess, mediaLimitFailure, safeMediaName } from "../media/files.js"
 
-const NAV_API = "https://api.bilibili.com/x/web-interface/nav"
-const QR_GENERATE_API = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
-const QR_POLL_API = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
-const VIDEO_INFO_API = "https://api.bilibili.com/x/web-interface/view"
 const LIVE_INFO_API = "https://api.live.bilibili.com/room/v1/Room/get_info"
-const SEARCH_API = "https://api.bilibili.com/x/web-interface/search/type"
-const MIXIN_KEY_ENC_TAB = [
-  46, 47, 18, 2, 53, 8, 23, 32,
-  15, 50, 10, 31, 58, 3, 45, 35,
-  27, 43, 5, 49, 33, 9, 42, 19,
-  29, 28, 14, 39, 12, 38, 41, 13,
-  37, 48, 7, 16, 24, 55, 40, 61,
-  26, 17, 0, 1, 60, 51, 30, 4,
-  22, 25, 54, 21, 56, 59, 6, 63,
-  57, 62, 11, 36, 20, 34, 44, 52,
-]
 
 const COMMON_HEADERS = Object.freeze({
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
   Referer: "https://www.bilibili.com/",
 })
 
-const MEDIA_EXTENSIONS = new Set([".mp4", ".mkv", ".flv", ".mov", ".m4v"])
 
 export class BilibiliService {
   constructor(options = {}) {
     this.fetch = options.fetch || globalThis.fetch
+    this.tuneweave = options.tuneweave || new TuneWeaveService({ config: options.tuneweaveConfig, fetch: this.fetch })
+    this.tuneAccount = options.tuneAccount || ""
     this.sessdata = options.sessdata || ""
     this.cookie = normalizeBiliCookie(options.cookie || options.sessdata || "")
     this.now = options.now || (() => new Date())
-    this.wbiCache = null
-    this.accountFile = options.accountFile || resolveData("bilibili", "account.yaml")
+        this.accountFile = options.accountFile || resolveData("bilibili", "account.yaml")
     this.tasksDir = options.tasksDir || resolveData("bilibili", "tasks")
     this.spawn = options.spawn || spawn
   }
@@ -83,35 +69,29 @@ export class BilibiliService {
     return this.getVideoInfo(target)
   }
 
+  async tuneRequest(route, params = {}) {
+    const stored = this.tuneAccount ? null : await this.loadAccount()
+    this.tuneAccount ||= stored?.tuneweave_account || ""
+    const query = new URLSearchParams({ ...params, ...(this.tuneAccount ? { account: this.tuneAccount } : {}) })
+    return this.tuneweave.request(route + (query.size ? "?" + query : ""))
+  }
+
   async getVideoInfo(target) {
-    const params = new URLSearchParams()
-    if (target.bvid) params.set("bvid", target.bvid)
-    if (target.aid) params.set("aid", target.aid)
-    const json = await this.requestJson(`${VIDEO_INFO_API}?${params}`)
-    if (json.code !== 0) throw new Error(json.message || `B站视频接口错误 ${json.code}`)
-    const data = json.data || {}
-    return {
-      type: "video",
-      title: stripHtml(data.title),
-      bvid: data.bvid,
-      aid: data.aid,
-      url: `https://www.bilibili.com/video/${data.bvid}`,
-      cover: normalizeBiliImage(data.pic || ""),
-      owner: data.owner?.name || "",
-      duration: Number(data.duration || 0),
-      stat: data.stat || {},
-      cid: data.cid,
-      pages: Array.isArray(data.pages) && data.pages.length
-        ? data.pages.map((page, index) => ({
-            index: index + 1,
-            cid: page.cid,
-            page: page.page || index + 1,
-            part: stripHtml(page.part || `P${index + 1}`),
-            duration: Number(page.duration || 0),
-          }))
-        : [{ index: 1, cid: data.cid, page: 1, part: "P1", duration: Number(data.duration || 0) }],
-      desc: stripHtml(data.desc || "").slice(0, 180),
+    const ref = target.bvid ? `bilibili:bvid:${target.bvid}` : `bilibili:aid:${target.aid}`
+    const detail = await this.tuneRequest(`/v1/videos/${encodeURIComponent(ref)}`, { kind: "video" })
+    const data = detail.video, ext = data.extensions || {}, pages = []
+    if (!data?.ref) throw new Error("TuneWeave 视频详情不完整")
+    for (let offset = 0; offset < 10000; offset += 100) {
+      const part = await this.tuneRequest(`/v1/videos/${encodeURIComponent(ref)}/parts`, { kind: "video", limit: "100", offset: String(offset) })
+      pages.push(...part)
+      if (part.length < 100) break
+      if (offset === 9900) throw new Error("视频分P数量超过限制")
     }
+    return { type: "video", ref: data.ref, title: stripHtml(data.title), bvid: ext.bvid || target.bvid, aid: ext.aid || target.aid,
+      url: `https://www.bilibili.com/video/${ext.bvid || target.bvid || "av" + target.aid}`,
+      cover: normalizeBiliImage(data.cover_url || ""), owner: data.creators?.map(c => c.name).join(" / ") || "", duration: Number(data.duration_ms || 0) / 1000,
+      stat: { view: data.play_count, like: ext.like_count, coin: ext.coin_count, favorite: ext.favorite_count, danmaku: ext.danmaku_count, reply: ext.comment_count, share: ext.share_count },
+      cid: ext.first_cid, pages: pages.map((p, i) => ({ index: i + 1, cid: p.id.replace(/^cid:/, ""), partId: p.id, page: p.page, part: stripHtml(p.title), duration: Number(p.duration_ms || 0) / 1000 })), desc: stripHtml(data.description || "").slice(0, 180) }
   }
 
   async getLiveInfo(roomId) {
@@ -133,25 +113,8 @@ export class BilibiliService {
   }
 
   async search(keyword, { page = 1, limit = 10 } = {}) {
-    const params = {
-      search_type: "video",
-      keyword,
-      page: String(page),
-    }
-    const query = await this.buildMaybeSignedQuery(params)
-    const json = await this.requestJson(`${SEARCH_API}?${query}`)
-    if (json.code !== 0) throw new Error(json.message || `B站搜索接口错误 ${json.code}`)
-    return (json.data?.result || [])
-      .filter(item => item.bvid)
-      .slice(0, limit)
-      .map(item => ({
-        title: stripHtml(item.title),
-        bvid: item.bvid,
-        author: stripHtml(item.author || ""),
-        play: item.play || 0,
-        duration: item.duration || "",
-        url: `https://www.bilibili.com/video/${item.bvid}`,
-      }))
+    const items = await this.tuneRequest("/v1/search", { platform: "bilibili", type: "video", q: keyword, limit: String(limit), offset: String((page - 1) * limit) })
+    return items.filter(item => item.type === "video").map(({ data }) => ({ title: stripHtml(data.title), ref: data.ref, bvid: data.extensions?.bvid || data.id.replace(/^bvid:/, ""), author: data.creators?.map(c => c.name).join(" / ") || "", play: data.play_count, duration: Number(data.duration_ms || 0) / 1000, url: `https://www.bilibili.com/video/${data.extensions?.bvid || data.id.replace(/^bvid:/, "")}` }))
   }
 
   async buildDownloadPlan(input, config = {}) {
@@ -185,7 +148,7 @@ export class BilibiliService {
       info,
       pages,
       policy: download.multi_page_policy,
-      downloader: "bbdown",
+      downloader: "tuneweave-js",
       estimatedSizeMb,
     }
   }
@@ -197,7 +160,7 @@ export class BilibiliService {
     const task = await createMediaTask(this.tasksDir)
     try {
       await emitBiliEvent(hooks, { type: "download-start", message: `开始下载 ${plan.info.bvid}，分P策略：${plan.policy}。` })
-      let files = await this.downloadWithBBDown(plan, download, task.dir, hooks)
+      let files = await this.downloadWithTuneWeave(plan, download, task.dir, hooks)
       if (download.multi_page_policy === "zip" && files.length > 1) {
         const target = path.join(task.dir, `${safeFileName(plan.info.title || plan.info.bvid)}-${plan.info.bvid}.zip`)
         await packMediaFiles(files, target, { timeoutMs: download.timeout_ms, spawnImpl: this.spawn, cwd: task.dir })
@@ -220,130 +183,41 @@ export class BilibiliService {
     }
   }
 
-  async downloadWithBBDown(plan, download, workDir, hooks = {}) {
-    const url = plan.info.url
-    const pageArg = download.multi_page_policy === "first" && plan.pages[0]?.page
-      ? plan.pages[0].page
-      : null
-    await emitBiliEvent(hooks, {
-      type: "bbdown-start",
-      message: "正在调用 BBDown。",
-    })
-    await this.runBBDown(url, workDir, {
-      page: pageArg,
-      config: download,
-    })
-    const files = await findMediaFiles(workDir)
-    if (!files.length) throw new Error("BBDown 执行完成但没有找到视频文件")
-    const completed = selectCompletedMediaFiles(files)
-    if (!completed.length) {
-      const names = files.map(file => path.basename(file)).slice(0, 4).join(", ")
-      throw new Error(`BBDown 只留下了分离流分片，未生成带音轨的成品文件。请检查 ffmpeg/ffprobe 是否完整安装后重试。${names ? ` 分片示例：${names}` : ""}`)
-    }
-    return completed
-  }
-
-  async runBBDown(url, cwd, { page = null, config = {} } = {}) {
-    const bbdownPath = await resolveCommandPath("BBDown", config.tools_path)
-    if (!bbdownPath) throw new Error("未找到 BBDown，请检查环境变量或 bilibili.download.tools_path")
-    const toolPathDirs = collectToolPathDirs(bbdownPath, config.tools_path)
-    const args = await buildBBDownArgs(url, cwd, { page, config })
-
-    const sessdata = await this.getSessDataForDownload(config)
-    if (sessdata) args.push("-c", `SESSDATA=${sessdata}`)
-    if (Array.isArray(config.extra_args) && config.extra_args.length) args.push(...config.extra_args)
-
-    return runMediaProcess(bbdownPath, args, {
-      cwd,
-      timeoutMs: Number(config.timeout_ms || 600000),
-      env: buildToolProcessEnv(toolPathDirs),
-      spawnImpl: this.spawn,
-    })
-  }
-
-  async getSessDataForDownload(config = {}) {
-    const cookie = normalizeBiliCookie(config.cookie || this.cookie || this.sessdata || "")
-    const sessdata = cookie.match(/(?:^|;\s*)SESSDATA=([^;]+)/)?.[1]
-    if (sessdata) return sessdata
-
-    const bbdownPath = await resolveCommandPath("BBDown", config.tools_path)
-    if (!bbdownPath) return ""
-    const dataPath = path.join(path.dirname(bbdownPath), "BBDown.data")
-    try {
-      const raw = await fs.readFile(dataPath, "utf8")
-      return raw.match(/SESSDATA=([^;]+)/)?.[1] || ""
-    } catch {
-      return ""
-    }
-  }
-
-  async runBBDownLogin(config = {}, hooks = {}) {
-    const download = normalizeDownloadConfig(config)
-    const bbdownPath = await resolveCommandPath("BBDown", download.tools_path)
-    if (!bbdownPath) throw new Error("未找到 BBDown，请检查环境变量或 bilibili.download.tools_path")
-    const toolPathDirs = collectToolPathDirs(bbdownPath, download.tools_path)
-
-    const workDir = resolveData("bilibili")
-    const qrPath = path.join(workDir, "qrcode.png")
-    const logPath = path.join(workDir, "bbdown-login.log")
-    await fs.mkdir(workDir, { recursive: true })
-    await fs.rm(qrPath, { force: true }).catch(() => null)
-    await fs.rm(logPath, { force: true }).catch(() => null)
-
-    await emitBiliEvent(hooks, {
-      type: "bbdown-login-start",
-      message: "正在启动 BBDown 登录进程。",
-    })
-
-    return new Promise((resolve, reject) => {
-      const child = spawn(bbdownPath, ["login"], {
-        cwd: workDir,
-        env: buildToolProcessEnv(toolPathDirs),
-        windowsHide: true,
-      })
-      let stdout = ""
-      let stderr = ""
-      let sentQr = false
-      const timer = setTimeout(() => {
-        child.kill("SIGTERM")
-      }, download.timeout_ms)
-      const qrTimer = setInterval(async () => {
-        if (sentQr) return
-        if (await exists(qrPath)) {
-          sentQr = true
-          await emitBiliEvent(hooks, {
-            type: "bbdown-login-qr",
-            message: "BBDown 登录二维码已生成。",
-            qrPath,
-          })
+  async downloadWithTuneWeave(plan, download, workDir, hooks = {}) {
+    const ffmpeg = await resolveCommandPath("ffmpeg", download.tools_path)
+    if (!ffmpeg) throw new Error("未找到 FFmpeg，请先初始化工具环境")
+    const files = [], signal = hooks.signal
+    for (const page of plan.pages) {
+      const manifest = await this.tuneRequest(`/v1/videos/${encodeURIComponent(plan.info.ref)}/playback`, { kind: "video", part: page.partId || "cid:" + page.cid })
+      const stem = `video-${plan.info.bvid}-P${page.page}-${page.cid}`, output = path.join(workDir, stem + ".mp4")
+      const options = { fetch: this.fetch, headers: manifest.headers || {}, timeoutMs: download.timeout_ms, maxBytes: download.max_estimated_size_mb > 0 ? download.max_estimated_size_mb * 1024 * 1024 : 0, concurrency: download.concurrency, signal }
+      await emitBiliEvent(hooks, { type: "download-part", message: `正在下载 P${page.page}，JS 并发 ${download.concurrency}。` })
+      if (manifest.video_tracks?.length) {
+        const videos = [...manifest.video_tracks].sort((a, b) => b.id - a.id || Number(a.codec_id !== 7) - Number(b.codec_id !== 7))
+        const video = videos.find(t => t.id <= download.resolution) || videos.at(-1)
+        const audio = [...(manifest.audio_tracks || [])].sort((a, b) => b.bandwidth - a.bandwidth)[0]
+        const videoFile = path.join(workDir, stem + ".video"), audioFile = path.join(workDir, stem + ".audio")
+        const operations = [downloadRanges([video.url, ...video.backup_urls || []], videoFile, options)]
+        if (audio) operations.push(downloadRanges([audio.url, ...audio.backup_urls || []], audioFile, options))
+        const downloads = await Promise.allSettled(operations)
+        const failure = downloads.find(r => r.status === "rejected"); if (failure) throw failure.reason
+        await runMediaProcess(ffmpeg, ["-nostdin", "-y", "-i", videoFile, ...(audio ? ["-i", audioFile] : []), "-map", "0:v:0", ...(audio ? ["-map", "1:a:0"] : []), "-c", "copy", "-movflags", "+faststart", output], { cwd: workDir, spawnImpl: this.spawn, timeoutMs: download.timeout_ms, signal })
+        await fs.rm(videoFile, { force: true }); await fs.rm(audioFile, { force: true })
+      } else if (manifest.progressive_segments?.length) {
+        const segments = [...manifest.progressive_segments].sort((a, b) => a.order - b.order), paths = []
+        for (const segment of segments) {
+          const file = path.join(workDir, stem + "-segment-" + segment.order)
+          await downloadRanges([segment.url, ...segment.backup_urls || []], file, options); paths.push(file)
         }
-      }, 1000)
-
-      child.stdout?.on("data", chunk => {
-        stdout += chunk.toString()
-      })
-      child.stderr?.on("data", chunk => {
-        stderr += chunk.toString()
-      })
-      child.on("error", error => {
-        clearTimeout(timer)
-        clearInterval(qrTimer)
-        reject(error)
-      })
-      child.on("close", async code => {
-        clearTimeout(timer)
-        clearInterval(qrTimer)
-        await fs.writeFile(logPath, stdout + stderr, "utf8").catch(() => null)
-        resolve({
-          ok: code === 0 || /登录成功|login success/i.test(stdout + stderr),
-          code,
-          stdout,
-          stderr,
-          logPath,
-          qrPath: await exists(qrPath) ? qrPath : "",
-        })
-      })
-    })
+        const list = path.join(workDir, stem + ".concat")
+        await fs.writeFile(list, paths.map(file => "file '" + path.basename(file) + "'").join("\n"))
+        await runMediaProcess(ffmpeg, ["-nostdin", "-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", "-movflags", "+faststart", output], { cwd: workDir, spawnImpl: this.spawn, timeoutMs: download.timeout_ms, signal })
+        await Promise.all([...paths, list].map(file => fs.rm(file, { force: true })))
+      } else throw new Error("TuneWeave 未返回可下载视频流")
+      if (!(await fs.stat(output)).size) throw new Error("合流结果为空")
+      files.push(output)
+    }
+    return files
   }
 
   async recoverTasks() {
@@ -355,47 +229,23 @@ export class BilibiliService {
   }
 
   async createQrLogin() {
-    const json = await this.requestJson(`${QR_GENERATE_API}?t=${Date.now()}`)
-    const url = json?.data?.url
-    const qrcodeKey = json?.data?.qrcode_key
-    if (!url || !qrcodeKey) throw new Error(json?.message || "B站二维码创建失败")
-    return {
-      url,
-      qrcodeKey,
-      qrDataUrl: await QRCode.toDataURL(url, {
-        margin: 1,
-        width: 320,
-      }),
-    }
+    this.pendingAlias = "lotus-bilibili"
+    const qr = await this.tuneweave.request("/v1/auth/qr", { method: "POST", body: { platform: "bilibili", account: this.pendingAlias, credential_mode: "server" } })
+    if (!qr.transaction_id || !qr.url) throw new Error("B站二维码创建失败")
+    return { url: qr.url, qrcodeKey: qr.transaction_id, qrDataUrl: qr.image_data_url || await QRCode.toDataURL(qr.url) }
   }
 
   async waitQrLogin({ qrcodeKey, timeoutMs = 180000, pollMs = 3000 } = {}) {
-    if (!qrcodeKey) throw new Error("qrcode_key is required")
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      const response = await this.fetch(`${QR_POLL_API}?qrcode_key=${encodeURIComponent(qrcodeKey)}&t=${Date.now()}`, {
-        headers: COMMON_HEADERS,
-      })
-      const text = await response.text()
-      const json = text ? JSON.parse(text) : null
-      if (!response.ok) throw new Error(`B站登录轮询失败 HTTP ${response.status}`)
-      const code = Number(json?.data?.code)
-      if (code === 0) {
-        const cookie = extractLoginCookie(json?.data, response.headers)
-        if (!cookie) throw new Error("B站登录成功但未提取到 cookie")
-        const account = {
-          cookie,
-          saved_at: formatLocalIso(this.now()),
-          source: "qrcode",
-        }
-        await this.saveAccount(account)
-        this.cookie = cookie
-        return {
-          ok: true,
-          account,
-        }
+      const result = await this.tuneweave.request(`/v1/auth/qr/${encodeURIComponent(qrcodeKey)}`)
+      if (result.state === "confirmed") {
+        if (!result.profile?.authenticated) throw new Error("B站登录身份未核实")
+        this.tuneAccount = this.pendingAlias || "lotus-bilibili"
+        const account = { tuneweave_account: this.tuneAccount, saved_at: formatLocalIso(this.now()), source: "tuneweave" }
+        await this.saveAccount(account); return { ok: true, account }
       }
-      if (code === 86038) throw new Error("B站二维码已过期")
+      if (["expired", "failed", "verification_required"].includes(result.state)) throw new Error("B站二维码已过期或需要附加验证，请重新登录")
       await sleep(pollMs)
     }
     throw new Error("B站二维码登录超时")
@@ -404,7 +254,7 @@ export class BilibiliService {
   async loadAccount() {
     try {
       const data = YAML.parse(await fs.readFile(this.accountFile, "utf8")) || {}
-      return data.cookie ? data : null
+      return data.cookie || data.tuneweave_account ? data : null
     } catch (error) {
       if (error?.code === "ENOENT") return null
       throw error
@@ -412,40 +262,15 @@ export class BilibiliService {
   }
 
   async saveAccount(account = {}) {
-    if (!account.cookie) throw new Error("B站账号 cookie 为空")
+    if (!account.cookie && !account.tuneweave_account) throw new Error("B站账号登录信息为空")
     await fs.mkdir(path.dirname(this.accountFile), { recursive: true })
     await fs.writeFile(this.accountFile, YAML.stringify({
-      cookie: normalizeBiliCookie(account.cookie),
+      ...(account.cookie ? { cookie: normalizeBiliCookie(account.cookie) } : {}),
+      ...(account.tuneweave_account ? { tuneweave_account: account.tuneweave_account } : {}),
       saved_at: account.saved_at || formatLocalIso(this.now()),
       source: account.source || "manual",
     }), "utf8")
     return this.accountFile
-  }
-
-  async buildMaybeSignedQuery(params) {
-    try {
-      const key = await this.getWbiMixinKey()
-      if (key) return buildWbiQuery(params, key, Math.floor(this.now().getTime() / 1000))
-    } catch (error) {
-      logger?.debug?.(`[Lotus-Plugin] bilibili WBI key unavailable: ${error.message}`)
-    }
-    return new URLSearchParams(params).toString()
-  }
-
-  async getWbiMixinKey() {
-    if (this.wbiCache && this.wbiCache.expires > Date.now()) return this.wbiCache.key
-    const json = await this.requestJson(NAV_API)
-    const imgUrl = json?.data?.wbi_img?.img_url || ""
-    const subUrl = json?.data?.wbi_img?.sub_url || ""
-    const imgKey = keyFromUrl(imgUrl)
-    const subKey = keyFromUrl(subUrl)
-    if (!imgKey || !subKey) return ""
-    const key = getMixinKey(`${imgKey}${subKey}`)
-    this.wbiCache = {
-      key,
-      expires: Date.now() + 10 * 60 * 1000,
-    }
-    return key
   }
 
   async requestJson(url) {
@@ -458,29 +283,6 @@ export class BilibiliService {
     if (!response.ok) throw new Error(`B站请求失败 HTTP ${response.status}`)
     return json
   }
-}
-
-export function buildWbiQuery(params = {}, mixinKey, wts = Math.floor(Date.now() / 1000)) {
-  const query = {
-    ...params,
-    wts,
-  }
-  const encoded = Object.keys(query)
-    .sort()
-    .map(key => {
-      const value = String(query[key] ?? "").replace(/[!'()*]/g, "")
-      return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
-    })
-    .join("&")
-  const wRid = crypto.createHash("md5").update(`${encoded}${mixinKey}`).digest("hex")
-  return `${encoded}&w_rid=${wRid}`
-}
-
-export function getMixinKey(rawKey = "") {
-  return MIXIN_KEY_ENC_TAB
-    .map(index => rawKey[index] || "")
-    .join("")
-    .slice(0, 32)
 }
 
 export function normalizeBiliCookie(value = "") {
@@ -544,7 +346,7 @@ export function normalizeDownloadConfig(config = {}) {
   const source = config.download || config
   return {
     enable: source.enable !== false,
-    use_aria2: source.use_aria2 === true,
+    concurrency: Math.max(1, Math.min(16, Math.floor(Number(source.concurrency) || 4))),
     tools_path: String(source.tools_path || "data/tools/bin"),
     resolution: Number(source.resolution || 64),
     duration_limit_seconds: Number(source.duration_limit_seconds || 3600),
@@ -552,7 +354,6 @@ export function normalizeDownloadConfig(config = {}) {
     max_estimated_size_mb: Number(source.max_estimated_size_mb || 0),
     multi_page_policy: ["zip", "all", "first"].includes(source.multi_page_policy) ? source.multi_page_policy : "zip",
     timeout_ms: Number(source.timeout_ms || 600000),
-    extra_args: Array.isArray(source.extra_args) ? source.extra_args.map(String) : [],
     cookie: config.cookie || config.sessdata || source.cookie || source.sessdata || "",
   }
 }
@@ -567,21 +368,6 @@ export function buildToolProcessEnv(pathDirs = [], baseEnv = process.env) {
     .map(dir => path.resolve(dir)))]
   env[pathKey] = [...dirs, existingPath].filter(Boolean).join(path.delimiter)
   return env
-}
-
-export async function buildBBDownArgs(url, cwd, { page = null, config = {} } = {}) {
-  const pattern = "video-<bvid>-P<pageNumberWithZero>-<cid>"
-  const args = [url, "--work-dir", cwd, "--file-pattern", pattern, "--multi-file-pattern", pattern]
-  const ffmpegPath = await resolveCommandPath("ffmpeg", config.tools_path)
-  if (ffmpegPath) args.push("--ffmpeg-path", ffmpegPath)
-  if (config.use_aria2) {
-    args.push("--use-aria2c")
-    const aria2Path = await resolveCommandPath("aria2c", config.tools_path)
-    if (aria2Path) args.push("--aria2c-path", aria2Path)
-  }
-  if (page) args.push("-p", String(page))
-  if (config.resolution) args.push("--dfn-priority", String(config.resolution))
-  return args
 }
 
 export async function resolveCommandPath(command, toolsPath = "") {
@@ -603,17 +389,6 @@ export async function resolveCommandPath(command, toolsPath = "") {
 export function selectPages(pages = [], policy = "zip") {
   const list = Array.isArray(pages) && pages.length ? pages : [{ index: 1, page: 1 }]
   return policy === "first" ? [list[0]] : list
-}
-
-export function selectCompletedMediaFiles(files = []) {
-  return files.filter(file => MEDIA_EXTENSIONS.has(path.extname(file).toLowerCase()) && !looksLikeBbdownStreamPart(file))
-}
-
-export function looksLikeBbdownStreamPart(file = "") {
-  const parsed = path.parse(String(file || ""))
-  const ext = parsed.ext.toLowerCase()
-  if (!MEDIA_EXTENSIONS.has(ext)) return false
-  return /^\d{6,}\.P\d+\.\d+$/i.test(parsed.name)
 }
 
 export function safeFileName(value = "bilibili") {
@@ -682,29 +457,6 @@ function resolveToolsPath(value = "") {
   return path.resolve(rootPath, text)
 }
 
-function collectToolPathDirs(bbdownPath = "", toolsPath = "") {
-  const dirs = []
-  if (bbdownPath) dirs.push(path.dirname(bbdownPath))
-  if (toolsPath) dirs.push(resolveToolsPath(toolsPath))
-  return dirs
-}
-
-async function findMediaFiles(root) {
-  const files = []
-  const queue = [root]
-  while (queue.length) {
-    const dir = queue.shift()
-    const entries = await fs.readdir(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name)
-      if (entry.isDirectory()) queue.push(full)
-      else if (entry.isFile() && MEDIA_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-        files.push(full)
-      }
-    }
-  }
-  return files.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-}
 
 function runSpawn(command, args = [], options = {}) {
   return new Promise((resolve, reject) => {
@@ -752,9 +504,6 @@ async function exists(file) {
   }
 }
 
-function keyFromUrl(url = "") {
-  return String(url || "").split("/").pop()?.split(".")[0] || ""
-}
 
 function readSetCookie(headers) {
   if (!headers) return ""

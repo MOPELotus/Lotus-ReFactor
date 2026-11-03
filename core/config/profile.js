@@ -1,8 +1,68 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import YAML from "yaml"
+import { randomUUID } from "node:crypto"
 import { resolveData } from "../path.js"
 import { assertValidProfile } from "./schema.js"
+import { generateVirtualDevice } from "../devices/generated.js"
+
+// Shared read/merge/write boundary for profile mutations. Slow API work stays
+// outside this gate; callers reload the profile inside before applying a patch.
+const profileWritesKey = Symbol.for("lotus-plugin.profile-write-locks")
+const profileWrites = globalThis[profileWritesKey] ||= new Map()
+const profileLifetimesKey = Symbol.for("lotus-plugin.profile-lifetimes")
+const profileLifetimes = globalThis[profileLifetimesKey] ||= new Map()
+const snapshotKey = Symbol.for("lotus-plugin.profile-read-guard")
+
+function profileReadGuard(qq, profileId) {
+  const key = `${String(qq)}:${normalizeProfileId(profileId)}`
+  // AccountService owns this shared state. Reading it avoids a config/login
+  // import cycle, and preserves generations across module reloads.
+  const accountState = globalThis[Symbol.for("lotus.loginAccount.state")]
+  return { qq: String(qq), profileId: normalizeProfileId(profileId), generation: accountState?.accountGenerations?.get(key) || 0, lifetime: getProfileLifetime(qq, profileId) }
+}
+
+export function getProfileSnapshotGuard(profile) {
+  return profile?.[snapshotKey]
+}
+
+export function getProfileLifetime(qq, profileId = 1) {
+  return profileLifetimes.get(`${String(qq)}:${normalizeProfileId(profileId)}`) || 0
+}
+
+export function bumpProfileLifetime(qq, profileId = 1) {
+  const key = `${String(qq)}:${normalizeProfileId(profileId)}`
+  const next = getProfileLifetime(qq, profileId) + 1
+  profileLifetimes.set(key, next)
+  invalidateRequestRegistry(qq, profileId)
+  return next
+}
+
+function invalidateRequestRegistry(qq, profileId) {
+  try {
+    globalThis[Symbol.for("lotus-plugin.mys-profile-registry-hook")]?.invalidate?.(qq, profileId)
+  } catch {}
+}
+
+function updateRequestRegistry(profile) {
+  try {
+    // A synchronous callback avoids a dependency cycle with the request layer.
+    globalThis[Symbol.for("lotus-plugin.mys-profile-registry-hook")]?.update?.(profile)
+  } catch {
+    // Saving has already committed. Do not report it as failed, and prefer no
+    // cached tuple to a stale tuple if an optional observer fails.
+    invalidateRequestRegistry(profile.user.qq, profile.profile.id)
+  }
+}
+
+export async function withProfileWrite(qq, profileId, operation) {
+  const key = `${String(qq)}:${normalizeProfileId(profileId)}`
+  const task = (profileWrites.get(key) || Promise.resolve()).catch(() => {}).then(operation)
+  profileWrites.set(key, task)
+  try { return await task } finally {
+    if (profileWrites.get(key) === task) profileWrites.delete(key)
+  }
+}
 
 const CURRENT_VERSION = 1
 export const MAX_PROFILE_ID = 255
@@ -94,7 +154,7 @@ export async function listProfileIds(qq) {
   }
 }
 
-export async function listAllProfiles() {
+export async function listAllProfiles({ skipInvalid = false, onError } = {}) {
   const dir = resolveData("users")
   try {
     const files = await fs.readdir(dir)
@@ -102,7 +162,12 @@ export async function listAllProfiles() {
     for (const file of files) {
       const match = file.match(/^(.+?)(?:-(\d+))?\.yaml$/)
       if (!match) continue
-      profiles.push(await loadProfile(match[1], match[2] || 1))
+      try {
+        profiles.push(await loadProfile(match[1], match[2] || 1))
+      } catch (error) {
+        if (!skipInvalid) throw error
+        await onError?.(error, { file })
+      }
     }
     return profiles.sort((a, b) => {
       const aq = String(a.user?.qq || "")
@@ -121,7 +186,7 @@ export function parseProfileIdFromMessage(message = "") {
   return normalizeProfileId(match?.[1] || 1)
 }
 
-export function createDefaultProfile({ qq, profileId = 1, nickname = "" } = {}) {
+export function createDefaultProfile({ qq, profileId = 1, nickname = "", generateDevice = true } = {}) {
   const id = normalizeProfileId(profileId)
   if (!qq) throw new Error("qq is required")
 
@@ -159,7 +224,7 @@ export function createDefaultProfile({ qq, profileId = 1, nickname = "" } = {}) 
         zzz: "",
       },
     },
-    device: {
+    device: generateDevice ? generateVirtualDevice() : {
       bound: false,
       name: "",
       model: "",
@@ -260,19 +325,37 @@ export function createDefaultProfile({ qq, profileId = 1, nickname = "" } = {}) 
 
 export async function loadProfile(qq, profileId = 1) {
   const file = profileFilePath(qq, profileId)
+  const guard = profileReadGuard(qq, profileId)
   const raw = await fs.readFile(file, "utf8")
   const profile = YAML.parse(raw)
-  return migrateProfile(profile, { qq, profileId })
+  const result = migrateProfile(profile, { qq, profileId })
+  const current = profileReadGuard(qq, profileId)
+  if (guard.generation !== current.generation || guard.lifetime !== current.lifetime) {
+    const error = new Error("读取登录档案期间状态已变化，请重新发送原指令。")
+    error.code = "LOTUS_ACCOUNT_CHANGED"
+    throw error
+  }
+  Object.defineProperty(result, snapshotKey, { value: Object.freeze(guard), enumerable: false })
+  return result
 }
 
-export async function saveProfile(profile) {
+export async function saveProfile(profile, { createOnly = false } = {}) {
   assertValidProfile(profile)
   const qq = profile?.user?.qq
   const profileId = profile?.profile?.id
   const file = profileFilePath(qq, profileId)
 
   await fs.mkdir(path.dirname(file), { recursive: true })
-  await fs.writeFile(file, YAML.stringify(profile), "utf8")
+  const temporary = `${file}.${randomUUID()}.tmp`
+  const serialized = YAML.stringify(profile)
+  try {
+    await fs.writeFile(temporary, serialized, { encoding: "utf8", flag: "wx", mode: 0o600 })
+    if (createOnly) await fs.link(temporary, file)
+    else await fs.rename(temporary, file)
+    updateRequestRegistry(YAML.parse(serialized))
+  } finally {
+    await fs.rm(temporary, { force: true })
+  }
   return file
 }
 
@@ -284,7 +367,10 @@ export async function ensureProfile({ qq, profileId = 1, nickname = "" } = {}) {
   }
 
   const profile = createDefaultProfile({ qq, profileId, nickname })
-  await saveProfile(profile)
+  try { await saveProfile(profile, { createOnly: true }) } catch (error) {
+    if (error?.code !== "EEXIST") throw error
+    return loadProfile(qq, profileId)
+  }
   return profile
 }
 
@@ -299,6 +385,8 @@ export function migrateProfile(profile, fallback = {}) {
     qq,
     profileId,
     nickname: profile?.user?.nickname || "",
+    // Reading a legacy profile must not invent an unpersisted device identity.
+    generateDevice: false,
   })
 
   return assertValidProfile(mergeProfile(base, {

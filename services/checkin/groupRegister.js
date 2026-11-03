@@ -1,6 +1,7 @@
 import {
   loadProfile,
   saveProfile,
+  withProfileWrite,
 } from "../../core/config/profile.js"
 import {
   groupMemberDisplayName,
@@ -12,11 +13,13 @@ export async function registerGroupCheckinProfiles({
   groupId = "",
   profileId = 1,
   skipUserIds = [],
+  store = {},
 } = {}) {
   if (!group?.getMemberMap) throw new Error("group is unavailable")
   const resolvedGroupId = String(groupId || group.group_id || "")
   if (!resolvedGroupId) throw new Error("group id is required")
 
+  const profileStore = { loadProfile, saveProfile, ...store }
   const skipSet = new Set(skipUserIds.map(String))
   const members = normalizeGroupMemberEntries(await group.getMemberMap())
     .filter(member => member.user_id && !skipSet.has(member.user_id))
@@ -25,55 +28,24 @@ export async function registerGroupCheckinProfiles({
   for (const member of members) {
     const qq = member.user_id
     const nickname = groupMemberDisplayName(member)
-    const profile = await loadProfileIfExists(qq, profileId)
-    if (!profile) {
-      results.push({
-        qq,
-        profileId,
-        nickname,
-        ok: false,
-        skipped: true,
-        reason: "missing_profile",
-      })
-      continue
-    }
-
-    if (!hasSigninLoginState(profile)) {
-      results.push({
-        qq,
-        profileId,
-        nickname,
-        ok: false,
-        skipped: true,
-        reason: "missing_login",
-      })
-      continue
-    }
-
-    const alreadyEnabled = profile.enabled === true
-    const fallbackGroups = profile.profile?.notify?.fallback_groups || []
-    const alreadyInGroup = fallbackGroups.map(String).includes(resolvedGroupId)
-    profile.enabled = true
-    profile.user ||= {}
-    profile.user.nickname ||= nickname
-    profile.profile ||= {}
-    profile.profile.notify ||= {}
-    profile.profile.notify.fallback_groups ||= []
-    if (!alreadyInGroup) {
-      profile.profile.notify.fallback_groups.push(resolvedGroupId)
-    }
-    if (!alreadyEnabled || !alreadyInGroup) {
-      await saveProfile(profile)
-    }
-    results.push({
-      qq,
-      profileId,
-      nickname,
-      ok: true,
-      registered: true,
-      updated: !alreadyEnabled || !alreadyInGroup,
-      existing: alreadyEnabled && alreadyInGroup,
+    const result = await withProfileWrite(qq, profileId, async () => {
+      const profile = await loadProfileIfExists(qq, profileId, profileStore)
+      if (!profile) return { qq, profileId, nickname, ok: false, skipped: true, reason: "missing_profile" }
+      if (!hasSigninLoginState(profile)) return { qq, profileId, nickname, ok: false, skipped: true, reason: "missing_login" }
+      const alreadyEnabled = profile.enabled === true
+      const fallbackGroups = profile.profile?.notify?.fallback_groups || []
+      const alreadyInGroup = fallbackGroups.map(String).includes(resolvedGroupId)
+      profile.enabled = true
+      profile.user ||= {}
+      profile.user.nickname ||= nickname
+      profile.profile ||= {}
+      profile.profile.notify ||= {}
+      profile.profile.notify.fallback_groups ||= []
+      if (!alreadyInGroup) profile.profile.notify.fallback_groups.push(resolvedGroupId)
+      if (!alreadyEnabled || !alreadyInGroup) await profileStore.saveProfile(profile)
+      return { qq, profileId, nickname, ok: true, registered: true, updated: !alreadyEnabled || !alreadyInGroup, existing: alreadyEnabled && alreadyInGroup }
     })
+    results.push(result)
   }
 
   const updated = results.filter(item => item.updated).length
@@ -92,9 +64,9 @@ export async function registerGroupCheckinProfiles({
   }
 }
 
-async function loadProfileIfExists(qq, profileId) {
+async function loadProfileIfExists(qq, profileId, store) {
   try {
-    return await loadProfile(qq, profileId)
+    return await store.loadProfile(qq, profileId)
   } catch (error) {
     if (error?.code === "ENOENT") return null
     throw error

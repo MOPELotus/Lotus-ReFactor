@@ -4,23 +4,87 @@ import {
   loadLoggedInProfile,
   loadProfile,
   saveProfile,
+  withProfileWrite,
+  getProfileLifetime,
 } from "../config/profile.js"
 import { MihoyoClient } from "../mihoyo/client.js"
 import {
-  buildAccountCookie,
   buildStokenCookie,
+  cookieUidValues,
   parseAccountCookie,
   parseStokenCookie,
+  needsAccountCookieRefresh,
 } from "../mihoyo/cookies.js"
 import {
   normalizeGameRolesFromApi,
   pickCurrentUid,
 } from "../mihoyo/roles.js"
 import { formatLocalIso } from "../time.js"
+import { exchangeStokenCredentials, readStokenCredentials } from "./credentials.js"
+
+const stateKey = Symbol.for("lotus.loginAccount.state")
+const state = globalThis[stateKey] ||= {}
+const refreshes = state.refreshes ||= new Map()
+const accountWrites = state.accountWrites ||= new Map()
+const accountGenerations = state.accountGenerations ||= new Map()
+
+export function getAccountGeneration(qq, profileId = 1) {
+  return generation(`${qq}:${profileId}`)
+}
+
+function generation(key) {
+  return accountGenerations.get(key) || 0
+}
+
+function beginAccountChange(key) {
+  const value = generation(key) + 1
+  accountGenerations.set(key, value)
+  return value
+}
+
+export function accountChangedError(message = "account changed; please repeat the command") {
+  const error = new Error(message)
+  error.code = "LOTUS_ACCOUNT_CHANGED"
+  return error
+}
+
+export function isAccountChangedError(error) {
+  return error?.code === "LOTUS_ACCOUNT_CHANGED"
+}
+
+function assertGeneration(key, expected) {
+  if (generation(key) !== expected) {
+    throw accountChangedError("account changed during login operation; stale result discarded")
+  }
+}
+
+// Serialize account writes across all service instances. Token requests happen
+// outside this lock, so a new login or logout can supersede an in-flight refresh.
+function writeAccount(qq, profileId, operation) {
+  const key = `${qq}:${profileId}`
+  const task = (accountWrites.get(key) || Promise.resolve()).catch(() => {}).then(() => withProfileWrite(qq, profileId, operation))
+  accountWrites.set(key, task)
+  return task.finally(() => {
+    if (accountWrites.get(key) === task) accountWrites.delete(key)
+  })
+}
+
+function matchesAccountUid(account = {}, expected) {
+  const ids = [account.stuid, account.ltuid, ...cookieUidValues(account.cookie), ...cookieUidValues(account.stoken_cookie)]
+    .filter(value => value !== undefined && value !== null && String(value).trim() !== "")
+    .map(value => String(value).trim())
+  return ids.length > 0 && ids.every(uid => uid === String(expected))
+}
+
+function credentialIdentity(account) {
+  return JSON.stringify(readStokenCredentials(account))
+}
 
 export class AccountService {
   constructor(options = {}) {
     this.client = options.client || new MihoyoClient(options)
+    this.preserveLoginSession = options.preserveLoginSession === true
+    this.store = options.store || { ensureProfile, loadLoggedInProfile, loadProfile, saveProfile, listProfileIds }
   }
 
   async saveLoginResult({ qq, profileId = 1, result, nickname = "" } = {}) {
@@ -28,43 +92,92 @@ export class AccountService {
       throw new Error("login result must include stoken and cookie")
     }
 
-    const profile = await ensureProfile({ qq, profileId, nickname })
-    applyLoginResult(profile, result)
-    await this.trySyncGameRoles(profile)
-    await saveProfile(profile)
-    return profile
+    const candidate = {}
+    const needsExchange = needsAccountCookieRefresh({ cookie: result.cookie, stoken_cookie: result.stoken })
+    applyLoginResult(candidate, result)
+    const key = `${qq}:${profileId}`
+    const expected = beginAccountChange(key)
+    const lifetime = getProfileLifetime(qq, profileId)
+    let client = this.client
+    if (needsExchange || needsAccountCookieRefresh(candidate.account)) {
+      if (!this.preserveLoginSession && typeof client.withDevice === "function") {
+        const existing = await this.store.loadProfile?.(qq, profileId).catch(error => {
+          if (error?.code === "ENOENT") return null
+          throw new Error("登录档案读取失败，已保留原档案，请检查后重试")
+        })
+        assertGeneration(key, expected)
+        client = client.withDevice(existing?.device || {})
+      }
+      applyLoginResult(candidate, await exchangeStokenCredentials(client, readStokenCredentials(candidate.account)))
+    }
+    await this.trySyncGameRoles(candidate, client)
+    return writeAccount(qq, profileId, async () => {
+      assertGeneration(key, expected)
+      if (getProfileLifetime(qq, profileId) !== lifetime) throw accountChangedError("profile archived during login operation; stale result discarded")
+      const profile = await this.store.ensureProfile({ qq, profileId, nickname })
+      assertGeneration(key, expected)
+      // Role lists belong to the MYS identity, not to the QQ/profile slot.
+      // An unavailable role API must not bridge the previous account's UIDs
+      // using a newly confirmed account's cookie.
+      const sameAccount = matchesAccountUid(profile.account, candidate.account.stuid)
+      const currentUid = sameAccount ? profile.account.current_uid : {}
+      profile.account = {
+        ...profile.account,
+        ...(!sameAccount ? { game_roles: { gs: [], sr: [], zzz: [] } } : {}),
+        ...candidate.account,
+      }
+      if (candidate.account.roles_updated_at) delete profile.account.role_sync_error
+      profile.account.current_uid = pickCurrentUid(profile.account.game_roles, currentUid)
+      await this.store.saveProfile(profile)
+      return profile
+    })
   }
 
   async get(qq, profileId = 1) {
-    return loadLoggedInProfile(qq, profileId)
+    return this.store.loadLoggedInProfile(qq, profileId)
   }
 
   async refresh(qq, profileId = 1) {
-    const profile = await loadLoggedInProfile(qq, profileId)
-    const account = profile.account || {}
-    if (!account.stuid || !account.stoken) {
-      throw new Error(`profile ${profileId} has no stoken`)
+    const accountKey = `${qq}:${profileId}`
+    const expected = generation(accountKey)
+    const key = `${accountKey}:${expected}`
+    if (refreshes.has(key)) return refreshes.get(key)
+    const operation = this.refreshCredentials(qq, profileId, expected)
+    refreshes.set(key, operation)
+    try {
+      return await operation
+    } finally {
+      if (refreshes.get(key) === operation) refreshes.delete(key)
     }
+  }
 
-    const res = await this.client.getCookieTokenByStoken({
-      stuid: account.stuid,
-      stoken: account.stoken,
-      mid: account.mid,
+  async refreshCredentials(qq, profileId, expected = generation(`${qq}:${profileId}`)) {
+    const key = `${qq}:${profileId}`
+    const lifetime = getProfileLifetime(qq, profileId)
+    const original = await this.store.loadLoggedInProfile(qq, profileId)
+    assertGeneration(key, expected)
+    const identity = credentialIdentity(original.account)
+    const client = this.client.withDevice?.(original.device || {}) || this.client
+    const result = await exchangeStokenCredentials(client, readStokenCredentials(original.account))
+    const candidate = {}
+    applyLoginResult(candidate, result)
+    await this.trySyncGameRoles(candidate, client)
+    return writeAccount(qq, profileId, async () => {
+      // Keep settings changed while token exchange or role lookup was running.
+      assertGeneration(key, expected)
+      if (getProfileLifetime(qq, profileId) !== lifetime) throw accountChangedError("profile archived during token refresh; stale result discarded")
+      const latest = await this.store.loadLoggedInProfile(qq, profileId)
+      assertGeneration(key, expected)
+      if (credentialIdentity(latest.account) !== identity) {
+        throw accountChangedError("account changed during token refresh; stale result discarded")
+      }
+      const currentUid = latest.account.current_uid
+      latest.account = { ...latest.account, ...candidate.account }
+      if (candidate.account.roles_updated_at) delete latest.account.role_sync_error
+      latest.account.current_uid = pickCurrentUid(latest.account.game_roles, currentUid)
+      await this.store.saveProfile(latest)
+      return latest
     })
-    const cookieToken = res?.data?.cookie_token
-    if (!cookieToken) {
-      throw new Error(res?.message || "cookie_token refresh failed")
-    }
-
-    profile.account.cookie = buildAccountCookie({
-      ltuid: account.ltuid || account.stuid,
-      ltoken: account.ltoken,
-      cookieToken,
-    })
-    profile.account.updated_at = formatLocalIso()
-    await this.trySyncGameRoles(profile)
-    await saveProfile(profile)
-    return profile
   }
 
   async refreshAll(qq, profileIds = [1]) {
@@ -88,31 +201,48 @@ export class AccountService {
   }
 
   async syncGameRoles(qq, profileId = 1) {
-    const profile = await loadLoggedInProfile(qq, profileId)
-    await this.hydrateGameRoles(profile)
-    await saveProfile(profile)
-    return profile
+    const lifetime = getProfileLifetime(qq, profileId)
+    const original = await this.store.loadLoggedInProfile(qq, profileId)
+    const candidate = structuredClone(original)
+    await this.hydrateGameRoles(candidate)
+    return writeAccount(qq, profileId, async () => {
+      if (getProfileLifetime(qq, profileId) !== lifetime) throw accountChangedError("profile archived during role sync; stale result discarded")
+      const latest = await this.store.loadLoggedInProfile(qq, profileId)
+      if (credentialIdentity(latest.account) !== credentialIdentity(original.account)) {
+        throw accountChangedError("account changed during role sync; stale result discarded")
+      }
+      latest.account.game_roles = candidate.account.game_roles
+      latest.account.current_uid = pickCurrentUid(candidate.account.game_roles, latest.account.current_uid)
+      latest.account.roles_updated_at = candidate.account.roles_updated_at
+      delete latest.account.role_sync_error
+      await this.store.saveProfile(latest)
+      return latest
+    })
   }
 
   async clearLogin(qq, profileId = 1) {
-    const profile = await loadLoggedInProfile(qq, profileId)
-    clearAccountSecrets(profile)
-    await saveProfile(profile)
-    return profile
+    const key = `${qq}:${profileId}`
+    beginAccountChange(key)
+    return writeAccount(qq, profileId, async () => {
+      const profile = await this.store.loadLoggedInProfile(qq, profileId)
+      clearAccountSecrets(profile)
+      await this.store.saveProfile(profile)
+      return profile
+    })
   }
 
   async listSummaries(qq) {
-    const ids = await listProfileIds(qq)
+    const ids = await this.store.listProfileIds(qq)
     const profiles = []
     for (const profileId of ids) {
-      profiles.push(await loadProfile(qq, profileId))
+      profiles.push(await this.store.loadProfile(qq, profileId))
     }
     return profiles
   }
 
-  async trySyncGameRoles(profile) {
+  async trySyncGameRoles(profile, client = this.client) {
     try {
-      await this.hydrateGameRoles(profile)
+      await this.hydrateGameRoles(profile, client)
     } catch (error) {
       profile.account.role_sync_error = error.message || String(error)
       profile.account.roles_updated_at = ""
@@ -120,13 +250,13 @@ export class AccountService {
     return profile
   }
 
-  async hydrateGameRoles(profile) {
-    if (typeof this.client.getAllGameRolesByCookie !== "function") return profile
+  async hydrateGameRoles(profile, client = this.client) {
+    if (typeof client.getAllGameRolesByCookie !== "function") return profile
 
     const cookie = profile?.account?.cookie
     if (!cookie) throw new Error("profile has no cookie")
 
-    const res = await this.client.getAllGameRolesByCookie(cookie)
+    const res = await client.getAllGameRolesByCookie(cookie)
     if (res?.retcode !== 0) {
       throw new Error(res?.message || "game role sync failed")
     }
@@ -143,8 +273,12 @@ export class AccountService {
 export function applyLoginResult(profile, result) {
   const stoken = parseStokenCookie(result.stoken)
   const cookie = parseAccountCookie(result.cookie)
-  const stuid = stoken.stuid || cookie.ltuid
-  const ltoken = stoken.ltoken || cookie.ltoken
+  const credentials = readStokenCredentials({ stoken_cookie: result.stoken, cookie: result.cookie })
+  const stuid = credentials.stuid || stoken.stuid || cookie.ltuid
+  if (!stoken.stoken || !stuid || (cookie.ltuid && String(cookie.ltuid) !== String(stuid))) {
+    throw new Error("login result account id mismatch or missing stoken")
+  }
+  const ltoken = cookie.ltoken || stoken.ltoken
   const ltuid = cookie.ltuid || stuid
 
   profile.account = {
@@ -153,13 +287,13 @@ export function applyLoginResult(profile, result) {
     stuid,
     stoken: stoken.stoken,
     ltoken,
-    mid: stoken.mid,
+    mid: stoken.mid || cookie.mid,
     cookie: result.cookie,
     stoken_cookie: buildStokenCookie({
       stuid,
       stoken: stoken.stoken,
       ltoken,
-      mid: stoken.mid,
+      mid: stoken.mid || cookie.mid,
     }),
     updated_at: formatLocalIso(),
   }

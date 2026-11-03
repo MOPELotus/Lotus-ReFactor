@@ -1,8 +1,9 @@
 import { requestJson } from "../http.js"
-import { captchaFail, captchaOk } from "../result.js"
+import { captchaFail, captchaOk, captchaVersion, hasCaptchaV4Response } from "../result.js"
 
 export const visionAiProvider = {
   name: "vision_ai",
+  supportedVersions: [3],
 
   isAvailable(config = {}) {
     return config.enable === true && Boolean(config.api)
@@ -10,6 +11,9 @@ export const visionAiProvider = {
 
   async solve(challenge, config = {}, context = {}) {
     const started = Date.now()
+    if (captchaVersion(challenge) === 4) {
+      return captchaFail(this.name, "unsupported_captcha_version", { skipped: true, retryable: false })
+    }
     if (!this.isAvailable(config)) {
       return captchaFail(this.name, "provider_unconfigured", { skipped: true })
     }
@@ -33,9 +37,10 @@ export const visionAiProvider = {
         timeoutMs: config.timeout_ms || 60000,
       }, context)
 
+      if (hasCaptchaV4Response(response)) return captchaFail(this.name, "captcha_result_version_mismatch", { retryable: true, challengeRefresh: true, costMs: Date.now() - started, raw: response })
       const validate = extractValidate(response)
       if (!validate) {
-        return captchaFail(this.name, response?.message || "no_validate", {
+        return captchaFail(this.name, "no_validate", {
           retryable: true,
           costMs: Date.now() - started,
           raw: response,
@@ -50,7 +55,8 @@ export const visionAiProvider = {
         raw: response,
       })
     } catch (error) {
-      return captchaFail(this.name, error.message || "request_failed", {
+      return captchaFail(this.name, error?.name === "AbortError" ? "timeout" : "request_failed", {
+        raw: error,
         retryable: true,
         costMs: Date.now() - started,
       })

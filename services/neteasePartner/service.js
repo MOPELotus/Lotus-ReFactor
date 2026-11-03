@@ -1,12 +1,22 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { randomUUID } from "node:crypto"
 import YAML from "yaml"
 import { resolveData } from "../../core/path.js"
 import { formatLocalIso } from "../../core/time.js"
 import QRCode from "qrcode"
 import { TuneWeaveService } from "../tuneweave/service.js"
+import { saveMusicAccount } from "../music/accounts.js"
 
 let taskRunning = null
+const accountWrites = new Map()
+
+async function readAccounts(file) {
+  try {
+    const data = YAML.parse(await fs.readFile(file, "utf8")) || {}
+    return Array.isArray(data.accounts) ? data.accounts : []
+  } catch (error) { if (error.code === "ENOENT") return []; throw error }
+}
 
 export class NeteasePartnerService {
   constructor(options = {}) {
@@ -23,19 +33,22 @@ export class NeteasePartnerService {
     await this.tuneweave.requireReady()
     const alias = `lotus-nep-${String(qq).replace(/[^a-zA-Z0-9_-]/g, "_")}`
     const qr = await this.tuneweave.request("/v1/auth/qr", {
-      method: "POST", body: { platform: "netease", account: alias, credential_mode: "server" },
+      method: "POST", body: { platform: "netease", account: alias, credential_mode: "both" },
     })
     if (!qr.transaction_id || !qr.url) throw new Error("TuneWeave 未返回完整登录二维码。")
     return { key: qr.transaction_id, alias, qrimg: qr.image_data_url || await QRCode.toDataURL(qr.url) }
   }
 
-  async waitQrLogin({ key, alias, qq, timeoutMs = 300000, pollMs = 3000 } = {}) {
+  async waitQrLogin({ key, alias, qq, timeoutMs = 300000, pollMs = 3000, signal } = {}) {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
+      if (signal?.aborted) throw new Error("网易云扫码登录已取消")
       const result = await this.tuneweave.request(`/v1/auth/qr/${encodeURIComponent(key)}`)
+      if (signal?.aborted) throw new Error("网易云扫码登录已取消")
       if (result.state === "confirmed") {
         if (!result.profile?.authenticated || !result.profile.user_id) throw new Error("TuneWeave 登录未核验账号身份。")
         const account = await this.saveAccount({ uid: result.profile.user_id, nickname: result.profile.nickname, qq, tuneweave_account: alias })
+        await saveMusicAccount("netease", { alias, uid: account.uid, nickname: account.nickname, credential: result.caller_credential?.value || "" })
         return { ok: true, account }
       }
       if (["expired", "failed", "verification_required"].includes(result.state)) throw new Error("二维码已过期或需要额外验证，请重新登录。")
@@ -49,7 +62,7 @@ export class NeteasePartnerService {
     if (!account.cookie) throw new Error("请先使用 #合伙人登录。")
     const profile = await this.tuneweave.request("/v1/account?platform=netease&account=default")
     if (!profile?.authenticated || !profile.user_id || (account.uid && String(profile.user_id) !== String(account.uid))) throw new Error("旧账号与 TuneWeave 默认账号不一致，请使用 #合伙人登录。")
-    return this.saveAccount({ ...account, uid: profile.user_id, nickname: profile.nickname || account.nickname, tuneweave_account: "default" })
+    return this.saveAccount({ ...account, uid: profile.user_id, nickname: profile.nickname || account.nickname, tuneweave_account: "default" }, { onlyIfLegacy: true })
   }
 
   async partnerApi(account, uri, data = {}, crypto = "weapi") {
@@ -57,36 +70,49 @@ export class NeteasePartnerService {
   }
 
   async loadAccounts() {
-    try {
-      const raw = await fs.readFile(this.accountsFile, "utf8")
-      const data = YAML.parse(raw) || {}
-      return Array.isArray(data.accounts) ? data.accounts : []
-    } catch (error) {
-      if (error?.code === "ENOENT") return []
-      throw error
-    }
+    const file = path.resolve(this.accountsFile)
+    await accountWrites.get(file)?.catch(() => {})
+    return readAccounts(file)
   }
 
-  async saveAccount(account) {
-    const accounts = await this.loadAccounts()
-    const normalized = {
-      uid: String(account.uid || ""),
-      nickname: account.nickname || "网易云账号",
-      qq: String(account.qq || ""),
-      extraCount: Number(account.extraCount ?? 9999),
-      comment: account.comment !== false,
-      tuneweave_account: account.tuneweave_account || "",
-      updated_at: formatLocalIso(this.now()),
-    }
-    const index = accounts.findIndex(item => (String(item.uid) === String(normalized.uid) && normalized.uid) || (normalized.tuneweave_account && item.tuneweave_account === normalized.tuneweave_account))
-    if (index >= 0) accounts[index] = { ...accounts[index], ...normalized }
-    else accounts.push(normalized)
-    for (const item of accounts) { if (item.tuneweave_account) delete item.cookie }
+  saveAccount(account, { onlyIfLegacy = false } = {}) {
+    const file = path.resolve(this.accountsFile)
+    const task = (accountWrites.get(file) || Promise.resolve()).catch(() => {}).then(async () => {
+      let accounts = await readAccounts(file)
+      const uid = String(account.uid || "")
+      // Preferences belong to the authenticated UID, not to the QR alias. An
+      // owner can reuse an alias to log in to a different NetEase account.
+      const existing = accounts.find(item => uid && String(item.uid) === uid)
+      // A delayed background migration must not undo a newer explicit QR login.
+      if (onlyIfLegacy && existing?.tuneweave_account) return existing
+      const normalized = {
+        uid,
+        nickname: account.nickname || "网易云账号",
+        qq: String(account.qq || ""),
+        extraCount: Number(account.extraCount ?? existing?.extraCount ?? 9999),
+        comment: account.comment === undefined ? existing?.comment !== false : account.comment !== false,
+        tuneweave_account: Object.hasOwn(account, "tuneweave_account") ? account.tuneweave_account || "" : existing?.tuneweave_account || "",
+        updated_at: formatLocalIso(this.now()),
+      }
+      // Remove the previous UID entry and any account whose alias has just
+      // been replaced. Keeping either could execute tasks twice or against
+      // an alias that now authenticates a different UID.
+      accounts = accounts.filter(item => !(uid && String(item.uid) === uid) &&
+        !(normalized.tuneweave_account && item.tuneweave_account === normalized.tuneweave_account))
+      accounts.push({ ...existing, ...normalized })
+      for (const item of accounts) { if (item.tuneweave_account) delete item.cookie }
 
-    await fs.mkdir(path.dirname(this.accountsFile), { recursive: true })
-    await fs.writeFile(this.accountsFile, YAML.stringify({ accounts }), { encoding: "utf8", mode: 0o600 })
-    await fs.chmod(this.accountsFile, 0o600)
-    return normalized
+      await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
+      const temporary = `${file}.${randomUUID()}.tmp`
+      try {
+        await fs.writeFile(temporary, YAML.stringify({ accounts }), { encoding: "utf8", mode: 0o600, flag: "wx" })
+        await fs.rename(temporary, file)
+      } finally { await fs.rm(temporary, { force: true }) }
+      return normalized
+    })
+    accountWrites.set(file, task)
+    void task.finally(() => { if (accountWrites.get(file) === task) accountWrites.delete(file) }).catch(() => {})
+    return task
   }
 
   async executeTask(config = {}, trigger = "手动测试", options = {}) {

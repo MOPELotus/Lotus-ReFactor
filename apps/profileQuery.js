@@ -1,3 +1,4 @@
+import { createRequestCaptchaReporter } from "../core/captcha/notify.js"
 const BasePlugin = globalThis.plugin
 
 import { PERSONAL_QUERY_RULES } from "../core/intercept/personal-query.js"
@@ -7,7 +8,7 @@ import {
   loadProfile,
   profileLoginRequiredMessage,
 } from "../core/config/profile.js"
-import { AccountService } from "../core/login/account.js"
+import { refreshAccountAndSync, isAccountChangedError } from "../core/login/refresh.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { splitProfileSuffix } from "../services/pluginBridge/common.js"
@@ -112,6 +113,7 @@ export class LotusProfileQuery extends BasePlugin {
   }
 
   async runStarRailChallenge() {
+    const onCaptchaEvent = createRequestCaptchaReporter(this.e)
     const parsed = splitProfileSuffix(this.e.msg)
     const profileId = parsed.hasProfileSuffix ? parsed.profileId : 1
     const userId = String(this.e.user_id)
@@ -123,6 +125,7 @@ export class LotusProfileQuery extends BasePlugin {
       command,
       runner: async profile => {
         const result = await this.starRail.queryProfile({
+          onCaptchaEvent,
           profile,
           profileId,
           command,
@@ -181,8 +184,9 @@ export class LotusProfileQuery extends BasePlugin {
 async function refreshProfileBeforeQuery(userId, profileId, profile) {
   if (!profile?.account?.stoken) return profile
   try {
-    return await new AccountService().refresh(userId, profileId)
+    return await refreshAccountAndSync(userId, profileId, { expectedProfile: profile })
   } catch (error) {
+    if (isAccountChangedError(error)) throw error
     logger?.debug?.(`[Lotus-Plugin] profile query pre-refresh skipped: ${error.message}`)
     return profile
   }

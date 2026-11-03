@@ -23,11 +23,10 @@ export class LotusTestNine extends BasePlugin {
 
   async start() {
     if (!await this.canManage()) return true
-    await replyText(this, "[荷花插件]正在启动 test_nine 本地服务，首次会检查 venv 和模型。")
+    await replyText(this, "[荷花插件]正在启动 test_nine 本地服务，首次会检查 JS 依赖和模型。")
     const globalConfig = await loadGlobalConfig()
     const result = await new TestNineServerService({
       config: globalConfig.captcha?.test_nine,
-      pythonConfig: globalConfig.python,
     }).start()
     await replyImage(this, await renderServerStatus("test_nine 服务", result, this.e.user_id), result.ok
       ? "[荷花插件]test_nine 服务已启动。"

@@ -9,9 +9,7 @@ import { resolveData, rootPath } from "../../core/path.js"
 
 const toolInstallations = new Map()
 
-export const BBDOWN_VERSION = "1.6.4"
-
-const TOOL_NAMES = ["bbdown", "ffmpeg", "aria2"]
+const TOOL_NAMES = ["ffmpeg"]
 const DEFAULT_INSTALL_ATTEMPTS = 3
 
 export class ToolInstallerService {
@@ -88,10 +86,7 @@ export class ToolInstallerService {
     const toolsDir = resolveMaybeData(normalized.dir || "data/tools")
     const existing = await findCommandExecutable(tool.command, [binDir], this.platform)
     if (existing) {
-      const version = name === "bbdown" ? await this.readBBDownVersion(existing) : null
-      const health = name === "bbdown" && version !== BBDOWN_VERSION
-        ? { ok: false, reason: `版本 ${version || "未知"}，需要 ${BBDOWN_VERSION}` }
-        : await inspectToolInstall(name, existing, binDir, toolsDir, this.platform)
+      const health = await inspectToolInstall(name, existing, binDir, toolsDir, this.platform)
       if (health.ok) {
         await ensureExecutablePermissions(name, existing, binDir, this.platform)
         await emitProgress(onProgress, `工具链：${name} 已存在`)
@@ -107,8 +102,8 @@ export class ToolInstallerService {
 
     if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
     if (name === "ffmpeg") await removeSharedFfmpegArtifacts(toolsDir)
-    await emitProgress(onProgress, `工具链：查询 ${tool.repo} ${name === "bbdown" ? BBDOWN_VERSION : "最新版本"}`)
-    const release = await this.fetchLatestRelease(tool.repo, normalized.github_api, name === "bbdown" ? BBDOWN_VERSION : null)
+    await emitProgress(onProgress, `工具链：查询 ${tool.repo} 最新版本`)
+    const release = await this.fetchLatestRelease(tool.repo, normalized.github_api, null)
     const asset = pickReleaseAsset(name, release.assets || [], {
       platform: this.platform,
       arch: this.arch,
@@ -133,20 +128,11 @@ export class ToolInstallerService {
         await emitProgress(onProgress, `工具链：下载 ${asset.name}${attempt > 1 ? `（重试 ${attempt}/${attempts}）` : ""}`)
         await this.downloadAsset(asset.browser_download_url || asset.url, archive)
         await emitProgress(onProgress, `工具链：准备 ${asset.name}`)
-        if (name === "bbdown" && !/\.(?:zip|tar\.gz|tar\.xz)$/i.test(asset.name)) {
-          await fs.copyFile(archive, path.join(extractDir, commandFileName(tool.command, this.platform)))
-        } else {
-          await extractArchive(this.spawn, archive, extractDir, { timeoutMs: normalized.timeout_ms })
-        }
+        await extractArchive(this.spawn, archive, extractDir, { timeoutMs: normalized.timeout_ms })
 
         const executable = await findExtractedExecutable(extractDir, tool.command, this.platform)
         if (!executable) throw new Error(`${tool.command} executable not found in ${asset.name}`)
 
-        if (name === "bbdown") {
-          if (this.platform !== "win32") await fs.chmod(executable, 0o755)
-          const version = await this.readBBDownVersion(executable)
-          if (version !== BBDOWN_VERSION) throw new Error(`BBDown 下载版本不匹配：${version || "未知"}`)
-        }
         const target = await copyToolPayload(name, executable, binDir, tool.command, this.platform)
         await emitProgress(onProgress, `工具链：${name} 安装完成`)
 
@@ -168,15 +154,6 @@ export class ToolInstallerService {
       }
     }
     throw new Error(`${lastError?.message || `${tool.command} install failed`}；已自动重试 ${attempts} 次`)
-  }
-
-  async readBBDownVersion(executable) {
-    if (!executable) return ""
-    // 上游 1.6.3 的 --version 会因缺少 URL 失败，--help 同样包含版本号。
-    try {
-      const result = await runSpawn(this.spawn, executable, ["--help"], { timeoutMs: 15000 })
-      return parseBBDownVersion(result.stdout + "\n" + result.stderr)
-    } catch { return "" }
   }
 
   async fetchLatestRelease(repo, api = "https://api.github.com", tag = null) {
@@ -224,23 +201,11 @@ export function normalizeToolsConfig(config = {}) {
     github_api: config.github_api || "https://api.github.com",
     timeout_ms: Number(config.timeout_ms || 300000),
     download_retries: Math.max(1, Number(config.download_retries || DEFAULT_INSTALL_ATTEMPTS)),
-    bbdown: {
-      enable: config.bbdown?.enable !== false,
-      repo: config.bbdown?.repo || "MOPELotus/BBDown",
-      command: config.bbdown?.command || "BBDown",
-      asset_patterns: config.bbdown?.asset_patterns,
-    },
     ffmpeg: {
       enable: config.ffmpeg?.enable !== false,
       repo: config.ffmpeg?.repo || "BtbN/FFmpeg-Builds",
       command: config.ffmpeg?.command || "ffmpeg",
       asset_patterns: config.ffmpeg?.asset_patterns,
-    },
-    aria2: {
-      enable: config.aria2?.enable !== false,
-      repo: config.aria2?.repo || "aria2/aria2",
-      command: config.aria2?.command || "aria2c",
-      asset_patterns: config.aria2?.asset_patterns,
     },
   }
 }
@@ -262,11 +227,6 @@ export function pickReleaseAsset(tool, assets = [], options = {}) {
 export function defaultAssetPatterns(tool, platform = process.platform, arch = process.arch) {
   const os = normalizePlatform(platform)
   const cpu = normalizeArch(arch)
-  if (tool === "bbdown") {
-    const system = os === "windows" ? "(?:win|windows)" : os === "darwin" ? "(?:osx|mac|darwin)" : "linux"
-    const architecture = cpu === "x64" ? "(?:x64|amd64)" : cpu
-    return [new RegExp(`^BBDown.*${system}[-_]${architecture}(?:\\.exe|\\.zip|\\.tar\\.gz)?$`, "i")]
-  }
   if (tool === "ffmpeg") {
     if (os === "windows") return [/ffmpeg(?!.*shared).*win64.*gpl.*\.zip$/i, /ffmpeg(?!.*shared).*windows.*64.*\.zip$/i]
     if (os === "linux") {
@@ -275,11 +235,6 @@ export function defaultAssetPatterns(tool, platform = process.platform, arch = p
         : [/ffmpeg(?!.*shared).*linux64.*gpl.*\.tar\.xz$/i, /ffmpeg(?!.*shared).*linux.*(?:x64|amd64).*\.tar\.xz$/i]
     }
     if (os === "darwin") return [/ffmpeg(?!.*shared).*macos64.*gpl.*\.zip$/i, /ffmpeg(?!.*shared).*(?:mac|darwin).*\.zip$/i]
-  }
-  if (tool === "aria2") {
-    if (os === "windows") return [/aria2.*win.*64.*\.zip$/i, /aria2.*windows.*\.zip$/i]
-    if (os === "linux") return [/aria2.*linux.*(?:x64|amd64).*\.tar\.(?:gz|xz)$/i, /aria2.*linux.*\.zip$/i]
-    if (os === "darwin") return [/aria2.*(?:mac|darwin|osx).*\.zip$/i, /aria2.*(?:mac|darwin|osx).*\.tar\.(?:gz|xz)$/i]
   }
   return [/\.zip$/i, /\.tar\.(?:gz|xz)$/i]
 }
@@ -527,8 +482,4 @@ async function emitProgress(onProgress, message) {
   } catch (error) {
     logger?.debug?.(`[Lotus-Plugin] progress callback failed: ${error.message}`)
   }
-}
-
-export function parseBBDownVersion(output = "") {
-  return String(output).match(/BBDown(?:\s+version)?\s+v?(\d+\.\d+\.\d+)/i)?.[1] || ""
 }

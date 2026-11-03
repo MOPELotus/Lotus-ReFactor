@@ -1,4 +1,6 @@
 import http from "node:http"
+import { MiyousheManagement } from "../miyoushe/management.js"
+import { readPanelConfig, savePanelConfig } from "../panel/config.js"
 import fs from "node:fs/promises"
 import crypto from "node:crypto"
 import { listProfileIds, loadLoggedInProfile, normalizeProfileId } from "../../core/config/profile.js"
@@ -10,6 +12,8 @@ const cookieName = "lotus_coin_shop"
 export class CoinShopWeb {
   constructor(options = {}) {
     this.service = options.service
+    this.miyoushe = options.miyoushe || new MiyousheManagement(options)
+    this.isOwner = options.isOwner || (session => session.owner === true)
     this.loadProfile = options.loadProfile || loadLoggedInProfile
     this.listProfiles = options.listProfiles || listProfileIds
     this.now = options.now || Date.now
@@ -63,12 +67,12 @@ export class CoinShopWeb {
     return { enabled: Boolean(this.server || this.shared), mode: this.shared ? "shared" : "standalone", port, url }
   }
 
-  issueTicket(qq, botId = "") {
+  issueTicket(qq, botId = "", owner = false) {
     if (!this.status().enabled) throw new Error("米游币网页尚未启动，请检查本机 coin_shop 配置")
     this.prune()
     for (const [key, ticket] of this.tickets) if (ticket.qq === String(qq)) this.tickets.delete(key)
     const value = secret()
-    this.tickets.set(digest(value), { qq: String(qq), botId: String(botId), expires: this.now() + 10 * 60000 })
+    this.tickets.set(digest(value), { qq: String(qq), botId: String(botId), owner: owner === true, expires: this.now() + 10 * 60000 })
     return `${this.status().url}#ticket=${value}`
   }
 
@@ -86,13 +90,13 @@ export class CoinShopWeb {
     this.tickets.clear()
   }
 
-  async body(req) {
+  async body(req, limit = 8192) {
     if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) return req.body
     let bytes = 0
     const chunks = []
     for await (const chunk of req) {
       bytes += chunk.length
-      if (bytes > 8192) throw Object.assign(new Error("请求内容过长"), { status: 413 })
+      if (bytes > limit) throw Object.assign(new Error("请求内容过长"), { status: 413 })
       chunks.push(chunk)
     }
     try { return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") }
@@ -142,17 +146,36 @@ export class CoinShopWeb {
         const maxAge = Math.floor(this.config.session_hours * 3600)
         this.sessions.set(digest(sessionId), { ...ticket, csrf, expires: this.now() + maxAge * 1000 })
         res.setHeader("Set-Cookie", `${cookieName}=${sessionId}; Path=${base}/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${this.status().url.startsWith("https:") ? "; Secure" : ""}`)
-        this.json(res, 200, { csrf, qq: ticket.qq, now: this.now() })
+        this.json(res, 200, { csrf, qq: ticket.qq, owner: await this.isOwner(ticket), now: this.now() })
         return
       }
       const value = String(req.headers.cookie || "").split(/;\s*/).find(part => part.startsWith(cookieName + "="))?.slice(cookieName.length + 1)
       const session = value ? this.sessions.get(digest(value)) : null
-      if (!session) throw Object.assign(new Error("请私聊机器人发送 #米游币兑换，获取专属登录链接"), { status: 401 })
+      if (!session) throw Object.assign(new Error("请私聊机器人发送 #米游社功能，获取专属登录链接"), { status: 401 })
       if (mutating && req.headers["x-csrf-token"] !== session.csrf) throw Object.assign(new Error("页面凭证已失效，请刷新页面"), { status: 403 })
-      if (req.method === "GET" && route === "/api/session") { this.json(res, 200, { csrf: session.csrf, qq: session.qq, now: this.now() }); return }
+      if (req.method === "GET" && route === "/api/session") { this.json(res, 200, { csrf: session.csrf, qq: session.qq, owner: await this.isOwner(session), now: this.now() }); return }
       if (req.method === "POST" && route === "/api/logout") {
         this.sessions.delete(digest(value)); res.setHeader("Set-Cookie", `${cookieName}=; Path=${base}/; HttpOnly; SameSite=Strict; Max-Age=0`)
         this.json(res, 200, { ok: true }); return
+      }
+      if (route === "/api/panel/config") {
+        if (!await this.isOwner(session)) throw Object.assign(new Error("只有机器人主人可以管理全局配置"), { status: 403 })
+        if (req.method === "GET") { this.json(res, 200, await readPanelConfig()); return }
+        if (req.method === "POST") { this.json(res, 200, await savePanelConfig(await this.body(req, 65536))); return }
+      }
+      if (route === "/api/miyoushe/captcha" && req.method === "GET") {
+        this.json(res, 200, await this.miyoushe.captchaStatus(session.qq, normalizeProfileId(url.searchParams.get("profile") || 1))); return
+      }
+      if (route === "/api/miyoushe" && req.method === "GET") {
+        this.json(res, 200, await this.miyoushe.overview(session.qq, normalizeProfileId(url.searchParams.get("profile") || 1))); return
+      }
+      if (route === "/api/miyoushe/settings" && req.method === "POST") {
+        const { profileId = 1, settings } = await this.body(req)
+        this.json(res, 200, { settings: await this.miyoushe.settings(session.qq, profileId, settings || {}) }); return
+      }
+      if (route === "/api/miyoushe/run" && req.method === "POST") {
+        const { profileId = 1 } = await this.body(req)
+        this.json(res, 202, await this.miyoushe.run(session.qq, profileId)); return
       }
       if (req.method === "GET" && route === "/api/profiles") {
         const profiles = await Promise.all((await this.listProfiles(session.qq)).map(async id => {

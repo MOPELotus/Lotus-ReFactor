@@ -75,9 +75,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
       enable: true,
       auto_start: true,
       endpoint: "http://127.0.0.1:9645/pass_uni",
-      timeout_ms: 20000,
-      submodule_path: "test_nine",
-      venv_path: "data/python/test_nine_venv",
+      timeout_ms: 60000,
       model_dir: "data/test_nine/model",
       model_repo: "luguoyixiazi/model_save",
       model_files: [
@@ -87,7 +85,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
         "dinov3-small.onnx",
         "atten.onnx",
       ],
-      install_requirements: true,
       download_models: true,
     },
     ttocr: {
@@ -95,8 +92,9 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
       api: "http://api.ttocr.com/api/recognize",
       resapi: "http://api.ttocr.com/api/results",
       key: "",
+      itemid_v4: 488,
       query: "itemid=388&referer=https://webstatic.mihoyo.com/",
-      poll_interval_ms: 1000,
+      poll_interval_ms: 2000,
       timeout_ms: 60000,
     },
     gtmanual: {
@@ -113,11 +111,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
       timeout_ms: 60000,
     },
   },
-  python: {
-    mode: "venv",
-    venv_path: "data/python/venv",
-    system_python: "",
-  },
   tools: {
     auto_install: true,
     dir: "data/tools",
@@ -125,20 +118,10 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     github_api: "https://api.github.com",
     timeout_ms: 300000,
     download_retries: 3,
-    bbdown: {
-      enable: true,
-      repo: "MOPELotus/BBDown",
-      command: "BBDown",
-    },
     ffmpeg: {
       enable: true,
       repo: "BtbN/FFmpeg-Builds",
       command: "ffmpeg",
-    },
-    aria2: {
-      enable: true,
-      repo: "aria2/aria2",
-      command: "aria2c",
     },
   },
   remote: {
@@ -161,7 +144,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     search_limit: 10,
     download: {
       enable: true,
-      use_aria2: true,
+      concurrency: 4,
       tools_path: "data/tools/bin",
       resolution: 64,
       duration_limit_seconds: 3600,
@@ -169,7 +152,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
       max_estimated_size_mb: 0,
       multi_page_policy: "zip",
       timeout_ms: 600000,
-      extra_args: [],
     },
   },
   douyin: {
@@ -198,6 +180,18 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
   tuneweave: {
     api_url: "http://127.0.0.1:7832",
     request_timeout_ms: 30000,
+    auto_update: true,
+    update_delay_ms: 180000,
+  },
+  music: {
+    enable: true,
+    default_platform: "netease",
+    quality: "standard",
+    search_limit: 10,
+    session_timeout_ms: 120000,
+    download_timeout_ms: 180000,
+    max_size_mb: 128,
+    voice_one_second: false,
   },
   netease_partner: {
     enable: false,

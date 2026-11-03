@@ -1,9 +1,10 @@
 import fs from "node:fs/promises"
+import { ensureGeneratedProfileDevices } from "./core/devices/generated-profile.js"
+import { startGeneratedDeviceFpRefresh } from "./core/devices/runtime.js"
 import { installLotusRuntimeInterception } from "./services/intercept/runtime.js"
 import { ensureGlobalConfig } from "./core/config/global.js"
-import { autoStartTestNineServer } from "./services/testNine/server.js"
+import { startLoginCredentialRepair } from "./core/login/runtime.js"
 import { checkTrackedSubmoduleRemoteUpdates, syncTrackedSubmodules } from "./services/pluginUpdate/service.js"
-import { scheduleBBDownStartupUpdate } from "./services/tools/startup.js"
 
 const pluginName = "Lotus-Plugin"
 const appsDir = new URL("./apps/", import.meta.url)
@@ -18,15 +19,17 @@ await ensureGlobalConfig().then(result => {
   logger?.warn?.(`[${pluginName}] global config init skipped: ${error.message}`)
 })
 
-void scheduleBBDownStartupUpdate(startupConfig).catch(error => {
-  logger?.warn?.(`[${pluginName}] BBDown startup check failed: ${error.message}`)
-})
-
 // 只检查并通知，不在开机阶段自动改写子仓库，避免隐藏更新或阻塞启动。
 void checkTrackedSubmoduleRemoteUpdates({ config: startupConfig }).then(result => {
   if (result.updates?.length) logger?.warn?.(`[${pluginName}] ${result.message}`)
 }).catch(error => {
   logger?.debug?.(`[${pluginName}] submodule remote check skipped: ${error.message}`)
+})
+
+await ensureGeneratedProfileDevices().then(result => {
+  if (result.generated || result.failed || result.invalid) logger?.info?.(`[${pluginName}] 设备初始化：${result.generated} 个虚拟设备已保存，${result.failed + result.invalid} 个档案暂未处理`)
+}).catch(() => {
+  logger?.warn?.(`[${pluginName}] 虚拟设备初始化暂不可用，已保留原档案`)
 })
 
 await installLotusRuntimeInterception().catch(error => {
@@ -43,9 +46,8 @@ await syncTrackedSubmodules().then(result => {
   logger?.debug?.("[" + pluginName + "] submodule sync skipped: " + error.message)
 })
 
-autoStartTestNineServer().catch(error => {
-  logger?.warn?.(`[${pluginName}] test_nine auto start failed: ${error.message}`)
-})
+startLoginCredentialRepair()
+startGeneratedDeviceFpRefresh()
 
 const files = await fs.readdir(appsDir).catch(err => {
   logger?.error?.(`[${pluginName}] failed to read apps directory`)

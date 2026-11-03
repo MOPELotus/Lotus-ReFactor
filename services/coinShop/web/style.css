@@ -485,6 +485,7 @@ dialog::backdrop {
   font-size:18px
 }
 #toast {
+  pointer-events:none;
   position:fixed;
   bottom:25px;
   left:50%;
@@ -626,3 +627,8 @@ dialog::backdrop {
 .site-footer { margin: 12px auto 0; padding: 0 24px 24px; }
 .site-footer:empty { display: none; }
 .site-footer a:hover { text-decoration: underline; }
+
+.overview-view{padding:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.overview-view[hidden]{display:none}.overview-section{border:1px solid var(--line);border-radius:16px;padding:22px;background:white}.overview-section h2{margin-top:0}.overview-section form{width:100%}.mission-row{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}.complete{color:var(--accent)}.option-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}.option-field{display:flex;align-items:center;gap:9px}.option-field input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}.panel-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;width:100%;grid-column:1/-1}.panel-group{grid-column:1/-1}.panel-form .field{align-items:stretch}.panel-form textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px}.tabs{flex-wrap:wrap}#settings-view>h2,#settings-view>p{grid-column:1/-1}@media(max-width:760px){.overview-view,.panel-form{grid-template-columns:1fr}.overview-view{padding:12px}.overview-section{padding:16px}.option-grid{grid-template-columns:1fr 1fr}}
+.overview-view{align-items:start}.panel-section{grid-column:1/-1;border:1px solid var(--line);border-radius:12px;background:white;padding:16px}.panel-section summary{font-size:16px;font-weight:650;cursor:pointer}.panel-section .panel-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-top:20px}.panel-form input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}@media(max-width:760px){.panel-section .panel-fields{grid-template-columns:1fr}.overview-section .section-head{flex-wrap:wrap;gap:10px}.overview-section .section-head button{flex:1;min-width:130px}}
+
+.captcha-event{padding:12px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}.captcha-event p{margin:6px 0 10px}.captcha-manual-link{display:inline-block;border-radius:8px;padding:10px 14px;background:var(--accent);color:white;text-decoration:none;font-weight:600}.captcha-manual-link:hover{filter:brightness(.92)}

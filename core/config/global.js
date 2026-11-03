@@ -77,14 +77,19 @@ export function migrateGlobalConfig(config = {}) {
 
   const base = createDefaultGlobalConfig()
   const normalizedConfig = normalizeLegacyGlobalShape(config)
+  delete normalizedConfig.python
+  if (normalizedConfig.tools) { delete normalizedConfig.tools.bbdown; delete normalizedConfig.tools.aria2 }
+  if (normalizedConfig.bilibili?.download) { delete normalizedConfig.bilibili.download.use_aria2; delete normalizedConfig.bilibili.download.extra_args }
+  if (normalizedConfig.captcha?.test_nine) {
+    delete normalizedConfig.captcha.test_nine.venv_path
+    delete normalizedConfig.captcha.test_nine.submodule_path
+    delete normalizedConfig.captcha.test_nine.install_requirements
+  }
   const legacyPermissions = findLegacyPermissionControl(normalizedConfig)
   const hasExplicitPermissions = Object.prototype.hasOwnProperty.call(normalizedConfig, "permissions")
   const patch = {
     ...normalizedConfig,
     version: CURRENT_GLOBAL_CONFIG_VERSION,
-  }
-  if (patch.tools?.bbdown?.repo === "nilaoda/BBDown") {
-    patch.tools = { ...patch.tools, bbdown: { ...patch.tools.bbdown, repo: "MOPELotus/BBDown" } }
   }
   if (legacyPermissions) {
     patch.permissions = hasExplicitPermissions
@@ -180,7 +185,7 @@ function normalizeLegacyBilibili(input = {}, externalTools = {}) {
   if (typeof input.sessData !== "undefined" && typeof next.sessdata === "undefined") {
     next.sessdata = input.sessData
   }
-  if (typeof input.useAria2 !== "undefined") download.use_aria2 = Boolean(input.useAria2)
+  delete next.useAria2
   if (typeof input.resolution !== "undefined") download.resolution = Number(input.resolution)
   if (typeof input.durationLimit !== "undefined") download.duration_limit_seconds = Number(input.durationLimit)
   if (typeof input.videoSizeLimit !== "undefined") download.video_size_limit_mb = Number(input.videoSizeLimit)

@@ -4,6 +4,7 @@ import {
   normalizeProfileId,
   parseProfileIdFromMessage,
   saveProfile,
+  withProfileWrite,
 } from "./profile.js"
 
 const GAME_KEYS = {
@@ -43,7 +44,7 @@ const ROLE_GAME_KEYS = {
   zzz: "zzz",
 }
 
-export async function updateProfileSettings({ e, message, nickname = "" } = {}) {
+export async function updateProfileSettings({ e, message, nickname = "", store = {} } = {}) {
   const userId = String(e?.user_id || "")
   const profileId = parseProfileIdFromSettingsMessage(message)
   const action = parseProfileSettingsCommand(message)
@@ -52,30 +53,34 @@ export async function updateProfileSettings({ e, message, nickname = "" } = {}) 
     return { ok: false, reason: "group_required", profile: null, profileId }
   }
 
-  const profile = await loadLoggedInProfile(userId, profileId)
-  if (nickname && !profile.user?.nickname) {
-    profile.user ||= {}
-    profile.user.nickname = nickname
-  }
-
-  applyProfileSettingsAction(profile, action)
-  if (action.type === "registerGroup" && e?.group_id) {
-    profile.profile.notify.fallback_groups ||= []
-    const groupId = String(e.group_id)
-    if (!profile.profile.notify.fallback_groups.map(String).includes(groupId)) {
-      profile.profile.notify.fallback_groups.push(groupId)
+  const profileStore = { loadLoggedInProfile, saveProfile, listProfileIds, ...store }
+  const profile = await withProfileWrite(userId, profileId, async () => {
+    const profile = await profileStore.loadLoggedInProfile(userId, profileId)
+    if (nickname && !profile.user?.nickname) {
+      profile.user ||= {}
+      profile.user.nickname = nickname
     }
-  }
-  if (action.type === "bindNotifyGroup" && e?.group_id) {
-    action.groupId = String(e.group_id)
-    profile.profile.notify.fallback_groups = [action.groupId]
-  }
-  if (action.type === "notify" && action.prefer === "group" && e?.group_id) {
-    action.groupId = String(e.group_id)
-    profile.profile.notify.fallback_groups = [action.groupId]
-  }
-  await saveProfile(profile)
-  const profiles = await listProfileIds(userId)
+
+    applyProfileSettingsAction(profile, action)
+    if (action.type === "registerGroup" && e?.group_id) {
+      profile.profile.notify.fallback_groups ||= []
+      const groupId = String(e.group_id)
+      if (!profile.profile.notify.fallback_groups.map(String).includes(groupId)) {
+        profile.profile.notify.fallback_groups.push(groupId)
+      }
+    }
+    if (action.type === "bindNotifyGroup" && e?.group_id) {
+      action.groupId = String(e.group_id)
+      profile.profile.notify.fallback_groups = [action.groupId]
+    }
+    if (action.type === "notify" && action.prefer === "group" && e?.group_id) {
+      action.groupId = String(e.group_id)
+      profile.profile.notify.fallback_groups = [action.groupId]
+    }
+    await profileStore.saveProfile(profile)
+    return profile
+  })
+  const profiles = await profileStore.listProfileIds(userId)
   return {
     ok: true,
     action,

@@ -12,43 +12,66 @@
 
 - `data/users/<qq>.yaml`
 - `data/users/<qq>-2.yaml`
-- `data/python/`
+- `data/test_nine/model/`
 - `data/tools/`
+- `data/tuneweave/`
 - `data/atlas/`
 
 这些目录不应提交。
 
-## 签到环境
+## 统一初始化
 
 发送：
 
 ```text
-#初始化签到环境
+#初始化环境
 ```
 
 会检查并准备：
 
-- `data/python/venv`
-- `MihoyoBBSTools` 子模块依赖
-- `data/python/test_nine_venv`
-- `test_nine` 服务依赖
+- Node.js 的 ONNX Runtime 与 Sharp
 - `data/test_nine/model`
-- BBDown、ffmpeg、aria2 工具链
+- TuneWeave（音乐、视频和合伙人共用一个实例）
+- FFmpeg 工具链（含 ffprobe）
 
-默认使用 venv，不污染系统 Python。高级用户可以在全局配置里切换为 system Python。
+签到和验证码均由 JavaScript 执行，无需安装 Python、pip 或虚拟环境。本地验证码在 worker 中运行，模型保存于 `data/test_nine/model`；默认验证码顺序仍是本地 test_nine → 外部 ttocr → 人工 gtmanual；ttocr 填好接口、key 并启用后才会参与回退，未配置时跳过。
 
-## 下载工具
+`test_nine.auto_start: false` 只关闭本地服务的自动管理与模型自动准备，不改变 `captcha.providers` 回退链；仍可连接配置的 test_nine 接口。`test_nine.enable: false` 才会跳过该识别方案。手动启动本地服务时仍会检查模型。`tools.auto_install: false` 时跳过 TuneWeave 和 FFmpeg 自动下载。全局环境初始化使用 `tools.install` 权限，默认仅机器人主人可执行。
 
-发送：
+旧 `#初始化签到环境`、`#初始化工具环境` 都是 `#初始化环境` 的兼容别名，执行同一个流程，不再分成两套初始化。FFmpeg 准备完整编译包，包括 ffprobe；损坏或不完整的安装会重新准备。
 
-```text
-#初始化工具环境
-```
+## TuneWeave 开机更新
 
-会按系统和架构准备 BBDown、ffmpeg、aria2。B 站下载只保留 BBDown 路径，不再提供“是否使用 BBDown”的开关。
+插件当前最低要求为 **1.0.0-beta.2**。启动时先恢复已初始化的本机服务，默认 **三分钟后**检查版本。低于要求时给主人发私聊通知，下载满足要求的官方发布包并校验 SHA-256，再替换程序、自动重启并确认版本、健康与必要能力。更新成功或失败都会通知；下载或校验失败保留旧服务，新版启动失败尝试恢复旧程序并重新启动。账户目录和原有配置不会被覆盖。
 
-ffmpeg 会下载完整编译包，而不是只拷贝 `ffmpeg` 一个文件；Windows 会识别 `.exe`，Linux/macOS 会识别无后缀可执行文件。解压后会把 BBDown、ffmpeg、ffprobe、ffplay、aria2c 等可执行文件加入插件工具目录，并在非 Windows 系统上自动补 `chmod +x`。
+自动更新只操作进程记录及程序路径核验一致的本机托管实例；远程或其他部署方管理的实例只提示升级，不自动停止。已经达到最低要求的版本不会重复下载或降级。手动 `#初始化环境` 遇到低版本时立即执行同样的更新，不等待开机计时。
 
-如果下载目录里存在不完整 shared 包、损坏压缩包或 `.part` 临时文件，初始化会按损坏状态重新下载并修复。
+锅巴和荷花面板共用 `tuneweave.auto_update`（默认开启）、`tuneweave.update_delay_ms`（默认 180000 毫秒）。关闭 `tools.auto_install` 也会暂停开机自动更新。插件热更新会清理旧计时器，避免重复触发。
 
-更多说明见 [工具链-BBDown/ffmpeg/aria2](features/tools.md)。
+## 旧版升级后的后台准备
+
+开机维护与上述三分钟计时器共用同一个任务。延迟后按当前配置补齐本地 JS 验证码模型、启动本地验证码服务，并检查 TuneWeave、FFmpeg；初始化前后私聊通知主人。已有模型和工具直接复用，手动初始化与后台准备共享下载和服务锁。失败项目会报告，最多执行三次，重试间隔五分钟；也可发送 `#初始化环境`，不会永久阻塞机器人启动。主人通知失败不影响准备过程。
+
+关闭 `tuneweave.auto_update` 仅跳过 TuneWeave 后台维护，不阻止模型和 FFmpeg 准备。关闭 `tools.auto_install` 跳过 TuneWeave、FFmpeg，模型仍遵守自身的 `enable`、`auto_start`、`download_models`。远程验证码地址不会被当成本地监听器启动，也不为它下载本机模型；外部 TuneWeave 服务由原部署者维护。首次升级在后台准备完成前，可按既有验证码回退链处理请求。
+
+新环境检查及本地服务启动成功后，仅可能清理默认 `data/python/test_nine_venv`：必须同时存在旧插件生成的完整 `lotus-test-nine-fingerprint.json` 和 `pyvenv.cfg`，目录不经过符号链接，且 Linux 进程检查确认没有程序使用。目录仍被当前配置引用、进程仍在运行、无法检查进程或无法确认归属时，全部保留。取消或热更新会等正在执行的准备任务退出，再建立新任务。
+
+自定义虚拟环境、模型目录、账号、配置及外部服务不会删除。旧 BBDown/aria2 目录缺少足以证明归属的托管清单，自动维护保守保留，不会按文件名猜测并删除。
+
+如果旧 Python 服务仍占用本地验证码端口，新服务会报告端口冲突并跳过，保留原进程和虚拟环境；不会为接管端口而停止未知进程。请确认占用者后停止旧服务，再发送 `#启动testnine服务`，或等待下一次后台重试。
+
+更多说明见 [工具链-TuneWeave/FFmpeg](features/tools.md)。
+
+## 下载清单
+
+| 入口 | 会准备的内容 |
+| --- | --- |
+| `pnpm install` | Node 依赖：ONNX Runtime、Sharp、Skia 等；不安装 Python、venv 或 Rust 工具链 |
+| `#初始化环境`（兼容原签到、工具入口） | 本地验证码五个 ONNX 模型、TuneWeave 发布包和 FFmpeg 完整包 |
+| `#初始化TuneWeave` | 保留的单独入口，只准备 TuneWeave；与总初始化使用同一份程序和服务 |
+| `#启动testnine服务` | 检查本地模型，缺失且允许自动下载时补齐，然后启动 JS 服务 |
+| `#全量更新图鉴` | 调用 nanoka 后端抓取图鉴数据与对应图片；不包含在工具初始化中 |
+
+按本机当前文件估算：验证码模型合计约 **176.5 MiB**；TuneWeave beta.2 的 Linux x64 发布包约 **22.8 MiB**。上述两项合计约 **199.3 MiB**，还需另计 FFmpeg、Node 依赖、子模块源码、图鉴及其他运行资源。不同平台、版本及图鉴范围的体积不同，不能用该数字作为所有安装方式的总下载量。
+
+验证码五个模型是 `PP-HGNetV2-B4.onnx`、`d-fine-n.onnx`、`yolo11n.onnx`、`dinov3-small.onnx` 和 `atten.onnx`。已有可用模型和工具会复用；远程 TuneWeave 实例不由插件下载安装。运行时另有背景、头像、封面等按需网络请求。

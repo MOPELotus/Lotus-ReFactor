@@ -7,7 +7,7 @@ import {
   normalizeProfileId,
   profileLoginRequiredMessage,
 } from "../core/config/profile.js"
-import { AccountService } from "../core/login/account.js"
+import { refreshAccountAndSync, isAccountChangedError } from "../core/login/refresh.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { splitProfileSuffix } from "../services/pluginBridge/common.js"
@@ -92,8 +92,9 @@ export function splitStarRailTeamDamageProfile(message = "") {
 async function refreshProfileBeforeQuery(userId, profileId, profile) {
   if (!profile?.account?.stoken) return profile
   try {
-    return await new AccountService().refresh(userId, profileId)
+    return await refreshAccountAndSync(userId, profileId, { expectedProfile: profile })
   } catch (error) {
+    if (isAccountChangedError(error)) throw error
     logger?.debug?.(`[Lotus-Plugin] starrail team damage pre-refresh skipped: ${error.message}`)
     return profile
   }

@@ -1,8 +1,9 @@
 import { requestJson, withQuery } from "../http.js"
-import { captchaFail, captchaOk } from "../result.js"
+import { captchaFail, captchaOk, captchaVersion, hasCaptchaV4Response } from "../result.js"
 
 export const testNineProvider = {
   name: "test_nine",
+  supportedVersions: [3],
 
   isAvailable(config = {}) {
     return config.enable !== false && Boolean(config.endpoint || config.api)
@@ -10,6 +11,9 @@ export const testNineProvider = {
 
   async solve(challenge, config = {}, context = {}) {
     const started = Date.now()
+    if (captchaVersion(challenge) === 4) {
+      return captchaFail(this.name, "unsupported_captcha_version", { skipped: true, retryable: false })
+    }
     if (!this.isAvailable(config)) {
       return captchaFail(this.name, "provider_disabled", { skipped: true })
     }
@@ -26,10 +30,11 @@ export const testNineProvider = {
         },
         context,
       )
-      const validate = extractValidate(data)
+      if (hasCaptchaV4Response(data)) return captchaFail(this.name, "captcha_result_version_mismatch", { retryable: true, challengeRefresh: true, costMs: Date.now() - started, raw: data })
+      const validate = extractValidate(data).split("|")[0]
       if (validate) {
         return captchaOk(this.name, {
-          challenge: challenge.challenge,
+          challenge: extractChallenge(data) || challenge.challenge,
           validate,
           costMs: Date.now() - started,
           raw: data,
@@ -54,8 +59,14 @@ export const testNineProvider = {
   },
 }
 
+function extractChallenge(data) {
+  const value = data?.data?.data?.challenge || data?.data?.challenge || data?.challenge
+  return typeof value === "string" && /^[\w-]{1,256}$/.test(value) ? value : ""
+}
+
 function extractValidate(data) {
   if (!data || typeof data !== "object") return ""
+  if ([data, data.data, data.data?.data].some(value => value?.result && value.result !== "success")) return ""
   if (typeof data.validate === "string") return data.validate
   if (typeof data?.data?.validate === "string") return data.data.validate
   if (typeof data?.data?.data?.validate === "string") return data.data.data.validate

@@ -1,4 +1,7 @@
+import { syncZzzDeviceWithRedis } from "../genshinBridge/device.js"
+export { syncZzzDeviceWithRedis } from "../genshinBridge/device.js"
 import { registerProfileWithGenshin } from "../genshinBridge/profile.js"
+import { bindMysRequestProfile, withMysRequestProfile } from "../intercept/mys-request-context.js"
 import path from "node:path"
 import { renderTemplate } from "../../core/render/service.js"
 import { pathToFileURL } from "node:url"
@@ -30,10 +33,10 @@ export class ZzzPanelBridge {
     })
     const { instance: panel, event, messages, forwarded, uid } = context
 
-    const rendered = await runZzzPanelRefresh(panel, {
+    const rendered = await withMysRequestProfile(profile, async () => runZzzPanelRefresh(panel, {
       uid,
       refreshPanelFunction: (await this.loadAvatarModule()).refreshPanel,
-    })
+    }))
     if (!forwarded.length && shouldForwardReply(rendered)) {
       await event.reply(rendered)
     }
@@ -57,10 +60,11 @@ export class ZzzPanelBridge {
       handler: event?.runtime?.handler || {},
       e: event,
     })
+    bindMysRequestProfile(api, profile)
     return {
       api,
       uid,
-      deviceFp: profile?.device?.fp || fallbackZzzDeviceFp(uid),
+      deviceFp: resolvedZzzDeviceFp(profile, api),
     }
   }
 }
@@ -207,7 +211,7 @@ export class ZzzProfileQueryBridge {
     })
     const fn = context.instance?.[method]
     if (typeof fn !== "function") throw new Error(`ZZZ-Plugin ${method} 不可用`)
-    const returned = await fn.call(context.instance)
+    const returned = await withMysRequestProfile(profile, () => fn.call(context.instance))
     if (!context.forwarded.length && shouldForwardReply(returned)) {
       await context.event.reply(returned)
       if (!forwardReplies) context.forwarded.push("[图片]")
@@ -250,6 +254,7 @@ export async function createZzzProfilePluginInstance({ PluginClass, e, profile, 
     noTips: false,
     forwardReplies,
   })
+  event.lotusProfileContext = { qq: String(e.user_id), profileId: Number(profileId) }
 
   await ensureRuntimeRender(event)
 
@@ -276,12 +281,12 @@ export async function createZzzProfilePluginInstance({ PluginClass, e, profile, 
   scopedRuntime.handler = {
     ...handler,
     has: key => key === "zzz.tool.panel" || originalHas(key),
-    call: async (key, targetEvent, payload) => {
+    call: async (key, targetEvent, payload) => withMysRequestProfile(profile, async () => {
       if (key === "zzz.tool.panel" && typeof instance.getCharPanelTool === "function") {
         return instance.getCharPanelTool(targetEvent, payload)
       }
       return originalCall(key, targetEvent, payload)
-    },
+    }),
   }
   event.runtime = scopedRuntime
 
@@ -379,10 +384,11 @@ async function createZzzApiContext({ uid, profile, event, loadMysApiClass: loadM
     handler: event?.runtime?.handler || {},
     e: event,
   })
+  bindMysRequestProfile(api, profile)
   return {
     api,
     uid,
-    deviceFp: profile?.device?.fp || fallbackZzzDeviceFp(uid),
+    deviceFp: resolvedZzzDeviceFp(profile, api),
   }
 }
 
@@ -443,40 +449,13 @@ export function buildZzzCookieMap(profile = {}, uid = "") {
   }
 }
 
-export async function syncZzzDeviceWithRedis(profile = {}) {
-  const redis = globalThis.redis
-  if (!redis?.set) return
-  const account = profile.account || {}
-  const ltuid = account.ltuid || account.stuid || parseAccountCookie(account.cookie).ltuid
-  if (!ltuid) return
-
-  const prefix = `ZZZ:DEVICE_FP:${ltuid}`
-  const device = profile.device || {}
-  if (device.fp) await redis.set(`${prefix}:FP`, String(device.fp))
-  if (device.id) await redis.set(`${prefix}:ID`, String(device.id))
-
-  const bind = buildZzzBindDevice(device)
-  if (bind) await redis.set(`${prefix}:BIND`, JSON.stringify(bind))
-}
-
-function buildZzzBindDevice(device = {}) {
-  const raw = device.raw || {}
-  const bind = {
-    deviceName: raw.deviceName || device.name || "",
-    deviceBoard: raw.deviceBoard || raw.board || "",
-    deviceModel: raw.deviceModel || device.model || "",
-    oaid: raw.oaid || "",
-    androidVersion: raw.androidVersion || raw.osVersion || device.android_version || "",
-    deviceFingerprint: raw.deviceFingerprint || raw.deviceInfo || "",
-    deviceProduct: raw.deviceProduct || raw.productName || raw.product || "",
-  }
-  return Object.values(bind).some(Boolean) ? bind : null
-}
-
-function fallbackZzzDeviceFp(uid = "") {
-  return /^(1[0-9])[0-9]{8}/i.test(String(uid || ""))
-    ? "38d7f4c72b736"
-    : "38d805c20d53d"
+function resolvedZzzDeviceFp(profile, api) {
+  if (profile?.device?.id && profile.device.fp) return profile.device.fp
+  const issued = api?._device_fp
+  if (api?._device && (issued?.device_id || issued?.data?.device_id) === api._device
+    && issued?.retcode === 0 && String(issued.data?.code) === "200"
+    && /^[0-9a-f]{13}$/i.test(issued.data?.device_fp || "")) return issued.data.device_fp
+  return ""
 }
 
 function summarizeZzzPanelReply(payload) {

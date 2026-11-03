@@ -5,6 +5,8 @@ import {
   loadProfile,
   profileFilePath,
   saveProfile,
+  withProfileWrite,
+  bumpProfileLifetime,
 } from "../../core/config/profile.js"
 import { resolveData } from "../../core/path.js"
 import { formatLocalFileTimestamp, formatLocalIso } from "../../core/time.js"
@@ -16,66 +18,72 @@ export async function cleanupMemberLeave({
   config = {},
   reason = "member_leave",
   now = () => new Date(),
+  store = {},
 } = {}) {
   const qq = String(userId || "")
   if (!qq) throw new Error("userId is required")
   const cleanup = normalizeCleanupConfig(config)
   const remainingMembers = await collectGroupMemberIds(groups, { excludeGroupId: groupId })
   const stillInOtherGroup = remainingMembers.has(qq)
-  const profileIds = await listProfileIds(qq)
+  const profileStore = { listProfileIds, loadProfile, saveProfile, archiveProfile: archiveProfileFile, appendAudit: appendGroupCleanupAudit, ...store }
+  const profileIds = await profileStore.listProfileIds(qq)
   const actions = []
 
   for (const profileId of profileIds) {
-    const profile = await loadProfile(qq, profileId).catch(() => null)
-    if (!profile) continue
+    const action = await withProfileWrite(qq, profileId, async () => {
+      const profile = await profileStore.loadProfile(qq, profileId).catch(() => null)
+      if (!profile) return null
 
-    const originalGroups = (profile.profile?.notify?.fallback_groups || []).map(String)
-    const nextGroups = cleanup.remove_group_fallback
-      ? originalGroups.filter(id => id !== String(groupId || ""))
-      : originalGroups
-    const removedFallback = nextGroups.length !== originalGroups.length
-    const privatePreferred = profile.profile?.notify?.prefer !== "group"
-    const shouldArchive = cleanup.delete_orphan_profiles
-      && !stillInOtherGroup
-      && !(cleanup.keep_if_private_possible && privatePreferred)
+      const originalGroups = (profile.profile?.notify?.fallback_groups || []).map(String)
+      const nextGroups = cleanup.remove_group_fallback
+        ? originalGroups.filter(id => id !== String(groupId || ""))
+        : originalGroups
+      const removedFallback = nextGroups.length !== originalGroups.length
+      const privatePreferred = profile.profile?.notify?.prefer !== "group"
+      const shouldArchive = cleanup.delete_orphan_profiles
+        && !stillInOtherGroup
+        && !(cleanup.keep_if_private_possible && privatePreferred)
 
-    const action = {
-      qq,
-      profileId,
-      groupId: groupId ? String(groupId) : "",
-      reason,
-      dryRun: cleanup.dry_run,
-      stillInOtherGroup,
-      removedFallback,
-      archived: false,
-      skippedArchiveReason: "",
-    }
-
-    if (shouldArchive) {
-      if (cleanup.dry_run) {
-        action.archived = false
-        action.skippedArchiveReason = "dry_run"
-      } else {
-        action.archivePath = await archiveProfileFile(qq, profileId, now)
-        action.archived = true
+      const action = {
+        qq,
+        profileId,
+        groupId: groupId ? String(groupId) : "",
+        reason,
+        dryRun: cleanup.dry_run,
+        stillInOtherGroup,
+        removedFallback,
+        archived: false,
+        skippedArchiveReason: "",
       }
-    } else if (cleanup.delete_orphan_profiles) {
-      action.skippedArchiveReason = stillInOtherGroup
-        ? "still_in_other_group"
-        : cleanup.keep_if_private_possible && privatePreferred
-          ? "private_preferred"
-          : "not_orphan"
-    }
 
-    if (removedFallback && !cleanup.dry_run && !action.archived) {
-      profile.profile.notify.fallback_groups = nextGroups
-      await saveProfile(profile)
-    }
+      if (shouldArchive) {
+        if (cleanup.dry_run) {
+          action.archived = false
+          action.skippedArchiveReason = "dry_run"
+        } else {
+          action.archivePath = await profileStore.archiveProfile(qq, profileId, now)
+          bumpProfileLifetime(qq, profileId)
+          action.archived = true
+        }
+      } else if (cleanup.delete_orphan_profiles) {
+        action.skippedArchiveReason = stillInOtherGroup
+          ? "still_in_other_group"
+          : cleanup.keep_if_private_possible && privatePreferred
+            ? "private_preferred"
+            : "not_orphan"
+      }
 
-    actions.push(action)
+      if (removedFallback && !cleanup.dry_run && !action.archived) {
+        profile.profile.notify.fallback_groups = nextGroups
+        await profileStore.saveProfile(profile)
+      }
+
+      return action
+    })
+    if (action) actions.push(action)
   }
 
-  await appendGroupCleanupAudit({
+  await profileStore.appendAudit({
     time: formatLocalIso(now()),
     reason,
     userId: qq,
@@ -101,6 +109,7 @@ export async function cleanupBotLeaveGroup({
   groups,
   config = {},
   now = () => new Date(),
+  store = {},
 } = {}) {
   const ids = [...new Set(memberIds.map(String).filter(Boolean))]
   const results = []
@@ -112,6 +121,7 @@ export async function cleanupBotLeaveGroup({
       config,
       reason: "bot_leave_group",
       now,
+      store,
     }))
   }
   return {

@@ -2,13 +2,28 @@ import https from "node:https"
 import { setTimeout as delay } from "node:timers/promises"
 import { MIHOYO } from "../../core/mihoyo/constants.js"
 import { requestOfficialJson } from "../redeemCodes/http.js"
+import { CoinShopCaptcha } from "./captcha.js"
 
 const READ_API = "https://api-takumi.mihoyo.com"
-const EXCHANGE_API = "https://api-takumi.miyoushe.com/mall/v1/web/goods/exchange"
+const EXCHANGE_API = "https://bbs-api.miyoushe.com/common/homushop/v1/web/goods/exchange"
 export const SHOP_GAME_BIZ = Object.freeze({ hk4e: "hk4e_cn", hkrpg: "hkrpg_cn", nap: "nap_cn", bh3: "bh3_cn", nxx: "nxx_cn", bh2: "bh2_cn" })
 
 export function isCoinShopLimited(error) {
-  return [1028, 1034, 429].includes(Number(error?.retcode)) || /HTTP 429|验证|风控|安全|频繁|请求过快|操作太快|频率限制/.test(String(error?.message || ""))
+  return Boolean(coinShopLimitKind(error))
+}
+
+export function coinShopLimitKind(error) {
+  const code = Number(error?.retcode), message = String(error?.message || "")
+  if ([1028, 1034].includes(code)) return "verification"
+  if (code === 429 || Number(error?.status) === 429 || /HTTP 429|频繁|请求过快|操作太快|频率限制/.test(message)) return "rate_limit"
+  return /验证|风控|安全/.test(message) ? "verification" : ""
+}
+
+export function coinShopLimitMessage(error) {
+  const kind = coinShopLimitKind(error)
+  if (kind === "rate_limit") return "商城请求频率受限，请稍后再试。"
+  if (kind === "verification") return "请在米游社商城完成验证或处理风控后重新预约（商城当前使用极验 v4）。"
+  return ""
 }
 
 export function beijingTime(ms) {
@@ -70,6 +85,7 @@ export class CoinShopClient {
   constructor(options = {}) {
     this.getJson = options.getJson || requestOfficialJson
     this.postJson = options.postJson || postExchange
+    this.captcha = options.captcha || new CoinShopCaptcha(options)
     this.now = options.now || Date.now
   }
 
@@ -163,7 +179,7 @@ export class CoinShopClient {
       .map(role => ({ uid: String(role.game_uid), region: String(role.region), gameBiz: String(role.game_biz), nickname: String(role.nickname || ""), regionName: String(role.region_name || "") }))
   }
 
-  async exchange(plan, profile, signal) {
+  async exchange(plan, profile, signal, context = {}) {
     if (plan.type === 2 && (!plan.role || !plan.role.region || plan.role.gameBiz !== (plan.gameBiz || plan.role.gameBiz))) throw new Error("兑换角色与商品游戏不匹配")
     const body = { app_id: 1, point_sn: "myb", goods_id: plan.goodsId, exchange_num: 1 }
     if (plan.addressId) {
@@ -172,6 +188,31 @@ export class CoinShopClient {
       body.address_id = address
     }
     if (plan.role) Object.assign(body, { uid: plan.role.uid, region: plan.role.region, game_biz: plan.role.gameBiz })
-    return this.postJson(body, this.headers(profile, true), signal)
+    const headers = this.headers(profile, true)
+    signal?.throwIfAborted()
+    if (context.canRetry?.() === false) {
+      await context.onRetrySkipped?.()
+      return { retcode: -1, message: "兑换已取消或窗口已结束，未提交。" }
+    }
+    context.onSubmit?.()
+    const result = await this.postJson(body, headers, signal)
+    if (![1028, 1034].includes(Number(result.retcode))) return result
+    // A risk rejection is an explicit non-purchase response. Only that response
+    // permits a second POST, and only after the business accepts the v4 answer.
+    if (await context.onCaptchaRisk?.() === false) return { ...result, captchaFailed: true }
+    const solved = await this.captcha.solve(profile, result.retcode, { signal: context.captchaSignal || signal, onCaptchaEvent: context.onCaptchaEvent, background: Boolean(plan.trackingId), assertCurrent: context.beforeCaptchaRequest })
+    if (!solved.ok) return { ...result, captchaFailed: true, captchaUnavailable: solved.unavailable === true }
+    signal?.throwIfAborted()
+    const ready = await context.beforeRetry?.()
+    signal?.throwIfAborted()
+    // No await between this last guard and dispatch. An async preflight can
+    // itself cross the deadline or observe a tracker being paused.
+    if (ready === false || context.canRetry?.() === false) {
+      await context.onRetrySkipped?.()
+      return { retcode: -1, message: "兑换已取消或窗口已结束，未再次提交。" }
+    }
+    if (!solved.verification?.rpcChallenge) throw new Error("商城验证码尚未完成业务校验")
+    context.onSubmit?.()
+    return this.postJson(body, { ...headers, "x-rpc-challenge": solved.verification.rpcChallenge }, signal)
   }
 }

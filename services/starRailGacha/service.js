@@ -1,8 +1,10 @@
+import { refreshAccountAndSync } from "../../core/login/refresh.js"
 import crypto from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
 import { resolveData } from "../../core/path.js"
 import { AccountService } from "../../core/login/account.js"
+import { requireCnGachaRegion } from "../mihoyoAuthKey/region.js"
 
 export const STAR_RAIL_GACHA_TYPES = Object.freeze({
   GachaType_AvatarUp: "角色活动跃迁",
@@ -34,12 +36,12 @@ export class StarRailGachaService {
     if (!uid) throw new Error(`profile ${profileId} 没有同步星铁 UID`)
     if (!profile?.account?.cookie) throw new Error(`profile ${profileId} 缺少 cookie，无法更新星铁抽卡记录`)
 
-    const region = String(role.region || inferRegion(uid))
+    const region = requireCnGachaRegion({ region: role.region, uid, game: "sr" })
     try {
       return await this.updateByCookie({ qq, profileId, uid, region, cookie: profile.account.cookie, device: profile.device })
     } catch (error) {
       if (!isLoginExpired(error) || !profile?.account?.stoken) throw error
-      const refreshed = await this.accountService.refresh(qq, profileId)
+      const refreshed = await refreshAccountAndSync(qq, profileId, { accountService: this.accountService, expectedProfile: profile })
       return {
         ...await this.updateByCookie({
           qq,
@@ -57,6 +59,7 @@ export class StarRailGachaService {
   async updateByCookie({ qq, profileId = 1, uid, region, cookie, device = {} } = {}) {
     if (!qq) throw new Error("qq is required")
     if (!uid || !region || !cookie) throw new Error("星铁 UID、region 和 cookie 均不能为空")
+    region = requireCnGachaRegion({ region, uid, game: "sr" })
 
     const jar = new CookieJar(cookie)
     await this.badgeLogin({ uid, region, jar })
@@ -133,6 +136,7 @@ export class StarRailGachaService {
   }
 
   async badgeLogin({ uid, region, jar }) {
+    region = requireCnGachaRegion({ region, uid, game: "sr" })
     await this.requestJson(BADGE_LOGIN_URL, {
       method: "POST",
       headers: {
@@ -186,6 +190,7 @@ export class StarRailGachaService {
   }
 
   async requestGacha(endpoint, context, extra = {}) {
+    requireCnGachaRegion({ region: context.region, uid: context.uid, game: "sr" })
     const query = new URLSearchParams({
       badge_region: context.region,
       badge_uid: context.uid,
@@ -288,10 +293,6 @@ function pickRole(profile) {
   const roles = Array.isArray(profile?.account?.game_roles?.sr) ? profile.account.game_roles.sr : []
   const current = String(profile?.account?.current_uid?.sr || "")
   return roles.find(role => String(role.uid || role.game_uid || role) === current) || (current ? { uid: current } : roles[0])
-}
-
-function inferRegion(uid) {
-  return String(uid).startsWith("9") ? "prod_official_asia" : "prod_gf_cn"
 }
 
 function normalizeLog(value, fallback = {}) {

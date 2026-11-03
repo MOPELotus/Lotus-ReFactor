@@ -1,6 +1,10 @@
 export const LOTUS_INTERCEPT_PRIORITY = Number.NEGATIVE_INFINITY
 
 export const LOTUS_CONFIG_DISABLED_PLUGIN_NAMES = Object.freeze([
+  // Lotus constructs complete profile-aware events instead of xiaofei's subset.
+  "小飞插件_代发言",
+  "小飞插件_点歌",
+  "[土块插件]点歌",
   // TRSS-Plugin overlaps
   "米哈游登录",
   "远程命令",

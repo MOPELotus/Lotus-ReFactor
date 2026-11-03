@@ -4,7 +4,7 @@
 
 ## 安装与运行
 
-- [工具链-BBDown/ffmpeg/aria2](tools.md)
+- [工具链-TuneWeave/FFmpeg](tools.md)
 
 ## 账号与安全
 
@@ -12,11 +12,14 @@
 - [验证码链](../captcha.md)
 - [权限系统](../permissions.md)
 - [远程 spawn](../remote-spawn.md)
+- [代操作与批量执行](../execute.md)
 
-## 签到
+## 米游社功能
 
+- [米游社总页与插件面板](../miyoushe.md)
 - [自动签到-多 profile](checkin.md)
 - [签到调度-随机与固定](scheduler.md)
+- [米游币兑换-商品与定时预约](coin-shop.md)
 
 ## 游戏数据查询
 
@@ -30,7 +33,6 @@
 - [队伍伤害-星铁](team-damage-starrail.md)
 - [挑战查询-图鉴期数](challenge-query.md)
 - [前瞻兑换码-官方活动与有效期](redeem-codes.md)
-- [米游币兑换网页-商品与定时预约](coin-shop.md)
 
 ## 图鉴与成就
 
@@ -40,5 +42,6 @@
 ## 媒体与外部任务
 
 - [B 站解析与下载](../bilibili.md)
+- [点歌与音乐登录](../music.md)
 - [网易云合伙人-自动任务](netease-partner.md)
 - [群管理-成员导出与退群清理](group-manager.md)

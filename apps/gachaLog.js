@@ -1,3 +1,5 @@
+import { createProfileRequestGuard } from "../core/login/requestGuard.js"
+import { createRequestCaptchaReporter } from "../core/captcha/notify.js"
 const BasePlugin = globalThis.plugin
 
 import path from "node:path"
@@ -212,11 +214,12 @@ export class LotusGachaLog extends BasePlugin {
   }
 
   async zzzGachaLog() {
+    const e = this.e
     const userId = String(this.e.user_id)
     const profileId = parseProfileIdFromMessage(this.e.msg)
     try {
       await replyText(this, `[荷花插件]正在为 profile ${profileId} 更新绝区零抽卡记录。`)
-      const result = await this.runZzzGachaLog({ userId, profileId })
+      const result = await this.runZzzGachaLog({ userId, profileId, e })
       const image = await renderStatusCard({
         title: "绝区零抽卡记录",
         subtitle: `QQ ${userId} · Profile ${profileId} · UID ${result.uid}`,
@@ -316,6 +319,7 @@ export class LotusGachaLog extends BasePlugin {
   }
 
   async allGachaLogs() {
+    const e = this.e
     const userId = String(this.e.user_id)
     const profileIds = await listProfileIds(userId)
     if (!profileIds.length) {
@@ -337,7 +341,7 @@ export class LotusGachaLog extends BasePlugin {
         results.push({ ok: false, profileId, game: "sr", error: error.message })
       }
       try {
-        results.push(await this.runZzzGachaLog({ userId, profileId }))
+        results.push(await this.runZzzGachaLog({ userId, profileId, e }))
       } catch (error) {
         results.push({ ok: false, profileId, game: "zzz", error: error.message })
       }
@@ -381,13 +385,19 @@ export class LotusGachaLog extends BasePlugin {
     }
 
     const uid = String(role.uid || role.game_uid)
-    const auth = await new AuthKeyService().getAuthKey({
+    let guard = createProfileRequestGuard(profile)
+    const auth = await new AuthKeyService().getAuthKeyForProfile({
+      qq: String(userId),
+      profileId,
+      onRefreshedProfile: async updated => { guard = createProfileRequestGuard(updated); await guard?.() },
+      beforeRequest: async () => guard?.(),
       profile,
       game,
       uid,
       region: role.region || getServer(uid, game),
       authAppId: "webview_gacha",
     })
+    await guard?.()
     const url = buildGachaLogUrl(auth)
     const GachaLog = await loadGachaLogModel()
     const event = createGachaEvent(this.e, {
@@ -397,7 +407,9 @@ export class LotusGachaLog extends BasePlugin {
       messages,
     })
 
+    await guard?.()
     await new GachaLog(event).logUrl()
+    await guard?.()
     return {
       ok: true,
       profileId,
@@ -419,7 +431,8 @@ export class LotusGachaLog extends BasePlugin {
     })
   }
 
-  async runZzzGachaLog({ userId, profileId }) {
+  async runZzzGachaLog({ userId, profileId, e = this.e }) {
+    const onCaptchaEvent = createRequestCaptchaReporter(e)
     const profile = await loadProfile(userId, profileId)
     const role = pickRole(profile, "zzz")
     if (!role) {
@@ -431,7 +444,8 @@ export class LotusGachaLog extends BasePlugin {
       }
     }
     const result = await new ZzzGachaBridge().updateGachaLog({
-      e: this.e,
+      e,
+      onCaptchaEvent,
       profile,
       profileId,
     })

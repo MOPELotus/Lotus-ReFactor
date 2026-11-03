@@ -4,13 +4,14 @@ const OFFICIAL_HOSTS = new Set(["bbs-api.mihoyo.com", "bbs-api.miyoushe.com", "a
 
 // Native HTTPS does not use Node's environment proxy dispatcher. Keep this
 // fallback scoped to our public official endpoints; never change global routing.
-export function requestOfficialJson(url, { headers = {}, timeoutMs = 10000 } = {}) {
+export function requestOfficialJson(url, { headers = {}, timeoutMs = 10000, method = "GET", body, signal } = {}) {
   const target = new URL(url)
   if (target.protocol !== "https:" || !OFFICIAL_HOSTS.has(target.hostname) || target.username || target.password || target.port) {
     return Promise.reject(new Error("不支持的官方接口地址"))
   }
   return new Promise((resolve, reject) => {
-    const request = https.get(target, { headers: { ...headers, "accept-encoding": "identity" }, signal: AbortSignal.timeout(timeoutMs) }, response => {
+    const payload = body === undefined || typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body)
+    const request = https.request(target, { method, headers: { ...headers, ...(payload === undefined ? {} : { "Content-Length": Buffer.byteLength(payload) }), "accept-encoding": "identity" }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) }, response => {
       if (response.statusCode !== 200) {
         response.resume()
         reject(new Error(`官方接口 HTTP ${response.statusCode}`))
@@ -31,5 +32,6 @@ export function requestOfficialJson(url, { headers = {}, timeoutMs = 10000 } = {
       })
     })
     request.on("error", reject)
+    request.end(payload)
   })
 }

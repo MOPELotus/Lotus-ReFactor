@@ -22,7 +22,7 @@ export function isStarRailAbyss(data = {}) {
 }
 
 // Translate mode data into the SAME source floor/team structure. Keep every
-// result/peak record, and retain the existing deepest-valid-floor selection.
+// result/peak record, selecting the deepest valid floor independently of API order.
 export function buildStarRailAbyssSections(data = {}) {
   return (data.results || []).flatMap(result => {
     const kind = kindOf(result)
@@ -35,12 +35,25 @@ export function buildStarRailAbyssSections(data = {}) {
       }
     })
     const floors = (result.floors || []).filter(floor => hasValue(floor.stars) || hasValue(floor.round) || hasValue(floor.score) || floor.nodes?.length)
-    const floor = floors.at(-1)
+    const floor = selectDeepestFloor(floors, result.maxFloor)
     return [{ ...common, period: result.period, stars: result.stars, floorTitle: floor?.title || "挑战记录", floorStars: floor?.stars,
       floorMaxStars: floor?.tierce ? 4 : Math.max(3, Number(floor?.stars || 0)), nodes: floor?.nodes || [],
       metrics: [[hasValue(floor?.score) ? "关卡积分" : "最深抵达", hasValue(floor?.score) ? String(floor.score) : valueOr(result.maxFloor)], ["使用轮次", valueOr(floor?.round, " 轮")], ["战斗次数", valueOr(result.battleNum, " 次")], ["关卡星数", valueOr(floor?.stars, " 星")]],
     }]
   })
+}
+
+function selectDeepestFloor(floors, maxFloor) {
+  // Detailed responses can arrive deepest first; simple responses usually
+  // contain only the deepest floor. Prefer the API's explicit maximum title,
+  // including its star-awakening variant, rather than an array position.
+  const baseTitle = value => String(value ?? "").replace(/星启模式$/, "").trim()
+  const maximum = baseTitle(maxFloor)
+  const matching = maximum ? floors.filter(floor => baseTitle(floor.title) === maximum) : []
+  if (matching.length) return matching.find(floor => floor.tierce) || matching[0]
+  const numbered = floors.filter(floor => Number(floor.mazeId) > 0)
+  if (numbered.length) return numbered.reduce((deepest, floor) => Number(floor.mazeId) > Number(deepest.mazeId) ? floor : deepest)
+  return floors.at(-1)
 }
 
 async function image(src) {

@@ -1,13 +1,17 @@
+import { refreshAccountAndSync, refreshAllAccountsAndSync, isAccountChangedError } from "../core/login/refresh.js"
 const BasePlugin = globalThis.plugin
 
 import QRCode from "qrcode"
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import {
   listProfileIds,
+  loadProfile,
+  ensureProfile,
   parseProfileIdFromMessage,
   PROFILE_ID_SUFFIX_PATTERN,
 } from "../core/config/profile.js"
 import { AccountService } from "../core/login/account.js"
+import { ensureGeneratedProfileDevice } from "../core/devices/generated-profile.js"
 import { QrLoginService } from "../core/login/qr.js"
 import { renderStatusCard, renderTemplate } from "../core/render/service.js"
 import { isProfileCheckinEnabled } from "../core/scheduler/service.js"
@@ -70,20 +74,32 @@ export class LotusLogin extends BasePlugin {
   }
 
   async qrLogin() {
-    const userId = String(this.e.user_id)
-    const profileId = parseProfileIdFromMessage(this.e.msg)
+    const e = this.e
+    const target = { e }
+    const userId = String(e.user_id)
+    const profileId = parseProfileIdFromMessage(e.msg)
     const lockKey = `${userId}:${profileId}`
 
     if (loginLocks.has(lockKey)) {
-      await replyText(this, "[荷花插件]当前 profile 已有二维码等待确认，请稍后再试。")
+      await replyText(target, "[荷花插件]当前 profile 已有二维码等待确认，请稍后再试。")
       return true
     }
 
     loginLocks.set(lockKey, Date.now())
     try {
-      await replyText(this, `[荷花插件]正在为 profile ${profileId} 创建米游社登录二维码。`)
+      await replyText(target, `[荷花插件]正在为 profile ${profileId} 创建米游社登录二维码。`)
 
-      const qr = new QrLoginService()
+      let existing = await loadProfile(userId, profileId).catch(error => {
+        if (error?.code === "ENOENT") return null
+        throw new Error("登录档案读取失败，已保留原档案，请检查后重试")
+      })
+      try {
+        if (!existing) existing = await ensureProfile({ qq: userId, profileId, nickname: e.sender?.card || e.sender?.nickname || "" })
+        existing = (await ensureGeneratedProfileDevice(userId, profileId)).profile
+      } catch {
+        throw new Error("登录设备档案初始化失败，已保留原档案，请检查后重试")
+      }
+      const qr = new QrLoginService({ device: existing.device || {} })
       const created = await qr.create()
       const qrDataUrl = await QRCode.toDataURL(created.url, {
         margin: 1,
@@ -97,22 +113,23 @@ export class LotusLogin extends BasePlugin {
         saveId: `lotus-qr-${userId}-${profileId}`,
       })
 
-      await replyImage(this, image, "请使用米游社 App 扫码完成登录。")
+      await replyImage(target, image, "请使用米游社 App 扫码完成登录。")
       const loginResult = await qr.waitConfirmed(created.ticket, {
         onScanned: async () => {
-          await replyText(this, "[荷花插件]二维码已扫描，请在米游社 App 内确认登录。")
+          await replyText(target, "[荷花插件]二维码已扫描，请在米游社 App 内确认登录。")
         },
       })
 
-      const accountService = new AccountService()
+      const accountService = new AccountService({ client: qr.client, preserveLoginSession: true })
       let profile = await accountService.saveLoginResult({
         qq: userId,
         profileId,
         result: loginResult,
-        nickname: this.e.sender?.card || this.e.sender?.nickname || "",
+        nickname: e.sender?.card || e.sender?.nickname || "",
       })
       if (!profile.account?.cookie || profile.account?.role_sync_error) {
-        profile = await accountService.refresh(userId, profileId).catch(error => {
+        profile = await refreshAccountAndSync(userId, profileId, { accountService, expectedProfile: profile }).catch(error => {
+          if (isAccountChangedError(error)) throw error
           logger?.warn?.(`[Lotus-Plugin] QR login post-refresh skipped: ${error.message}`)
           return profile
         })
@@ -120,10 +137,10 @@ export class LotusLogin extends BasePlugin {
       await safeRegisterGenshin(userId, profile)
       await safeAddLateSchedule(profile)
 
-      await replyText(this, `[荷花插件]profile ${profileId} 扫码登录完成，已保存登录信息。`)
+      await replyText(target, `[荷花插件]profile ${profileId} 扫码登录完成，已保存登录信息。`)
     } catch (error) {
       logger?.error?.(`[Lotus-Plugin] QR login failed: ${error.stack || error.message}`)
-      await replyText(this, `[荷花插件]扫码登录失败：${error.message}`)
+      await replyText(target, `[荷花插件]扫码登录失败：${error.message}`)
     } finally {
       loginLocks.delete(lockKey)
     }
@@ -149,10 +166,7 @@ export class LotusLogin extends BasePlugin {
     }
 
     const accountService = new AccountService()
-    const results = await accountService.refreshAll(userId, profileIds)
-    for (const item of results) {
-      if (item.ok) await safeRegisterGenshin(userId, item.profile)
-    }
+    const results = await refreshAllAccountsAndSync(userId, profileIds, { accountService })
     const okCount = results.filter(item => item.ok).length
     const items = results.map(item => ({
       label: `Profile ${item.profileId}`,

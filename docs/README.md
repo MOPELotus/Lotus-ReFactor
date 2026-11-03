@@ -6,7 +6,7 @@
 
 - [安装与部署](installation.md)
 - [初始化](initialization.md)
-  - [工具链-BBDown/ffmpeg/aria2](features/tools.md)
+  - [工具链-TuneWeave/FFmpeg](features/tools.md)
 
 ## 账号、Profile 与安全
 
@@ -15,12 +15,15 @@
 - [验证码链](captcha.md)
 - [权限系统](permissions.md)
 - [远程 spawn](remote-spawn.md)
+- [代操作与批量执行](execute.md)
 
-## 签到
+## 米游社功能
 
+- [米游社总页与插件面板](miyoushe.md)
 - [签到与调度总览](checkin.md)
   - [自动签到-多 profile](features/checkin.md)
   - [签到调度-随机与固定](features/scheduler.md)
+- [米游币兑换-商品与定时预约](features/coin-shop.md)
 
 ## 游戏数据查询
 
@@ -34,7 +37,6 @@
   - [队伍伤害-星铁](features/team-damage-starrail.md)
   - [挑战查询-图鉴期数](features/challenge-query.md)
   - [前瞻兑换码-官方活动与有效期](features/redeem-codes.md)
-  - [米游币兑换网页-商品与定时预约](features/coin-shop.md)
 
 ## 图鉴与成就
 
@@ -46,6 +48,7 @@
 
 - [B 站解析与下载](bilibili.md)
 - [抖音作品解析与下载](douyin.md)
+- [点歌与音乐登录](music.md)
 - [网易云合伙人-自动任务](features/netease-partner.md)
 - [群管理-成员导出与退群清理](features/group-manager.md)
 

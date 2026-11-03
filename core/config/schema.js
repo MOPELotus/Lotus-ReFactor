@@ -1,7 +1,6 @@
 const SCHEDULE_MODES = new Set(["inherit", "random", "fixed"])
 const GLOBAL_SCHEDULE_MODES = new Set(["random", "fixed"])
 const NOTIFY_PREFERS = new Set(["private", "group"])
-const PYTHON_MODES = new Set(["venv", "system"])
 const PERMISSION_POLICIES = new Set(["allow", "deny", "inherit", "master_only"])
 const BILI_MULTI_PAGE_POLICIES = new Set(["zip", "all", "first"])
 
@@ -55,13 +54,18 @@ export function validateGlobalConfig(config) {
   validateRenderConfig(config.render, errors)
   validateGlobalScheduler(config.scheduler, errors)
   validateCaptchaConfig(config.captcha, errors)
-  validatePythonConfig(config.python, errors)
   validateToolsConfig(config.tools, errors)
   validateRemoteConfig(config.remote, errors)
   validateBilibiliConfig(config.bilibili, errors)
   validateDouyinConfig(config.douyin, errors)
   validateGroupsConfig(config.groups, errors)
   if (!isObject(config.tuneweave) || !isString(config.tuneweave.api_url) || !isPositiveInteger(config.tuneweave.request_timeout_ms)) errors.push("tuneweave requires api_url and positive request_timeout_ms")
+  if (typeof config.tuneweave?.auto_update !== "boolean") errors.push("tuneweave.auto_update must be boolean")
+  if (!isPositiveInteger(config.tuneweave?.update_delay_ms) || config.tuneweave.update_delay_ms > 2147483647) errors.push("tuneweave.update_delay_ms must be a positive timer interval")
+  const music = config.music
+  if (!isObject(music) || typeof music.enable !== "boolean" || typeof music.voice_one_second !== "boolean" || !["netease", "qq", "kugou", "kuwo", "migu", "soda"].includes(music.default_platform) || !["auto", "standard", "higher", "high", "lossless", "hires"].includes(music.quality)) errors.push("music platform, quality or switches are invalid")
+  for (const field of ["search_limit", "session_timeout_ms", "download_timeout_ms", "max_size_mb"]) if (!isPositiveInteger(music?.[field])) errors.push(`music.${field} must be a positive integer`)
+  if (music?.search_limit > 30) errors.push("music.search_limit must not exceed 30")
   validateNeteasePartnerConfig(config.netease_partner, errors)
   validateLoggingConfig(config.logging, errors)
   validateAtlasConfig(config.atlas, errors)
@@ -257,8 +261,6 @@ function validateCaptchaConfig(captcha = {}, errors) {
 
   validateProvider(captcha.test_nine, "captcha.test_nine", errors, [
     "endpoint",
-    "submodule_path",
-    "venv_path",
     "model_dir",
     "model_repo",
   ])
@@ -266,13 +268,16 @@ function validateCaptchaConfig(captcha = {}, errors) {
     if (!Array.isArray(captcha.test_nine.model_files) || !captcha.test_nine.model_files.every(isString)) {
       errors.push("captcha.test_nine.model_files must be an array of strings")
     }
-    for (const field of ["auto_start", "install_requirements", "download_models"]) {
+    for (const field of ["auto_start", "download_models"]) {
       if (typeof captcha.test_nine[field] !== "boolean") {
         errors.push(`captcha.test_nine.${field} must be boolean`)
       }
     }
   }
   validateProvider(captcha.ttocr, "captcha.ttocr", errors, ["api", "resapi", "key", "query"])
+  if (isObject(captcha.ttocr) && "itemid_v4" in captcha.ttocr && !isPositiveInteger(captcha.ttocr.itemid_v4)) {
+    errors.push("captcha.ttocr.itemid_v4 must be a positive integer")
+  }
   if (isObject(captcha.ttocr) && Number(captcha.ttocr.poll_interval_ms) < 1000) {
     errors.push("captcha.ttocr.poll_interval_ms must be at least 1000")
   }
@@ -297,15 +302,6 @@ function validateProvider(provider = {}, prefix, errors, stringFields = []) {
   }
 }
 
-function validatePythonConfig(python = {}, errors) {
-  if (!isObject(python)) {
-    errors.push("python must be an object")
-    return
-  }
-  if (!PYTHON_MODES.has(python.mode)) errors.push("python.mode must be venv/system")
-  if (!isString(python.venv_path)) errors.push("python.venv_path must be a string")
-  if (!isString(python.system_python)) errors.push("python.system_python must be a string")
-}
 
 function validateToolsConfig(tools = {}, errors) {
   if (!isObject(tools)) {
@@ -320,7 +316,7 @@ function validateToolsConfig(tools = {}, errors) {
   if ("download_retries" in tools && !isPositiveInteger(tools.download_retries)) {
     errors.push("tools.download_retries must be a positive integer")
   }
-  for (const name of ["bbdown", "ffmpeg", "aria2"]) {
+  for (const name of ["ffmpeg"]) {
     validateToolConfig(tools[name], `tools.${name}`, errors)
   }
 }
@@ -369,7 +365,7 @@ function validateBilibiliConfig(bilibili = {}, errors) {
     errors.push("bilibili.download must be an object")
     return
   }
-  for (const field of ["enable", "use_aria2"]) {
+  for (const field of ["enable"]) {
     if (typeof bilibili.download[field] !== "boolean") {
       errors.push(`bilibili.download.${field} must be boolean`)
     }
@@ -395,9 +391,7 @@ function validateBilibiliConfig(bilibili = {}, errors) {
   if (!BILI_MULTI_PAGE_POLICIES.has(bilibili.download.multi_page_policy)) {
     errors.push("bilibili.download.multi_page_policy must be zip/all/first")
   }
-  if (!Array.isArray(bilibili.download.extra_args) || !bilibili.download.extra_args.every(isString)) {
-    errors.push("bilibili.download.extra_args must be an array of strings")
-  }
+  if (!isPositiveInteger(bilibili.download.concurrency) || bilibili.download.concurrency > 16) errors.push("bilibili.download.concurrency must be 1–16")
 }
 
 function validateDouyinConfig(config = {}, errors) {

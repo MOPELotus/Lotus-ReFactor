@@ -12,7 +12,7 @@ import { renderStatusCard } from "../core/render/service.js"
 import { isProfileCheckinEnabled } from "../core/scheduler/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
 import { readCheckinAudit } from "../services/checkin/audit.js"
-import { registerProfileWithGenshin } from "../services/genshinBridge/profile.js"
+import { refreshAccountAndSync } from "../core/login/refresh.js"
 import {
   groupMemberDisplayName,
   normalizeGroupMemberEntries,
@@ -90,8 +90,7 @@ export class LotusCheckinAdmin extends BasePlugin {
       const qq = profile.user?.qq
       const profileId = profile.profile?.id || 1
       try {
-        const refreshed = await account.refresh(qq, profileId)
-        await registerProfileWithGenshin({ qq, profile: refreshed }).catch(() => null)
+        await refreshAccountAndSync(qq, profileId, { accountService: account, expectedProfile: profile })
         results.push({ qq, profileId, ok: true })
       } catch (error) {
         results.push({ qq, profileId, ok: false, error })

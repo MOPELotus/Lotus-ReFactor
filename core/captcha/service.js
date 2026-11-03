@@ -3,7 +3,7 @@ import { gtManualProvider } from "./providers/gtManual.js"
 import { testNineProvider } from "./providers/testNine.js"
 import { ttocrProvider } from "./providers/ttocr.js"
 import { visionAiProvider } from "./providers/visionAi.js"
-import { captchaFail, normalizeCaptchaChallenge } from "./result.js"
+import { captchaFail, normalizeCaptchaChallenge, normalizeCaptchaSolution } from "./result.js"
 import { emitCaptchaEvent } from "./events.js"
 
 const PROVIDERS = {
@@ -35,11 +35,15 @@ export class CaptchaService {
     }
 
     const attempts = []
-    const order = this.providerOrder()
+    const order = this.providerOrder(context)
     const providerAttempts = this.providerAttemptLimit(context)
     const chainAttempts = this.chainAttemptLimit(context)
     let refreshAttempts = 0
     let challengeUsed = false
+    const consumedChallenges = new Set()
+    const consumedV4Lots = new Set()
+    const submittedV3Challenges = new Set()
+    const submittedV3Proofs = new Set()
     let lastFailure = null
     const maxRefreshAttempts = this.maxChallengeRefreshAttempts(context, {
       order,
@@ -52,7 +56,7 @@ export class CaptchaService {
       providers: order,
     })
 
-    for (let chainAttempt = 1; chainAttempt <= chainAttempts; chainAttempt += 1) {
+    chains: for (let chainAttempt = 1; chainAttempt <= chainAttempts; chainAttempt += 1) {
       for (let providerIndex = 0; providerIndex < order.length; providerIndex += 1) {
         const providerName = order[providerIndex]
         const provider = PROVIDERS[providerName]
@@ -68,10 +72,24 @@ export class CaptchaService {
           continue
         }
 
+        // A consumed challenge must be refreshed before selecting by version:
+        // the business may switch Geetest generations on that fresh request.
+        if (!challengeUsed && !(provider.supportedVersions || [3]).includes(challenge.captchaVersion)) {
+          const skipped = captchaFail(provider.name, "unsupported_captcha_version", { skipped: true, retryable: false })
+          attempts.push(skipped)
+          await emitCaptchaEvent(context, { type: "captcha:provider-skip", provider: provider.name, reason: skipped.reason, captchaVersion: challenge.captchaVersion, nextProvider })
+          continue
+        }
         const providerConfig = this.providerConfig(providerName, provider.name)
         const attemptLimit = this.providerAttemptLimit(context, provider.name)
         for (let providerAttempt = 1; providerAttempt <= attemptLimit; providerAttempt += 1) {
+          context.signal?.throwIfAborted()
           if (challengeUsed) {
+            if (typeof context.refreshChallenge !== "function") {
+              lastFailure = captchaFail("challenge_refresh", "challenge_refresh_unavailable", { retryable: false })
+              attempts.push(lastFailure)
+              break chains
+            }
             if (refreshAttempts >= maxRefreshAttempts) {
               lastFailure = captchaFail("challenge_refresh", "refresh_limit_exceeded", {
                 fatal: false,
@@ -89,8 +107,14 @@ export class CaptchaService {
                   : "provider_switch",
             }, attempts, context)
             if (refreshed) {
+              if (refreshed.captchaVersion === 3 && consumedChallenges.has(challengeKey(refreshed))) {
+                lastFailure = captchaFail("challenge_refresh", "challenge_not_refreshed", { retryable: false })
+                attempts.push(lastFailure)
+                break chains
+              }
               challenge = refreshed
               refreshAttempts += 1
+              challengeUsed = false
             } else if (typeof context.refreshChallenge === "function") {
               lastFailure = captchaFail("challenge_refresh", "refresh_failed", {
                 fatal: false,
@@ -101,14 +125,69 @@ export class CaptchaService {
             }
           }
 
+          if (!(provider.supportedVersions || [3]).includes(challenge.captchaVersion)) {
+            const skipped = captchaFail(provider.name, "unsupported_captcha_version", { skipped: true, retryable: false })
+            attempts.push(skipped)
+            await emitCaptchaEvent(context, { type: "captcha:provider-skip", provider: provider.name, reason: skipped.reason, captchaVersion: challenge.captchaVersion, nextProvider })
+            break
+          }
           challengeUsed = true
+          if (challenge.captchaVersion === 3) consumedChallenges.add(challengeKey(challenge))
           await emitCaptchaEvent(context, {
             type: "captcha:provider-start",
             provider: provider.name,
             attempt: providerAttempt,
             chainAttempt,
           })
-          const result = await provider.solve(challenge, providerConfig, context)
+          let result = await provider.solve(challenge, providerConfig, context)
+          context.signal?.throwIfAborted()
+          if (result.skipped) {
+            challengeUsed = false
+            consumedChallenges.delete(challengeKey(challenge))
+          }
+          if (result.ok) {
+            try { result = normalizeCaptchaSolution(result, challenge) } catch (error) {
+              result = captchaFail(provider.name, error.message, { retryable: true, challengeRefresh: true, costMs: result.costMs, raw: result.raw })
+            }
+          }
+          if (result.ok && result.captchaVersion === 4) {
+            // lotNumber identifies a single verification event, regardless of
+            // changes to its proof fields. captchaId only identifies the site.
+            const key = JSON.stringify([result.captchaId, result.lotNumber])
+            if (consumedV4Lots.has(key)) result = captchaFail(provider.name, "solution_already_used", { retryable: true, challengeRefresh: true })
+            else consumedV4Lots.add(key)
+          }
+          if (result.ok && challenge.captchaVersion === 3 && result.captchaVersion !== 4) {
+            const actualChallenge = result.challenge || challenge.challenge
+            const validate = result.validate || result.token
+            if (typeof actualChallenge !== "string" || !actualChallenge || typeof validate !== "string" || !validate) {
+              result = captchaFail(provider.name, "invalid_v3_result", { retryable: true, challengeRefresh: true })
+            } else if (submittedV3Challenges.has(actualChallenge) || submittedV3Proofs.has(validate)) {
+              result = captchaFail(provider.name, "solution_already_used", { retryable: true, challengeRefresh: true })
+            } else {
+              // SDKs may legitimately update challenge. Consume the actual
+              // returned challenge and proof before business verification, even
+              // when that verification rejects the result.
+              submittedV3Challenges.add(actualChallenge)
+              submittedV3Proofs.add(validate)
+              consumedChallenges.add(challengeKey({ ...challenge, challenge: actualChallenge }))
+            }
+          }
+          if (result.ok && typeof context.verifyResult === "function") {
+            // A Geetest token is provisional until the calling business accepts it.
+            // Exceptions abort the operation; only explicit captcha rejections retry.
+            const verification = await context.verifyResult(result, challenge)
+            if (verification?.ok) result = { ...result, verification }
+            else result = {
+              ...captchaFail(provider.name, verification?.reason || "business_captcha_rejected", {
+                retryable: verification?.retryable ?? true,
+                challengeRefresh: verification?.challengeRefresh ?? true,
+                costMs: result.costMs,
+                raw: result.raw,
+              }),
+              verification,
+            }
+          }
           attempts.push(result)
 
           if (result.ok) {
@@ -128,6 +207,7 @@ export class CaptchaService {
             type: result.skipped ? "captcha:provider-skip" : "captcha:provider-fail",
             provider: result.provider || provider.name,
             reason: result.reason,
+            code: typeof result.code === "number" && Number.isFinite(result.code) ? result.code : undefined,
             retryable: result.retryable,
             fatal: result.fatal,
             challengeRefresh: result.challengeRefresh,
@@ -137,17 +217,9 @@ export class CaptchaService {
           })
 
           if (result.fatal) {
-            await emitCaptchaEvent(context, {
-              type: "captcha:fail",
-              provider: result.provider,
-              reason: result.reason,
-              manualLink: findManualLink(attempts),
-              attempts,
-            })
-            return {
-              ...result,
-              attempts,
-            }
+            // Invalid API credentials or exhausted balance stop this provider,
+            // while local/manual alternatives remain available.
+            break
           }
 
           if (result.skipped) break
@@ -167,14 +239,16 @@ export class CaptchaService {
       type: "captcha:fail",
       provider: failed.provider,
       reason: failed.reason,
-      manualLink: findManualLink(attempts),
       attempts,
     })
     return failed
   }
 
-  providerOrder() {
-    const configured = this.config.providers || ["test_nine", "ttocr", "gtmanual"]
+  providerOrder(context = {}) {
+    // Business callers may restrict this attempt to unattended providers.
+    // Provider configuration (including enable/key) remains authoritative.
+    const configured = context.providerOrder ?? this.config.providers ?? ["test_nine", "ttocr", "gtmanual"]
+    if (!Array.isArray(configured)) throw new Error("captcha providerOrder must be an array")
     return configured.map(name => normalizeProviderName(name)).filter(Boolean)
   }
 
@@ -269,6 +343,10 @@ export async function solveCaptcha(challenge, context = {}) {
 
 function normalizeProviderName(name) {
   return String(name || "").trim().toLowerCase().replace(/\s+/g, "_")
+}
+
+function challengeKey(challenge) {
+  return JSON.stringify([challenge.gt, challenge.challenge])
 }
 
 function nextProviderName(order, currentIndex) {

@@ -1,6 +1,7 @@
 import { registerProfileWithGenshin } from "../genshinBridge/profile.js"
 import { createMiaoProfileEvent } from "./miaoPanel.js"
 import { importRuntimeModule } from "./common.js"
+import { withMysRequestProfile } from "../intercept/mys-request-context.js"
 
 export class MiaoProfileQueryBridge {
   constructor(options = {}) {
@@ -68,7 +69,7 @@ export class MiaoProfileQueryBridge {
       forwardReplies,
       registerProfile: this.registerProfile,
     })
-    await handler(context.event)
+    await withMysRequestProfile(profile, () => handler(context.event))
     return {
       ok: true,
       game,

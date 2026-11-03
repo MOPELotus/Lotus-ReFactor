@@ -26,12 +26,11 @@ export class LotusBilibili extends BasePlugin {
       event: "message",
       priority: LOTUS_INTERCEPT_PRIORITY,
       rule: [
-        { reg: "^#荷花搜视频.+", fnc: "searchVideo" },
+        { reg: "^#(荷花)?搜视频.+", fnc: "searchVideo" },
         { reg: "^#看[0-9]+$", fnc: "pickVideo" },
-        { reg: "^#荷花看视频.+", fnc: "directWatch" },
+        { reg: "^#(荷花)?看视频.+", fnc: "directWatch" },
         { reg: "^#(B站|b站|荷花)(下载|下视频)\\s+[\\s\\S]+$", fnc: "downloadVideo" },
         { reg: "^#B站登录$", fnc: "login" },
-        { reg: "^#BBDown登录$", fnc: "bbdownLogin" },
         { reg: "(bilibili.com|b23.tv|bili2233.cn|live.bilibili.com|^[Bb][Vv][1-9A-Za-z]{10}$|^[Aa][Vv][0-9]+$)", fnc: "parse" },
       ],
     })
@@ -51,7 +50,7 @@ export class LotusBilibili extends BasePlugin {
   }
 
   async searchVideo() {
-    const keyword = String(this.e.msg || "").replace(/^#荷花搜视频/, "").trim()
+    const keyword = String(this.e.msg || "").replace(/^#(?:荷花)?搜视频/, "").trim()
     if (!keyword) {
       await replyText(this, "[荷花插件]请输入搜索关键词。")
       return true
@@ -96,7 +95,7 @@ export class LotusBilibili extends BasePlugin {
   }
 
   async directWatch() {
-    const keyword = String(this.e.msg || "").replace(/^#荷花看视频/, "").trim()
+    const keyword = String(this.e.msg || "").replace(/^#(?:荷花)?看视频/, "").trim()
     if (!keyword) {
       await replyText(this, "[荷花插件]请输入关键词。")
       return true
@@ -128,7 +127,7 @@ export class LotusBilibili extends BasePlugin {
         title: "B站登录",
         subtitle: "荷花插件 Bilibili",
         badge: "3 MIN",
-        notice: "使用 Bilibili App 扫码确认。登录 cookie 会保存在 data/bilibili/account.yaml，不写入仓库。",
+        notice: "使用 Bilibili App 扫码确认。登录由 TuneWeave 保存，Lotus 仅保存账号引用。",
         qrDataUrl: qr.qrDataUrl,
         profileId: "bilibili",
       }, {
@@ -142,7 +141,7 @@ export class LotusBilibili extends BasePlugin {
         title: "B站登录",
         subtitle: "荷花插件 Bilibili",
         badge: "完成",
-        message: "B站账号 cookie 已保存，后续搜索和解析会自动使用。",
+        message: "B站账号引用已保存，后续搜索和解析会自动使用。",
         userId: this.e.user_id,
         items: [
           { label: "来源", value: result.account.source },
@@ -154,57 +153,6 @@ export class LotusBilibili extends BasePlugin {
       await replyImage(this, report, "[荷花插件]B站登录完成。")
     } catch (error) {
       await this.renderError("B站登录", error)
-    }
-    return true
-  }
-
-  async bbdownLogin() {
-    const globalConfig = await loadGlobalConfig()
-    const permission = new PermissionService({ permissions: globalConfig.permissions })
-      .explain(this.e, "bilibili.login")
-    if (!permission.ok) {
-      await this.renderError("BBDown登录", new Error("只有 bot 主人可以维护 BBDown 登录态。"))
-      return true
-    }
-
-    const service = await createService()
-    try {
-      const result = await service.runBBDownLogin(globalConfig.bilibili?.download || {}, {
-        onEvent: async event => {
-          if (event.qrPath) {
-            const qrDataUrl = await imageFileToDataUrl(event.qrPath)
-            const image = await renderTemplate("qr-login", {
-              title: "BBDown 登录",
-              subtitle: "荷花插件 Bilibili",
-              badge: "扫码",
-              notice: "使用 Bilibili App 扫码确认。该登录态供 BBDown 下载会员/高画质内容使用。",
-              qrDataUrl,
-              profileId: "bbdown",
-            }, {
-              saveId: `lotus-bbdown-login-${this.e.user_id || "master"}`,
-            })
-            await replyImage(this, image, "[荷花插件]BBDown 登录二维码已生成。")
-          } else if (event.message) {
-            await replyText(this, `[荷花插件]${event.message}`)
-          }
-        },
-      })
-      const image = await renderStatusCard({
-        title: "BBDown 登录",
-        subtitle: "荷花插件 Bilibili",
-        badge: result.ok ? "完成" : "结束",
-        message: result.ok ? "BBDown 登录流程已完成。" : "BBDown 登录进程已结束，请查看日志判断是否成功。",
-        userId: this.e.user_id,
-        items: [
-          { label: "退出码", value: String(result.code ?? "-") },
-          { label: "日志", value: result.logPath || "无" },
-        ],
-      }, {
-        saveId: `lotus-bbdown-login-result-${this.e.user_id || "master"}`,
-      })
-      await replyImage(this, image, "[荷花插件]BBDown 登录流程结束。")
-    } catch (error) {
-      await this.renderError("BBDown登录", error)
     }
     return true
   }
@@ -328,6 +276,7 @@ export class LotusBilibili extends BasePlugin {
 async function createService() {
   const config = await loadGlobalConfig()
   const service = new BilibiliService({
+    tuneweaveConfig: config.tuneweave,
     cookie: config.bilibili?.cookie || config.bilibili?.sessdata || "",
   })
   if (!service.cookie) {
@@ -338,7 +287,7 @@ async function createService() {
 }
 
 function cacheKey(e) {
-  return e?.isGroup ? `group:${e.group_id}` : `user:${e.user_id}`
+  return `${e.self_id || ""}:${e.group_id || "private"}:${e.user_id}`
 }
 
 async function imageFileToDataUrl(file) {

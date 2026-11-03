@@ -349,8 +349,6 @@ function isIgnoredDirtyStatus(line = "") {
   const code = normalized.slice(0, 2)
   const file = normalized.slice(3).trim()
   if (file === "services/starRailTeamDamage/data/system-data.json") return true
-  if (file === "test_nine" && /[m?]/.test(code)) return true
-  if (file.startsWith("test_nine/") && code.includes("?")) return true
   return false
 }
 

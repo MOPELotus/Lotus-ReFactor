@@ -1,12 +1,17 @@
 import crypto from "node:crypto"
+import { MiyousheClient } from "../miyoushe/client.js"
+import { MIHOYO_PROTOCOL, mihoyoUserAgent } from "../../core/mihoyo/constants.js"
 import { deviceHeaders } from "../../core/devices/service.js"
 import { getDs2 } from "../../core/mihoyo/ds.js"
 import { starRailCharacterName } from "../../core/mihoyo/starrailCharacters.js"
 import { isCnServer, resolveServer } from "../../core/mihoyo/regions.js"
 import { getRoleUid, pickRole } from "../pluginBridge/common.js"
+import { createProfileRequestGuard } from "../../core/login/requestGuard.js"
 
-const CN_DS_SALT = "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs"
-const OS_DS_SALT = "okr4obncj8bw5a65hbnn5oo6ixjc3l9w"
+const CN_DS_SALT = MIHOYO_PROTOCOL.bbsCn.x4Salt
+const OS_DS_SALT = MIHOYO_PROTOCOL.hoyolab.salt
+const fallbackDevices = new Map()
+const anonymousDevices = new WeakMap()
 
 const TYPE_META = Object.freeze({
   boss: {
@@ -40,30 +45,38 @@ const CURRENT_ROTATION_START = new Date("2024-06-24T04:00:00+08:00").getTime()
 export class StarRailChallengeService {
   constructor(options = {}) {
     this.fetch = options.fetch || globalThis.fetch
+    this.client = new MiyousheClient({ fetch: this.fetch, solveCaptcha: options.solveCaptcha })
+    this.onCaptchaEvent = options.onCaptchaEvent
+    this.beforeRequest = options.beforeRequest
   }
 
-  async queryProfile({ profile, profileId = 1, command = "*混沌" } = {}) {
+  async queryProfile({ profile, profileId = 1, command = "*混沌", onCaptchaEvent = this.onCaptchaEvent, beforeRequest = this.beforeRequest } = {}) {
     if (!this.fetch) throw new Error("fetch is unavailable")
     const parsed = parseStarRailChallengeCommand(command)
     const role = pickRole(profile, "sr")
     const uid = getRoleUid(role)
     if (!uid) throw new Error(`profile ${profileId} 没有同步星铁 UID`)
-    const cookie = profile?.account?.cookie
-    if (!cookie) throw new Error(`profile ${profileId} 未保存 cookie`)
-
     const server = resolveServer({
       server: role?.region,
       uid,
       game: "sr",
     })
+    const isCn = isCnServer(server)
+    const cookie = isCn ? profile?.account?.cookie : profile?.games?.os?.cookie
+    if (!cookie) throw new Error(`profile ${profileId} 未保存${isCn ? "米游社" : " HoYoLAB"} cookie`)
+    const device = requestDevice(profile, profileId, isCn)
+    const guard = beforeRequest || createProfileRequestGuard(profile, { profileId })
+    const requestProfile = { ...profile, account: { ...profile.account, cookie }, device }
     const context = {
+      beforeRequest: guard,
+      onCaptchaEvent,
       uid,
       server,
-      isCn: isCnServer(server),
+      isCn,
       cookie,
-      profile,
-      deviceFp: profile?.device?.fp || fallbackDeviceFp(profile),
-      deviceId: profile?.device?.id || fallbackDeviceId(cookie),
+      profile: requestProfile,
+      deviceFp: device.fp || "",
+      deviceId: device.id,
     }
 
     const results = []
@@ -95,11 +108,13 @@ export class StarRailChallengeService {
     }
   }
 
-  async queryChallenge({ uid, server, isCn, cookie, profile, deviceFp, deviceId, parsed } = {}) {
+  async queryChallenge({ uid, server, isCn, cookie, profile, deviceFp, deviceId, parsed, onCaptchaEvent = this.onCaptchaEvent, beforeRequest } = {}) {
     const meta = TYPE_META[parsed.kind]
     if (!meta) throw new Error(`暂不支持的星铁挑战类型：${parsed.kind}`)
     const scheduleType = resolveScheduleType(parsed)
     const requestOptions = {
+      beforeRequest,
+      onCaptchaEvent,
       uid,
       server,
       isCn,
@@ -134,7 +149,7 @@ export class StarRailChallengeService {
     })
   }
 
-  async requestChallenge({ uid, server, isCn, cookie, profile, deviceFp, deviceId, endpoint, scheduleType, detailed = true } = {}) {
+  async requestChallenge({ uid, server, isCn, cookie, profile, deviceFp, deviceId, endpoint, scheduleType, detailed = true, onCaptchaEvent = this.onCaptchaEvent, beforeRequest } = {}) {
     const host = isCn ? "https://api-takumi-record.mihoyo.com" : "https://bbs-api-os.hoyolab.com"
     const query = new URLSearchParams({
       role_id: uid,
@@ -155,14 +170,16 @@ export class StarRailChallengeService {
       deviceFp,
       deviceId,
     })
-    const response = await this.fetch(url, {
-      method: "GET",
+    return this.client.request(url, {
+      ...profile,
+      account: { ...profile?.account, cookie },
+      device: { ...profile?.device, id: deviceId, fp: deviceFp },
+    }, {
       headers,
+      headersFactory: () => ({ DS: getDs2(canonicalRecordQuery(queryText), "", isCn ? CN_DS_SALT : OS_DS_SALT) }),
+      game: "sr", overseas: !isCn, onCaptchaEvent,
+      beforeRequest,
     })
-    if (!response?.ok) {
-      throw new Error(`星铁挑战接口 HTTP ${response?.status || "请求失败"}`)
-    }
-    return response.json()
   }
 }
 
@@ -289,6 +306,7 @@ function formatFloor(floor = {}) {
     .map((key, index) => formatNode(floor[key], `节点${index + 1}`))
     .filter(Boolean)
   return {
+    mazeId: floor.maze_id ?? "",
     title: floor.name || floor.floor || "关卡",
     score: floor.score ?? "",
     stars: floor.star_num ?? "",
@@ -393,18 +411,27 @@ function formatMihoyoTime(value, withTime = false) {
   return `${date} ${pad2(value.hour || 0)}:${pad2(value.minute || 0)}`
 }
 
+function canonicalRecordQuery(query) {
+  // SIMNet signs decoded query values in ASCII key order. Keep the wire URL
+  // unchanged: only the record request's DS2 query uses this canonical form.
+  return [...new URLSearchParams(query)]
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&")
+}
+
 function buildHeaders({ query = "", isCn = true, cookie = "", profile = {}, deviceFp = "", deviceId = "" } = {}) {
   const cn = {
-    appVersion: "2.73.1",
-    userAgent: "Mozilla/5.0 (Linux; Android 13; XQ-BC52 Build/61.2.A.0.472A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/111.0.5563.116 Mobile Safari/537.36 miHoYoBBS/2.73.1",
+    appVersion: MIHOYO_PROTOCOL.bbsCn.version,
+    userAgent: mihoyoUserAgent(profile.device),
     clientType: "5",
     origin: "https://webstatic.mihoyo.com",
     referer: "https://webstatic.mihoyo.com/",
     salt: CN_DS_SALT,
   }
   const os = {
-    appVersion: "2.57.1",
-    userAgent: "Mozilla/5.0 (Linux; Android 13; XQ-BC52 Build/61.2.A.0.472A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/111.0.5563.116 Mobile Safari/537.36 miHoYoBBSOversea/2.57.1",
+    appVersion: MIHOYO_PROTOCOL.hoyolab.version,
+    userAgent: mihoyoUserAgent(profile.device, true),
     clientType: "2",
     origin: "https://act.hoyolab.com",
     referer: "https://act.hoyolab.com/",
@@ -417,14 +444,15 @@ function buildHeaders({ query = "", isCn = true, cookie = "", profile = {}, devi
     "User-Agent": client.userAgent,
     Referer: client.referer,
     Origin: client.origin,
-    DS: getDs2(query, "", client.salt),
+    DS: getDs2(canonicalRecordQuery(query), "", client.salt),
     Cookie: cookie,
     ...deviceHeaders(profile.device),
+    ...(profile.device?.name ? { "x-rpc-device_name": profile.device.name } : {}),
+    ...(profile.device?.model ? { "x-rpc-device_model": profile.device.model } : {}),
+    ...(profile.device?.android_version ? { "x-rpc-sys_version": profile.device.android_version } : {}),
   }
-  headers["x-rpc-device_fp"] ||= deviceFp
-  headers["x-rpc-device_id"] ||= deviceId
-  headers["x-rpc-device_name"] ||= profile.device?.name || "Sony XQ-BC52"
-  headers["x-rpc-device_model"] ||= profile.device?.model || "XQ-BC52"
+  if (deviceFp) headers["x-rpc-device_fp"] ||= deviceFp
+  if (deviceId) headers["x-rpc-device_id"] ||= deviceId
   headers["x-rpc-csm_source"] = "myself"
   return headers
 }
@@ -442,13 +470,27 @@ function mihoyoResponseError(res = {}, label = "星铁挑战") {
   return new Error(`${label}查询失败：${message}`)
 }
 
-function fallbackDeviceId(seed = "") {
-  return crypto.createHash("md5").update(String(seed || "lotus-sr-device")).digest("hex").slice(0, 32)
-}
-
-function fallbackDeviceFp(profile = {}) {
-  const seed = `${profile?.user?.qq || ""}:${profile?.profile?.id || 1}:${profile?.account?.ltuid || ""}`
-  return `38${crypto.createHash("md5").update(seed || "lotus").digest("hex").slice(0, 11)}`
+function requestDevice(profile, profileId, isCn) {
+  const device = (isCn ? profile?.device : profile?.games?.os?.device) || {}
+  if (typeof device.id === "string" && device.id.trim()) return device
+  // Normal profiles persist their generated device at initialization. Legacy
+  // custom callers retain a stable process-local ID without deriving it from
+  // login credentials or manufacturing a server-issued fingerprint.
+  const side = isCn ? "cn" : "os"
+  const owner = profile?.user?.qq
+  let ids
+  if (owner) {
+    const key = `${String(owner)}:${Number(profileId || profile?.profile?.id || 1)}:${side}`
+    if (!fallbackDevices.has(key)) {
+      fallbackDevices.set(key, crypto.randomUUID().replaceAll("-", ""))
+      if (fallbackDevices.size > 1024) fallbackDevices.delete(fallbackDevices.keys().next().value)
+    }
+    return { id: fallbackDevices.get(key) }
+  }
+  ids = anonymousDevices.get(profile)
+  if (!ids) { ids = {}; anonymousDevices.set(profile, ids) }
+  ids[side] ||= crypto.randomUUID().replaceAll("-", "")
+  return { id: ids[side] }
 }
 
 function pad2(value) {

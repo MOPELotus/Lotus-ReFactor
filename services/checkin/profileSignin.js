@@ -1,24 +1,27 @@
+import { refreshAccountAndSync } from "../../core/login/refresh.js"
 import { loadProfile } from "../../core/config/profile.js"
 import { AccountService } from "../../core/login/account.js"
 import { renderTemplate } from "../../core/render/service.js"
-import { MihoyoBbsToolsRunner } from "../mihoyoBbsTools/runner.js"
+import { MiyousheTasks } from "../miyoushe/tasks.js"
 import { appendCheckinAudit } from "./audit.js"
+import { createProfileRequestGuard } from "../../core/login/requestGuard.js"
 
 export class ProfileSigninService {
   constructor(options = {}) {
     this.account = options.account || new AccountService(options)
-    this.runner = options.runner || new MihoyoBbsToolsRunner(options)
+    this.runner = options.runner || new MiyousheTasks(options)
     this.render = options.render !== false
+    this.beforeRequest = options.beforeRequest
   }
 
-  async run({ qq, profileId = 1, profile, refresh = true, onCaptchaEvent, installRequirements = false } = {}) {
+  async run({ qq, profileId = 1, profile, refresh = true, onCaptchaEvent, beforeRequest = this.beforeRequest } = {}) {
     const userId = String(qq || profile?.user?.qq || "")
     const id = Number(profileId || profile?.profile?.id || 1)
     let activeProfile = profile || await loadProfile(userId, id)
 
     if (refresh) {
       try {
-        activeProfile = await this.account.refresh(userId, id)
+        activeProfile = await refreshAccountAndSync(userId, id, { accountService: this.account, expectedProfile: activeProfile })
       } catch (error) {
         return this.failure({
           stage: "refresh",
@@ -42,9 +45,13 @@ export class ProfileSigninService {
 
     const skipped = collectSkipped(activeProfile)
     try {
+      const guard = beforeRequest || createProfileRequestGuard(activeProfile, {
+        qq: userId, profileId: id,
+        ...(typeof this.account.get === "function" ? { loadProfile: (user, slot) => this.account.get(user, slot) } : {}),
+      })
       const result = await this.runner.runProfile(prepareRunnableProfile(activeProfile), {
-        installRequirements,
         onCaptchaEvent,
+        beforeRequest: guard,
       })
       const image = this.render
         ? await renderSigninResult({ result, profile: activeProfile, skipped })
@@ -65,8 +72,8 @@ export class ProfileSigninService {
         stage: "runner",
         profile: activeProfile,
         error,
-        message: "MihoyoBBSTools runner 执行失败。",
-        advice: "先执行 #初始化签到环境，确认 profile 登录态、设备信息和 Python 依赖。",
+        message: "米游社任务执行失败。",
+        advice: "请确认 profile 登录态、设备信息及验证码模型。",
       })
     }
   }
@@ -139,7 +146,7 @@ export async function renderSigninFailure({ stage, profile, error, message, advi
 
 export function prepareRunnableProfile(profile) {
   const copy = structuredClone(profile)
-  if (copy.mihoyobbs?.enable && !copy.device?.bound) {
+  if (copy.mihoyobbs?.enable && !(copy.device?.id && copy.device?.fp)) {
     copy.mihoyobbs.enable = false
   }
   return copy
@@ -147,8 +154,8 @@ export function prepareRunnableProfile(profile) {
 
 export function collectSkipped(profile) {
   const skipped = []
-  if (profile.mihoyobbs?.enable && !profile.device?.bound) {
-    skipped.push("社区签到需要设备信息，本次仅跳过社区任务。")
+  if (profile.mihoyobbs?.enable && !(profile.device?.id && profile.device?.fp)) {
+    skipped.push("社区任务需要配对的设备 ID 和 FP，本次仅跳过社区任务；自动设备会继续补全 FP，也可绑定真机。")
   }
   return skipped
 }
@@ -167,6 +174,13 @@ const SIGNIN_GAMES = [
 
 function buildSigninRows(profile, result, skipped = []) {
   const games = profile.games?.cn || {}
+  const status = (kind, key) => {
+    const rows = (result.tasks || []).filter(row => row.kind === kind && row.key === key)
+    if (!rows.length) return "未执行"
+    if (rows.some(row => row.status === "failed")) return "失败"
+    if (rows.every(row => row.status === "skipped")) return "跳过"
+    return rows.every(row => row.status === "already") ? "已完成" : "成功"
+  }
   const bbs = profile.mihoyobbs || {}
   const communityEnabled = Boolean(bbs.enable && (bbs.tasks?.checkin ?? bbs.checkin ?? true))
   const missingDevice = skipped.some(text => String(text).includes("设备"))
@@ -175,8 +189,8 @@ function buildSigninRows(profile, result, skipped = []) {
     const forumEnabled = communityEnabled && bbs.checkin_list?.map?.(Number).includes(game.forumId)
     return {
       label: game.label,
-      game: game.communityOnly ? "无" : gameEnabled ? (result.ok ? "成功" : "失败") : "关闭",
-      community: forumEnabled ? (missingDevice ? "跳过" : result.ok ? "成功" : "失败") : "关闭",
+      game: game.communityOnly ? "无" : gameEnabled ? status("game", game.key) : "关闭",
+      community: forumEnabled ? (missingDevice ? "跳过" : status("community", String(game.forumId))) : "关闭",
     }
   })
 }

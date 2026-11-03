@@ -15,6 +15,7 @@ export class ScheduledSigninService {
     this.scheduler = options.scheduler || new SchedulerService(options)
     this.signin = options.signin || new ProfileSigninService(options)
     this.notify = options.notify || notifyProfile
+    this.loadProfile = options.loadProfile || loadProfile
     this.bot = options.bot
     this.now = options.now || (() => new Date())
     this.renderTemplate = options.renderTemplate || renderTemplate
@@ -138,7 +139,7 @@ export class ScheduledSigninService {
   }
 
   async runEntry(entry, options = {}) {
-    let profile = await loadProfile(entry.qq, entry.profileId).catch(() => null)
+    let profile = await this.loadProfile(entry.qq, entry.profileId).catch(() => null)
     try {
       const captchaReporter = createCaptchaEventReporter({
         send: async message => {
@@ -157,7 +158,6 @@ export class ScheduledSigninService {
         profileId: entry.profileId,
         profile,
         refresh: true,
-        installRequirements: false,
         onCaptchaEvent: async event => {
           await captchaReporter(event).catch(error => {
             logger?.warn?.(`[Lotus-Plugin] captcha notify failed: ${error.message}`)

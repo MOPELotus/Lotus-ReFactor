@@ -11,10 +11,10 @@ const ARRAY_FIELDS = new Set([
   "captcha.test_nine.model_files",
   "remote.allowed_paths",
   "remote.shells",
-  "bilibili.download.extra_args",
   "netease_partner.comments",
   "atlas.initial_args",
   "atlas.update_args",
+  "atlas.challenge_args",
   "atlas.version_args",
   "permissions.users.allow",
   "permissions.users.deny",
@@ -23,6 +23,8 @@ const ARRAY_FIELDS = new Set([
 ])
 
 const NUMBER_FIELDS = new Set([
+  "music.search_limit", "music.session_timeout_ms", "music.download_timeout_ms", "music.max_size_mb",
+  "bilibili.download.concurrency",
   "render.background_timeout_ms",
   "captcha.refresh.max_attempts",
   "captcha.retry.provider_attempts",
@@ -52,6 +54,7 @@ const NUMBER_FIELDS = new Set([
   "bilibili.download.max_estimated_size_mb",
   "bilibili.download.timeout_ms",
   "tuneweave.request_timeout_ms",
+  "tuneweave.update_delay_ms",
   "netease_partner.login_timeout_ms",
   "netease_partner.login_poll_ms",
   "netease_partner.delay_ms_min",
@@ -134,12 +137,9 @@ const GUOBA_SCHEMAS = [
   sw("captcha.test_nine.auto_start", "启动 test_nine 服务", "插件加载后自动启动本地服务。"),
   input("captcha.test_nine.endpoint", "test_nine 接口", "默认本机 pass_uni。"),
   number("captcha.test_nine.timeout_ms", "test_nine 超时", "单位毫秒。"),
-  input("captcha.test_nine.submodule_path", "test_nine 目录", "子模块目录。"),
-  input("captcha.test_nine.venv_path", "test_nine venv", "独立虚拟环境目录。"),
   input("captcha.test_nine.model_dir", "模型目录", "模型文件保存目录。"),
   input("captcha.test_nine.model_repo", "模型仓库", "HuggingFace 仓库名。"),
   textArea("captcha.test_nine.model_files", "模型文件", "每行一个模型文件名。"),
-  sw("captcha.test_nine.install_requirements", "安装 test_nine 依赖", "初始化时安装依赖。"),
   sw("captcha.test_nine.download_models", "下载 test_nine 模型", "初始化时下载模型。"),
   sw("captcha.ttocr.enable", "启用 ttocr", "在线打码平台。"),
   input("captcha.ttocr.api", "ttocr 提交接口", "recognize 接口。"),
@@ -158,14 +158,6 @@ const GUOBA_SCHEMAS = [
   password("captcha.vision_ai.key", "视觉 AI 密钥", "接口鉴权密钥。"),
   number("captcha.vision_ai.timeout_ms", "视觉 AI 超时", "单位毫秒。"),
 
-  group("Python"),
-  select("python.mode", "Python 模式", [
-    { label: "虚拟环境", value: "venv" },
-    { label: "系统 Python", value: "system" },
-  ], "默认使用虚拟环境。"),
-  input("python.venv_path", "主 venv 目录", "Lotus Python 环境目录。"),
-  input("python.system_python", "系统 Python 路径", "system 模式下使用。"),
-
   group("工具链"),
   sw("tools.auto_install", "自动准备工具", "初始化时自动下载工具链。"),
   input("tools.dir", "工具目录", "工具保存目录。"),
@@ -173,15 +165,9 @@ const GUOBA_SCHEMAS = [
   input("tools.github_api", "GitHub API", "Release 查询接口。"),
   number("tools.timeout_ms", "工具下载超时", "单位毫秒。"),
   number("tools.download_retries", "工具下载重试", "安装包损坏或解压失败时自动重下次数。"),
-  sw("tools.bbdown.enable", "启用 BBDown", "B 站视频下载工具。"),
-  input("tools.bbdown.repo", "BBDown 仓库", "GitHub owner/repo。"),
-  input("tools.bbdown.command", "BBDown 命令", "可执行文件名。"),
   sw("tools.ffmpeg.enable", "启用 ffmpeg", "视频处理工具。"),
   input("tools.ffmpeg.repo", "ffmpeg 仓库", "GitHub owner/repo。"),
   input("tools.ffmpeg.command", "ffmpeg 命令", "可执行文件名。"),
-  sw("tools.aria2.enable", "启用 aria2", "下载加速工具。"),
-  input("tools.aria2.repo", "aria2 仓库", "GitHub owner/repo。"),
-  input("tools.aria2.command", "aria2 命令", "可执行文件名。"),
 
   group("远程管理"),
   sw("remote.enable", "启用远程管理", "远程命令、上传、下载总开关。"),
@@ -202,9 +188,9 @@ const GUOBA_SCHEMAS = [
   password("bilibili.sessdata", "B 站 SESSDATA", "只需要 SESSDATA 时填写。"),
   number("bilibili.search_limit", "搜索结果数量", "解析搜索时的最大数量。"),
   sw("bilibili.download.enable", "启用视频下载", "视频解析后允许发送视频。"),
-  sw("bilibili.download.use_aria2", "使用 aria2", "可用时交给 aria2 下载。"),
-  input("bilibili.download.tools_path", "下载工具目录", "BBDown、ffmpeg、aria2 所在目录。"),
-  number("bilibili.download.resolution", "清晰度代码", "BBDown 使用的清晰度编号。"),
+  number("bilibili.download.concurrency", "下载并发", "JS 分段下载并发数，1–16。"),
+  input("bilibili.download.tools_path", "下载工具目录", "FFmpeg 所在目录。"),
+  number("bilibili.download.resolution", "清晰度代码", "B站清晰度编号，例如 64 对应 720P。"),
   number("bilibili.download.duration_limit_seconds", "视频时长限制", "单位秒。"),
   number("bilibili.download.video_size_limit_mb", "发送大小限制", "单位 MB。"),
   number("bilibili.download.max_estimated_size_mb", "预估大小限制", "0 表示不限制。"),
@@ -214,7 +200,6 @@ const GUOBA_SCHEMAS = [
     { label: "只下首 P", value: "first" },
   ]),
   number("bilibili.download.timeout_ms", "下载超时", "单位毫秒。"),
-  textArea("bilibili.download.extra_args", "BBDown 附加参数", "每行一个参数。"),
 
   group("抖音"),
   sw("douyin.enable", "启用抖音解析", "解析分享链接；普通公开作品无需登录 Cookie。"),
@@ -237,10 +222,23 @@ const GUOBA_SCHEMAS = [
   sw("groups.cleanup.delete_orphan_profiles", "删除孤立配置", "没有可用通知路径时删除 profile。"),
   sw("groups.cleanup.keep_if_private_possible", "保留可私聊用户", "能私聊时保留用户配置。"),
 
-  group("网易云任务"),
-  sw("netease_partner.enable", "启用网易云任务", "总开关。"),
+  group("点歌"),
+  sw("music.enable", "启用点歌", "按平台搜索，播放自动启用多音源回退和 unblock。"),
+  select("music.default_platform", "默认音乐平台", [{label:"网易云",value:"netease"},{label:"QQ音乐",value:"qq"},{label:"酷狗",value:"kugou"},{label:"酷我",value:"kuwo"},{label:"咪咕",value:"migu"},{label:"汽水",value:"soda"}]),
+  select("music.quality", "音乐音质", ["auto","standard","higher","high","lossless","hires"].map(value=>({label:value,value}))),
+  number("music.search_limit", "每页歌曲数", "1–30。"),
+  number("music.session_timeout_ms", "选歌有效期", "单位毫秒。"),
+  number("music.download_timeout_ms", "音频下载超时", "单位毫秒。"),
+  number("music.max_size_mb", "音频体积上限", "单位 MiB。"),
+  sw("music.voice_one_second", "尝试一秒语音显示", "仅改变消息时长字段；当前 NapCat 会重新计算实际时长，默认关闭。"),
+
+  group("TuneWeave 服务"),
   input("tuneweave.api_url", "TuneWeave 服务地址", "自托管 TuneWeave，默认 http://127.0.0.1:7832。"),
   number("tuneweave.request_timeout_ms", "TuneWeave 请求超时", "单位毫秒。"),
+  sw("tuneweave.auto_update", "TuneWeave 开机自动更新", "仅升级低于插件最低要求的本机托管实例；下载校验后重启并通知主人，失败尝试恢复旧版。"),
+  number("tuneweave.update_delay_ms", "TuneWeave 开机更新延迟", "单位毫秒，默认 180000（三分钟）。关闭工具自动安装时也暂停自动更新。"),
+  group("网易云任务"),
+  sw("netease_partner.enable", "启用网易云任务", "总开关。"),
   cron("netease_partner.schedule", "执行时间", "自动任务 cron。"),
   sw("netease_partner.auto_catch_up", "启动补跑", "错过当天任务后启动补跑。"),
   sw("netease_partner.notify_master", "给主人发结果图", "自动任务完成后私聊给主人发送图片报告。"),
@@ -342,6 +340,7 @@ export function applyGuobaFormData(config, data = {}) {
   for (const schema of GUOBA_SCHEMAS) {
     if (!schema.field || !hasSubmittedValue(data, schema.field)) continue
     let value = getSubmittedValue(data, schema.field)
+    if (CRON_FIELDS.has(schema.field) && value === quartzCronToGuobaCron(getPath(config, schema.field))) value = getPath(config, schema.field)
     if (ARRAY_FIELDS.has(schema.field)) value = textToArray(value)
     if (NUMBER_FIELDS.has(schema.field)) value = toNumber(value)
     setPath(next, schema.field, value)
@@ -462,7 +461,7 @@ function arrayToText(value) {
 function textToArray(value) {
   if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean)
   return String(value || "")
-    .split(/[\n,]/)
+    .split(/\r?\n/)
     .map(item => item.trim())
     .filter(Boolean)
 }
@@ -478,7 +477,7 @@ function toNumber(value) {
   return Number(value)
 }
 
-function getPath(target, path) {
+export function getPath(target, path) {
   let current = target
   for (const key of parsePath(path)) {
     if (current == null) return undefined

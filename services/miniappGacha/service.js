@@ -1,3 +1,4 @@
+import { createProfileRequestGuard } from "../../core/login/requestGuard.js"
 import { AuthKeyService, buildGachaLogUrl, getServer } from "../mihoyoAuthKey/service.js"
 import { importRuntimeModule, pickRole, getRoleUid } from "../pluginBridge/common.js"
 
@@ -21,7 +22,15 @@ export class MiniappGachaService {
     if (running.has(key)) throw new Error("该账号的小助手记录正在同步，请稍后再试。")
     running.add(key)
     try {
-      const auth = await this.auth.getAuthKey({ profile, game: "gs", uid, region, authAppId: "webview_gacha" })
+      let guard = createProfileRequestGuard(profile)
+      const getAuthKey = this.auth.getAuthKeyForProfile || this.auth.getAuthKey
+      await guard?.()
+      const auth = await getAuthKey.call(this.auth, {
+        qq: String(profile.user?.qq || e.user_id), profileId, profile, game: "gs", uid, region, authAppId: "webview_gacha",
+        onRefreshedProfile: async updated => { guard = createProfileRequestGuard(updated); await guard?.() },
+        beforeRequest: async () => guard?.(),
+      })
+      await guard?.()
       const response = await this.fetch("https://www.lelaer.com/outputGacha.php", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -32,6 +41,7 @@ export class MiniappGachaService {
       let json
       try { json = await response.json() } catch { throw new Error("小助手接口返回了非 JSON 数据。") }
       if (!Array.isArray(json?.list)) throw new Error("小助手未返回记录，请检查登录状态或稍后重试。")
+      await guard?.()
       const grouped = validateMiniappRecords(json.list, uid, json.info?.uid ?? json.uid)
       const GachaLog = await this.loadGachaLog()
       const model = new GachaLog({ ...e, user_id: String(e.user_id), uid, isSr: false, game: "gs", msg: "#更新小助手抽卡记录" })
@@ -44,6 +54,7 @@ export class MiniappGachaService {
         const previousIds = new Set(previous.map(record => String(record.id)))
         return { type: Number(type), name: POOLS[type], received: records.length, added: merged.filter(record => !previousIds.has(String(record.id))).length, total: merged.length, merged }
       })
+      await guard?.()
       for (const pool of pending) {
         model.type = pool.type
         model.writeJson(pool.merged)

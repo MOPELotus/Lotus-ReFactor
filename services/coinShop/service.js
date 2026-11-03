@@ -1,14 +1,19 @@
+import { withMiyousheAccount } from "../miyoushe/client.js"
 import { randomUUID } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
-import { loadLoggedInProfile, normalizeProfileId } from "../../core/config/profile.js"
+import { loadLoggedInProfile, normalizeProfileId, getProfileLifetime, getProfileSnapshotGuard } from "../../core/config/profile.js"
+import { getAccountGeneration } from "../../core/login/account.js"
+import { assertLoginProfileUnchanged } from "../../core/login/refresh.js"
+import { parseCookieString } from "../../core/mihoyo/cookies.js"
 import { notifyUser } from "../../core/transport/notify.js"
-import { CoinShopClient, isCoinShopLimited } from "./client.js"
+import { CoinShopClient, coinShopLimitKind, coinShopLimitMessage } from "./client.js"
 import { CoinShopStore } from "./store.js"
 import { CoinShopTracking } from "./tracking.js"
+import { createCaptchaEventReporter } from "../../core/captcha/notify.js"
 
 const ACTIVE = new Set(["scheduled", "preparing", "submitting"])
 const accountId = profile => String(profile.account?.stuid || profile.account?.ltuid || "")
-const gameKey = { hk4e_cn: "gs", hkrpg_cn: "sr", nap_cn: "zzz" }
+const gameKey = { hk4e_cn: "gs", hkrpg_cn: "sr", nap_cn: "zzz", bh3_cn: "bh3", nxx_cn: "nxx", bh2_cn: "bh2" }
 
 export class CoinShopService {
   constructor(options = {}) {
@@ -25,6 +30,7 @@ export class CoinShopService {
     })
     this.running = new Map()
     this.accountLocks = new Set()
+    this.captchaStates = new Map()
     this.initializing = null
     this.timer = null
     this.tracking = new CoinShopTracking(this)
@@ -71,7 +77,10 @@ export class CoinShopService {
   async listPlans(qq, profileId) {
     await this.initialize()
     return (await this.store.list()).filter(plan => plan.qq === String(qq) && (!profileId || plan.profileId === Number(profileId)))
-      .sort((a, b) => b.createdAt - a.createdAt).slice(0, 30)
+      .sort((a, b) => b.createdAt - a.createdAt).slice(0, 30).map(plan => {
+        const captcha = this.captchaStates.get(plan.id)
+        return captcha?.qq === plan.qq ? { ...plan, captcha: { events: captcha.events, running: this.running.has(plan.id) && ACTIVE.has(plan.status) } } : plan
+      })
   }
 
   async destinations({ qq, profileId = 1, goodsId }) {
@@ -178,6 +187,13 @@ export class CoinShopService {
   async run(plan) {
     if (this.running.has(plan.id) || this.accountLocks.has(plan.accountId)) return
     const controller = new AbortController()
+    const captchaController = new AbortController()
+    let captchaTimer
+    const armCaptchaBudget = ms => {
+      clearTimeout(captchaTimer)
+      captchaTimer = setTimeout(() => captchaController.abort(new DOMException("商城验证码等待已超时", "TimeoutError")), ms)
+      captchaTimer.unref?.()
+    }
     this.running.set(plan.id, controller)
     this.accountLocks.add(plan.accountId)
     let submitting = false
@@ -188,6 +204,11 @@ export class CoinShopService {
       }
       if (!await this.store.update(plan.id, { status: "preparing", message: "正在检查登录态、余额与兑换目标" }, ["scheduled"])) return
       const profile = await this.loadProfile(plan.qq, plan.profileId)
+      const snapshotGuard = getProfileSnapshotGuard(profile)
+      const expectedGeneration = snapshotGuard?.generation ?? getAccountGeneration(plan.qq, plan.profileId)
+      const expectedLifetime = snapshotGuard?.lifetime ?? getProfileLifetime(plan.qq, plan.profileId)
+      const expectedCookie = cookieKey(profile.account?.cookie)
+      assertLoginProfileUnchanged(profile, profile, { qq: plan.qq, profileId: plan.profileId, expectedGeneration, expectedLifetime })
       if (accountId(profile) !== plan.accountId) throw new Error("profile 绑定的账号已变化，请重新预约。")
       this.assertDevice(profile)
       const good = await this.client.detail(plan.goodsId, profile)
@@ -219,7 +240,39 @@ export class CoinShopService {
         }
       }
       const interval = plan.retryIntervalMs || 500
-      const deadline = plan.opensAt + (plan.windowMs || 20000)
+      let deadline = plan.opensAt + (plan.windowMs || 20000)
+      let externalDeadlineExtended = false
+      let manualDeadlineExtended = false
+      const reporter = createCaptchaEventReporter({ send: text => this.notify(plan, text) })
+      const onCaptchaEvent = async event => {
+        const publicEvent = shopCaptchaEvent(event, this.now())
+        if (!publicEvent) return
+        if (!plan.trackingId && publicEvent.type === "captcha:manual-link" && publicEvent.link && !manualDeadlineExtended && !controller.signal.aborted && !captchaController.signal.aborted) {
+          manualDeadlineExtended = true
+          deadline = Math.max(deadline, this.now() + 185000)
+          armCaptchaBudget(185000)
+        }
+        for (const [id, state] of this.captchaStates) if (state.updatedAt + 600000 < this.now()) this.captchaStates.delete(id)
+        const state = this.captchaStates.get(plan.id) || { qq: plan.qq, events: [] }
+        state.updatedAt = this.now()
+        state.events = [...state.events, publicEvent].slice(-32)
+        this.captchaStates.set(plan.id, state)
+        while (this.captchaStates.size > 64) this.captchaStates.delete(this.captchaStates.keys().next().value)
+        await reporter(publicEvent)
+      }
+      const canRetry = () => {
+        assertLoginProfileUnchanged(profile, profile, { qq: plan.qq, profileId: plan.profileId, expectedGeneration, expectedLifetime })
+        return !controller.signal.aborted && !captchaController.signal.aborted && !this.tracking.stopped &&
+          this.now() <= deadline && (!plan.trackingId || !this.tracking.paused.has(plan.trackingId))
+      }
+      const assertBinding = current => {
+        assertLoginProfileUnchanged(profile, current, { qq: plan.qq, profileId: plan.profileId, expectedGeneration, expectedLifetime })
+        if (cookieKey(current.account?.cookie) !== expectedCookie) throw new Error("profile 的登录凭据已变化，请重新预约。")
+        if (accountId(current) !== plan.accountId || current.device?.id !== profile.device?.id || current.device?.fp !== profile.device?.fp) throw new Error("profile 的账号或设备绑定已变化，请重新预约。")
+        if (plan.trackingId && plan.role && String(current.account.current_uid?.[gameKey[plan.gameBiz]] || "") !== plan.role.uid) throw new Error("profile 的游戏 UID 绑定已变化，请重新预约。")
+        const roles = current.account?.game_roles?.[gameKey[plan.gameBiz]]
+        if (plan.role && Array.isArray(roles) && !roles.some(role => String(role.uid || role.game_uid || role) === plan.role.uid)) throw new Error("预约角色已不在 profile 绑定列表，请重新预约。")
+      }
       const maxAttempts = plan.trackingId ? Math.ceil(((plan.preStartMs || 0) + (plan.windowMs || 20000)) / interval) + 2 : 30
       for (let attempt = 1; attempt <= maxAttempts && this.now() <= deadline; attempt++) {
         if (controller.signal.aborted) return
@@ -228,15 +281,104 @@ export class CoinShopService {
         if (plan.trackingId && !(await this.store.listTrackers()).some(rule => rule.id === plan.trackingId && rule.enabled)) {
           await this.cancel(plan.qq, plan.id); return
         }
-        // Persist before POST. A crash or lost response must never trigger a replay.
-        if (!await this.store.update(plan.id, { status: "submitting", attempts: attempt, ...(attempt === 1 ? { firstAttemptAt: this.now() } : {}), message: this.now() < plan.opensAt ? "开放前连续尝试兑换" : "正在提交兑换" }, ["preparing"])) return
-        submitting = true
-        const result = await this.client.exchange(plan, profile, controller.signal)
+        submitting = false
+        const context = {
+          onCaptchaEvent,
+          beforeCaptchaRequest: async () => {
+            const assertActive = () => {
+              controller.signal.throwIfAborted()
+              if (!canRetry()) throw new Error("兑换已取消或窗口已结束，未提交验证码。")
+              assertLoginProfileUnchanged(profile, profile, { qq: plan.qq, profileId: plan.profileId, expectedGeneration, expectedLifetime })
+            }
+            assertActive()
+            const latest = (await this.store.list()).find(item => item.id === plan.id && item.qq === plan.qq)
+            assertActive()
+            if (latest?.status !== "preparing") throw new Error("兑换计划已停止，未提交验证码。")
+            if (plan.trackingId) {
+              const rules = await this.store.listTrackers()
+              assertActive()
+              if (!rules.some(rule => rule.id === plan.trackingId && rule.enabled)) throw new Error("追踪已暂停，未提交验证码。")
+            }
+            const current = await this.loadProfile(plan.qq, plan.profileId)
+            assertActive()
+            assertBinding(current)
+          },
+          captchaSignal: plan.trackingId
+            ? AbortSignal.any([controller.signal, AbortSignal.timeout(Math.max(1, Math.ceil(deadline - this.now())))])
+            : AbortSignal.any([controller.signal, captchaController.signal]),
+          onCaptchaRisk: async () => {
+            submitting = false
+            if (!plan.trackingId && !externalDeadlineExtended) {
+              externalDeadlineExtended = true
+              deadline = Math.max(deadline, this.now() + 180000)
+              armCaptchaBudget(180000)
+            }
+            return Boolean(await this.store.update(plan.id, { status: "preparing", message: "商城要求极验 v4，正在尝试自动验证" }, ["submitting"]))
+          },
+          beforeRetry: async () => {
+            controller.signal.throwIfAborted()
+            if (!canRetry()) return false
+            const latestProfile = await this.loadProfile(plan.qq, plan.profileId)
+            if (!canRetry()) return false
+            assertBinding(latestProfile)
+            if (plan.trackingId) {
+              if (!(await this.store.listTrackers()).some(rule => rule.id === plan.trackingId && rule.enabled) || !canRetry()) return false
+            }
+            const fresh = await this.client.detail(plan.goodsId, latestProfile)
+            if (!canRetry()) return false
+            this.assertGood(fresh)
+            if (fresh.price !== plan.price || fresh.type !== plan.type) throw new Error("商品价格或类型已变化，请重新预约。")
+            const points = await this.client.points(latestProfile)
+            if (!canRetry()) return false
+            if (points < plan.price) throw new Error("米游币余额不足，预约停止。")
+            if (plan.role) {
+              if (fresh.gameBiz !== plan.role.gameBiz) throw new Error("商品游戏绑定已变化")
+              const roles = await this.client.roles(latestProfile, fresh.gameBiz)
+              if (!canRetry()) return false
+              if (!roles.some(role => role.uid === plan.role.uid && role.region === plan.role.region && role.gameBiz === plan.role.gameBiz)) throw new Error("预约角色已不在账号绑定列表，请重新预约。")
+            } else {
+              const addresses = await this.client.addresses(latestProfile)
+              if (!canRetry()) return false
+              if (!addresses.some(address => address.id === plan.addressId)) throw new Error("预约收货地址已失效，请重新预约。")
+            }
+            const updated = await this.store.update(plan.id, { status: "submitting", message: "商城验证通过，正在重新提交兑换" }, ["preparing"])
+            return Boolean(updated) && canRetry()
+          },
+          canRetry,
+          onSubmit: () => { submitting = true },
+          onRetrySkipped: async () => {
+            await this.store.update(plan.id, { status: "preparing", message: "兑换条件已变化，未提交" }, ["submitting"])
+          },
+        }
+        const result = await withMiyousheAccount(profile, async () => {
+          // Other plugins can hold the account lock beyond this plan's window.
+          // Stay cancellable while queued, then recheck binding before dispatch.
+          if (!canRetry()) return { retcode: -1, message: "兑换已取消或窗口已结束，未提交。" }
+          const currentProfile = await this.loadProfile(plan.qq, plan.profileId)
+          if (!canRetry()) return { retcode: -1, message: "兑换已取消或窗口已结束，未提交。" }
+          assertBinding(currentProfile)
+          if (plan.trackingId) {
+            if (!(await this.store.listTrackers()).some(rule => rule.id === plan.trackingId && rule.enabled) || !canRetry()) return { retcode: -1, message: "追踪已暂停或窗口已结束，未提交。" }
+          }
+          // Persist immediately before dispatch; only the synchronous client
+          // callback marks the in-memory request as actually being submitted.
+          if (!await this.store.update(plan.id, { status: "submitting", attempts: attempt, ...(attempt === 1 ? { firstAttemptAt: this.now() } : {}), message: this.now() < plan.opensAt ? "开放前连续尝试兑换" : "正在提交兑换" }, ["preparing"])) return { retcode: -1, message: "兑换计划已取消，未提交。" }
+          return this.client.exchange(plan, currentProfile, controller.signal, context)
+        })
         if (result.retcode === 0) { await this.finish(plan, "succeeded", "兑换成功，请查看米游社兑换记录或游戏内邮件。"); return }
         submitting = false
         const message = String(result.message || `兑换失败（${result.retcode}）`)
-        if (isCoinShopLimited(result)) {
-          await this.finish(plan, "failed", `需要在米游社处理验证或风控：${message}`, { errorKind: "verification" }); return
+        const limitKind = coinShopLimitKind(result)
+        if (limitKind) {
+          if (limitKind === "verification" && plan.trackingId && !result.captchaUnavailable && attempt < maxAttempts && this.now() + interval <= deadline) {
+            await this.store.update(plan.id, { status: "preparing", message: "商城验证未通过，将按追踪间隔重新尝试" })
+            await this.wait(interval, controller.signal)
+            continue
+          }
+          if (limitKind === "verification" && plan.trackingId && result.captchaUnavailable) {
+            await this.finish(plan, "failed", "外部验证码服务暂不可用，本次兑换已结束，追踪规则继续按轮询计划运行。", { errorKind: "verification" }); return
+          }
+          await this.finish(plan, "failed", coinShopLimitMessage(result), { errorKind: limitKind }); return
         }
         const retryable = /未到.*(时间|开始)|尚未.*(开始|开放)|系统繁忙|服务繁忙|稍后重试/.test(message) || (plan.trackingId && /未开始|未开放|已抢光|库存不足|已兑完|售罄/.test(message))
         if (!retryable || attempt === maxAttempts || this.now() + interval > deadline) { await this.finish(plan, "failed", message); return }
@@ -247,10 +389,13 @@ export class CoinShopService {
     } catch (error) {
       const latest = (await this.store.list()).find(p => p.id === plan.id)
       if (latest?.status === "cancelled") return
+      const limitKind = coinShopLimitKind(error)
       await this.finish(plan, submitting ? "unknown" : "failed", submitting
         ? "兑换提交后连接异常，结果待确认。请查看米游社兑换记录，不会自动重发，以免重复扣币。"
-        : error.message, isCoinShopLimited(error) ? { errorKind: "verification" } : /绑定.*变化|账号已变化|角色已不在/.test(error.message) ? { errorKind: "binding" } : {})
+        : coinShopLimitMessage(error) || error.message, limitKind ? { errorKind: limitKind } : error.code === "LOTUS_ACCOUNT_CHANGED" || /绑定.*变化|账号已变化|登录凭据已变化|角色已不在/.test(error.message) ? { errorKind: "binding" } : {})
     } finally {
+      clearTimeout(captchaTimer)
+      captchaController.abort()
       this.running.delete(plan.id)
       this.accountLocks.delete(plan.accountId)
     }
@@ -263,4 +408,21 @@ export class CoinShopService {
     try { await this.notify(plan, `[米游币兑换]${plan.goodsName}\nprofile ${plan.profileId} · 计划 ${plan.id}\n${message}`) }
     catch (error) { globalThis.logger?.warn?.(`[Lotus-Plugin] 兑换结果通知失败 ${plan.id}：${error.message}`) }
   }
+}
+
+function cookieKey(cookie) {
+  const fields = cookie && typeof cookie === "object" ? cookie : parseCookieString(cookie)
+  return JSON.stringify(Object.entries(fields).map(([key, value]) => [key, String(value)]).sort(([a], [b]) => a.localeCompare(b)))
+}
+
+function shopCaptchaEvent(event, time) {
+  if (!event || !["captcha:start", "captcha:provider-start", "captcha:provider-fail", "captcha:provider-skip", "captcha:provider-wait", "captcha:refresh-challenge", "captcha:manual-link", "captcha:success", "captcha:fail"].includes(event.type)) return null
+  const result = { type: event.type, time, message: String(event.message || "验证码状态已更新。").slice(0, 1200) }
+  if (event.type === "captcha:manual-link") {
+    try {
+      const url = new URL(event.link)
+      if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) result.link = url.href
+    } catch {}
+  }
+  return result
 }

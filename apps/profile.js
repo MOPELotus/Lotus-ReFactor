@@ -74,7 +74,7 @@ export function buildProfileCardData(profile, profiles = []) {
       { label: "通行证", value: maskSecret(account.ltuid || account.stuid) || "未绑定" },
       { label: "Cookie", value: account.cookie ? "已保存" : "未保存" },
       { label: "SToken", value: account.stoken ? "已保存" : "未保存" },
-      { label: "设备信息", value: device.bound ? `${device.name || device.model || "已绑定"}` : "未绑定" },
+      { label: "设备信息", value: device.bound ? `${device.name || device.model || "已绑定"}` : device.generated ? `自动设备 · ${device.model || device.name}${device.fp ? "" : " · FP 待获取"}` : "未绑定" },
     ],
     roles: [
       { label: "原神", value: roleText(roleCounts.gs, currentUid.gs) },
@@ -98,7 +98,7 @@ export function buildProfileCardData(profile, profiles = []) {
     ].filter(Boolean),
     warnings: [
       account.role_sync_error ? `角色同步：${account.role_sync_error}` : "",
-      device.bound ? "" : "社区签到需要先绑定设备信息。",
+      device.id && device.fp ? "" : "社区任务需要配对的设备 ID 与 FP；自动设备将补全 FP，也可绑定真机。",
     ].filter(Boolean),
   }
 }

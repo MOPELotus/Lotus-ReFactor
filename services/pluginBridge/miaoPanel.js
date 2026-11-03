@@ -1,6 +1,7 @@
 import { registerProfileWithGenshin } from "../genshinBridge/profile.js"
 import { resolveServer } from "../../core/mihoyo/regions.js"
 import { createIsolatedEvent, getRoleUid, importRuntimeModule, pickRole } from "./common.js"
+import { withMysRequestProfile } from "../intercept/mys-request-context.js"
 
 export class MiaoPanelBridge {
   constructor(options = {}) {
@@ -19,7 +20,7 @@ export class MiaoPanelBridge {
       registerProfile: this.registerProfile,
     })
 
-    await ProfileList.refreshMys(event)
+    await withMysRequestProfile(profile, () => ProfileList.refreshMys(event))
     return {
       ok: true,
       game,
@@ -32,6 +33,7 @@ export class MiaoPanelBridge {
 }
 
 export async function createMiaoProfileEvent({ e, profile, profileId = 1, game = "gs", msg, forwardReplies = true, registerProfile = registerProfileWithGenshin } = {}) {
+  if (profile?.user?.qq && String(profile.user.qq) !== String(e?.user_id || "")) throw new Error("请求的 profile 与 QQ 归属不匹配")
   if (!["gs", "sr"].includes(game)) {
     throw new Error("miao 面板只支持原神和星铁")
   }
@@ -59,6 +61,7 @@ export async function createMiaoProfileEvent({ e, profile, profileId = 1, game =
     isSr: game === "sr",
     mysSelfUid: true,
     noTips: false,
+    lotusProfileContext: { qq: String(e.user_id), profileId },
     forwardReplies,
   })
   event.runtime = createProfileScopedRuntime(event.runtime, {

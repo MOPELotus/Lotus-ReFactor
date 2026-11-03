@@ -1,3 +1,5 @@
+import { createCaptchaEventReporter } from "../../core/captcha/notify.js"
+import { notifyUser } from "../../core/transport/notify.js"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import {
@@ -6,9 +8,10 @@ import {
 } from "../../core/config/profile.js"
 import { isCookieRefreshableResponse } from "../../core/captcha/mysHandler.js"
 import { deviceHeaders } from "../../core/devices/service.js"
-import { AccountService } from "../../core/login/account.js"
+import { refreshAccountAndSync, isAccountChangedError } from "../../core/login/refresh.js"
 import { resolveServer } from "../../core/mihoyo/regions.js"
-import { registerProfileWithGenshin } from "../genshinBridge/profile.js"
+import { requestGenshinMysApi } from "../genshinBridge/request.js"
+import { bindMysRequestProfile } from "../intercept/mys-request-context.js"
 
 const GAME_NAMES = Object.freeze({
   gs: "原神",
@@ -19,9 +22,11 @@ const GAME_NAMES = Object.freeze({
 export class DailyNoteService {
   constructor(options = {}) {
     this.MysApi = options.MysApi
+    this.notify = options.notify || notifyUser
+    this.captchaOptions = { fetchImpl: options.fetch, solveCaptchaImpl: options.solveCaptcha, onCaptchaEvent: options.onCaptchaEvent }
   }
 
-  async collect({ qq, profileId, games = ["gs", "sr", "zzz"] } = {}) {
+  async collect({ qq, profileId, games = ["gs", "sr", "zzz"], onCaptchaEvent } = {}) {
     const profileIds = profileId ? [profileId] : await listProfileIds(qq)
     const results = []
 
@@ -63,7 +68,7 @@ export class DailyNoteService {
         }
 
         for (const role of roles) {
-          results.push(await this.queryDailyNote(profile, game, role))
+          results.push(await this.queryDailyNote(profile, game, role, { onCaptchaEvent }))
         }
       }
     }
@@ -71,7 +76,12 @@ export class DailyNoteService {
     return results
   }
 
-  async queryDailyNote(profile, game, role) {
+  async queryDailyNote(profile, game, role, { onCaptchaEvent = this.captchaOptions.onCaptchaEvent } = {}) {
+    const owner = profile?.user?.qq
+    const reporter = onCaptchaEvent || (owner ? createCaptchaEventReporter({
+      send: message => this.notify(String(owner), message, { prefer: "private", allowGroupFallback: false }),
+    }) : undefined)
+    const captchaOptions = { ...this.captchaOptions, onCaptchaEvent: reporter }
     const uid = String(role.uid || role.game_uid || role)
     const profileId = profile.profile?.id || 1
     try {
@@ -79,6 +89,7 @@ export class DailyNoteService {
       let currentProfile = profile
       let res = await requestDailyNote({
         MysApi,
+        captchaOptions,
         profile: currentProfile,
         game,
         role,
@@ -87,6 +98,7 @@ export class DailyNoteService {
 
       if (isCookieRefreshableResponse(res)) {
         const refreshed = await refreshProfileForDailyNote(currentProfile).catch(error => {
+          if (isAccountChangedError(error)) throw error
           globalThis.logger?.warn?.(`[Lotus-Plugin] daily note refresh expired CK failed: ${error.message}`)
           return null
         })
@@ -94,6 +106,7 @@ export class DailyNoteService {
           currentProfile = refreshed
           res = await requestDailyNote({
             MysApi,
+            captchaOptions,
             profile: currentProfile,
             game,
             role,
@@ -125,6 +138,7 @@ export class DailyNoteService {
         details: formatDailyNoteDetails(game, res.data),
       }
     } catch (error) {
+      if (isAccountChangedError(error)) throw error
       return {
         ok: false,
         profileId,
@@ -237,6 +251,7 @@ function normalizeRoles(roles = []) {
 
 async function requestDailyNote({
   MysApi,
+  captchaOptions,
   profile,
   game,
   role,
@@ -254,8 +269,14 @@ async function requestDailyNote({
     log: false,
   })
   applyServerToMysApi(api, server)
-  return api.getData("dailyNote", {
-    headers: deviceHeaders(profile.device),
+  bindMysRequestProfile(api, profile)
+  return requestGenshinMysApi({
+    ...captchaOptions,
+    mysApi: api,
+    profileContext: { qq: String(profile.user?.qq || ""), profileId: profile.profile?.id || 1 },
+    type: "dailyNote",
+    data: { headers: deviceHeaders(profile.device) },
+    e: { game, server, user_id: profile.user?.qq },
   })
 }
 
@@ -263,11 +284,7 @@ async function refreshProfileForDailyNote(profile) {
   const qq = profile?.user?.qq
   const profileId = profile?.profile?.id || 1
   if (!qq) return null
-  const refreshed = await new AccountService().refresh(String(qq), profileId)
-  await registerProfileWithGenshin({ qq: String(qq), profile: refreshed }).catch(error => {
-    globalThis.logger?.debug?.(`[Lotus-Plugin] daily note register refreshed CK failed: ${error.message}`)
-  })
-  return refreshed
+  return refreshAccountAndSync(String(qq), profileId, { expectedProfile: profile })
 }
 
 function valuePair(current, max) {

@@ -110,6 +110,9 @@ export class LotusDevice extends BasePlugin {
         input: payload,
         nickname: this.e.sender?.card || this.e.sender?.nickname || "",
       })
+      if (service.lastSyncStatus?.pending) {
+        await replyText(this, "[荷花插件]设备信息已保存，上游缓存同步暂未完成，将自动重试。")
+      }
       return await this.replyProfile(profile, userId, profileId)
     } catch (error) {
       await replyText(this, `[荷花插件]设备绑定失败：${error.message}`)
