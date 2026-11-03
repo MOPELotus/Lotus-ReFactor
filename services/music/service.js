@@ -2,6 +2,7 @@ import path from "node:path"
 import QRCode from "qrcode"
 import { setTimeout as sleep } from "node:timers/promises"
 import { TuneWeaveService } from "../tuneweave/service.js"
+import { resolveQrProfile } from "../tuneweave/auth.js"
 import { NeteasePartnerService } from "../neteasePartner/service.js"
 import { downloadRanges } from "../media/range-download.js"
 import { resolveCommandPath } from "../bilibili/service.js"
@@ -100,8 +101,8 @@ export class MusicService {
       const result = await this.tuneweave.request(`/v1/auth/qr/${encodeURIComponent(login.key)}`)
       if (signal?.aborted) throw new Error("扫码登录已取消")
       if (result.state === "confirmed") {
-        if (!result.profile?.authenticated || !result.profile.user_id) throw new Error("平台登录身份未核验")
-        await saveMusicAccount(login.platform, { alias: login.alias, uid: result.profile.user_id, nickname: result.profile.nickname || "", credential: result.caller_credential?.value || "" })
+        const profile = await resolveQrProfile(this.tuneweave, { platform: login.platform, alias: login.alias, profile: result.profile, signal })
+        await saveMusicAccount(login.platform, { alias: login.alias, uid: profile.user_id, nickname: profile.nickname || "", credential: result.caller_credential?.value || "" })
         return { ok: true }
       }
       if (["expired", "failed", "verification_required"].includes(result.state)) throw new Error("二维码已过期或需要附加验证，请重新登录")
