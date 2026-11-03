@@ -219,7 +219,7 @@ export class LotusBilibili extends BasePlugin {
     try {
       const installPermission = new PermissionService({ permissions: globalConfig.permissions })
         .explain(this.e, "tools.install")
-      if (globalConfig.tools?.auto_install !== false && installPermission.ok) {
+      if (installPermission.ok) {
         const tools = await new ToolInstallerService({ config: globalConfig.tools }).ensureAll()
         if (!tools.ok) {
           throw new Error(`工具链初始化失败：${tools.items?.filter(item => !item.ok).map(item => `${item.name}:${item.reason}`).join(" / ") || "unknown"}`)

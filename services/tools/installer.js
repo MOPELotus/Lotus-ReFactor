@@ -31,15 +31,6 @@ export class ToolInstallerService {
   async ensureAll(options = {}) {
     const onProgress = options.onProgress || this.onProgress
     const config = normalizeToolsConfig(options.config || await this.getConfig())
-    if (config.auto_install === false) {
-      await emitProgress(onProgress, "工具链：自动安装已关闭")
-      return {
-        ok: true,
-        skipped: true,
-        reason: "auto_install_disabled",
-        items: TOOL_NAMES.map(name => ({ name, ok: true, skipped: true })),
-      }
-    }
 
     const items = []
     for (const name of TOOL_NAMES) {
@@ -195,7 +186,6 @@ export class ToolInstallerService {
 
 export function normalizeToolsConfig(config = {}) {
   return {
-    auto_install: config.auto_install !== false,
     dir: config.dir || "data/tools",
     bin_dir: config.bin_dir || "data/tools/bin",
     github_api: config.github_api || "https://api.github.com",

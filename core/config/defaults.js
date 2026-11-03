@@ -73,7 +73,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     },
     test_nine: {
       enable: true,
-      auto_start: true,
       endpoint: "http://127.0.0.1:9645/pass_uni",
       timeout_ms: 60000,
       model_dir: "data/test_nine/model",
@@ -85,7 +84,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
         "dinov3-small.onnx",
         "atten.onnx",
       ],
-      download_models: true,
     },
     ttocr: {
       enable: false,
@@ -112,7 +110,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     },
   },
   tools: {
-    auto_install: true,
     dir: "data/tools",
     bin_dir: "data/tools/bin",
     github_api: "https://api.github.com",
@@ -180,7 +177,6 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
   tuneweave: {
     api_url: "http://127.0.0.1:7832",
     request_timeout_ms: 30000,
-    auto_update: true,
     update_delay_ms: 180000,
   },
   music: {

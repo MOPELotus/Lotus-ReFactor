@@ -131,6 +131,6 @@ async function solveInWorker(state, challenge, timeoutMs, signal) {
 }
 export async function autoStartTestNineServer(options = {}) {
   const config = normalizeTestNineConfig((options.globalConfig || await loadGlobalConfig()).captcha?.test_nine)
-  if (!config.enable || !config.auto_start) return { ok: true, skipped: true }
+  if (!config.enable) return { ok: true, skipped: true }
   return new TestNineServerService({ config }).start()
 }

@@ -78,9 +78,12 @@ export function migrateGlobalConfig(config = {}) {
   const base = createDefaultGlobalConfig()
   const normalizedConfig = normalizeLegacyGlobalShape(config)
   delete normalizedConfig.python
-  if (normalizedConfig.tools) { delete normalizedConfig.tools.bbdown; delete normalizedConfig.tools.aria2 }
+  if (normalizedConfig.tools) { delete normalizedConfig.tools.auto_install; delete normalizedConfig.tools.bbdown; delete normalizedConfig.tools.aria2 }
   if (normalizedConfig.bilibili?.download) { delete normalizedConfig.bilibili.download.use_aria2; delete normalizedConfig.bilibili.download.extra_args }
+  if (normalizedConfig.tuneweave) delete normalizedConfig.tuneweave.auto_update
   if (normalizedConfig.captcha?.test_nine) {
+    delete normalizedConfig.captcha.test_nine.auto_start
+    delete normalizedConfig.captcha.test_nine.download_models
     delete normalizedConfig.captcha.test_nine.venv_path
     delete normalizedConfig.captcha.test_nine.submodule_path
     delete normalizedConfig.captcha.test_nine.install_requirements

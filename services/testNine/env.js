@@ -10,14 +10,14 @@ import { rootPath } from "../../core/path.js"
 const DEFAULT_MODELS = ["PP-HGNetV2-B4.onnx", "d-fine-n.onnx", "yolo11n.onnx", "dinov3-small.onnx", "atten.onnx"]
 const modelDownloads = new Map()
 export function normalizeTestNineConfig(config = {}) {
-  return { enable: config.enable !== false, auto_start: config.auto_start !== false, endpoint: config.endpoint || "http://127.0.0.1:9645/pass_uni", timeout_ms: Number(config.timeout_ms || 60000), model_dir: config.model_dir || "data/test_nine/model", model_repo: config.model_repo || "luguoyixiazi/model_save", model_files: Array.isArray(config.model_files) && config.model_files.length ? config.model_files.map(String) : DEFAULT_MODELS, download_models: config.download_models !== false }
+  return { enable: config.enable !== false, endpoint: config.endpoint || "http://127.0.0.1:9645/pass_uni", timeout_ms: Number(config.timeout_ms || 60000), model_dir: config.model_dir || "data/test_nine/model", model_repo: config.model_repo || "luguoyixiazi/model_save", model_files: Array.isArray(config.model_files) && config.model_files.length ? config.model_files.map(String) : DEFAULT_MODELS }
 }
 export class TestNineEnvService {
   constructor(options = {}) { this.config = options.config; this.fetch = options.fetch || globalThis.fetch; this.onProgress = options.onProgress }
   async getConfig() { return normalizeTestNineConfig(this.config || (await loadGlobalConfig()).captcha?.test_nine) }
   async ensureEnv(options = {}) {
     const config = await this.getConfig()
-    const models = (options.downloadModels ?? config.download_models) ? await this.ensureModels(config, options) : await this.modelStatus(config)
+    const models = (options.downloadModels !== false) ? await this.ensureModels(config, options) : await this.modelStatus(config)
     await import("onnxruntime-node")
     return { ok: models.ok, models, runtime: "onnxruntime-node", reason: models.ok ? "" : "验证码模型不完整" }
   }

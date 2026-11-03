@@ -18,13 +18,13 @@ export async function prepareStartupEnvironment(config, options = {}) {
   const service = options.service || new TuneWeaveService({ config: config.tuneweave })
   const progress = async message => { signal?.throwIfAborted(); try { await notify(message) } catch {} }
   signal?.throwIfAborted()
-  const local = { ...config.captcha?.test_nine, enable: true, auto_start: true, download_models: true }
+  const local = { ...config.captcha?.test_nine, enable: true }
   const isLocal = localCaptchaEndpoint(local.endpoint)
   // Legacy opt-out flags must not strand installations upgrading from old versions.
   // Remote endpoints still belong to their deployment owner.
   const effective = { ...config,
-    tools: { ...config.tools, auto_install: true, ffmpeg: { ...config.tools?.ffmpeg, enable: true } },
-    captcha: { ...config.captcha, test_nine: { ...local, auto_start: isLocal } },
+    tools: { ...config.tools, ffmpeg: { ...config.tools?.ffmpeg, enable: true } },
+    captcha: { ...config.captcha, test_nine: { ...local, enable: isLocal } },
   }
   let preparedModels
   const modelEnv = options.modelEnv || new TestNineEnvService({ config: local, onProgress: progress })

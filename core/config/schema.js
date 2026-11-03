@@ -60,7 +60,6 @@ export function validateGlobalConfig(config) {
   validateDouyinConfig(config.douyin, errors)
   validateGroupsConfig(config.groups, errors)
   if (!isObject(config.tuneweave) || !isString(config.tuneweave.api_url) || !isPositiveInteger(config.tuneweave.request_timeout_ms)) errors.push("tuneweave requires api_url and positive request_timeout_ms")
-  if (typeof config.tuneweave?.auto_update !== "boolean") errors.push("tuneweave.auto_update must be boolean")
   if (!isPositiveInteger(config.tuneweave?.update_delay_ms) || config.tuneweave.update_delay_ms > 2147483647) errors.push("tuneweave.update_delay_ms must be a positive timer interval")
   const music = config.music
   if (!isObject(music) || typeof music.enable !== "boolean" || typeof music.voice_one_second !== "boolean" || !["netease", "qq", "kugou", "kuwo", "migu", "soda"].includes(music.default_platform) || !["auto", "standard", "higher", "high", "lossless", "hires"].includes(music.quality)) errors.push("music platform, quality or switches are invalid")
@@ -268,11 +267,6 @@ function validateCaptchaConfig(captcha = {}, errors) {
     if (!Array.isArray(captcha.test_nine.model_files) || !captcha.test_nine.model_files.every(isString)) {
       errors.push("captcha.test_nine.model_files must be an array of strings")
     }
-    for (const field of ["auto_start", "download_models"]) {
-      if (typeof captcha.test_nine[field] !== "boolean") {
-        errors.push(`captcha.test_nine.${field} must be boolean`)
-      }
-    }
   }
   validateProvider(captcha.ttocr, "captcha.ttocr", errors, ["api", "resapi", "key", "query"])
   if (isObject(captcha.ttocr) && "itemid_v4" in captcha.ttocr && !isPositiveInteger(captcha.ttocr.itemid_v4)) {
@@ -308,7 +302,6 @@ function validateToolsConfig(tools = {}, errors) {
     errors.push("tools must be an object")
     return
   }
-  if (typeof tools.auto_install !== "boolean") errors.push("tools.auto_install must be boolean")
   for (const field of ["dir", "bin_dir", "github_api"]) {
     if (!isString(tools[field])) errors.push(`tools.${field} must be a string`)
   }

@@ -54,9 +54,7 @@ export async function renderToolsResult(result, userId) {
     title: "插件环境",
     subtitle: "验证码 · 音乐 · 视频",
     badge: result.ok ? "完成" : "失败",
-    message: result.skipped
-      ? "自动安装已关闭。"
-      : "本地验证码、音乐视频和合伙人共用初始化；验证码默认按本地、外部、人工顺序回退。",
+    message: "环境由插件自动维护，此指令立即检查或重试；验证码默认按本地、外部、人工顺序回退。",
     userId,
     items: (result.items || []).map(item => ({
       label: item.name,
