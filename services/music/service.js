@@ -40,9 +40,10 @@ export class MusicService {
   async search(platform, keyword, page = 1) {
     if (!(platform in MUSIC_PLATFORMS) || !keyword.trim()) throw new Error("请选择有效平台并输入歌曲关键词")
     const limit = this.config.search_limit
-    // Search stays on the requested platform; authentication and cross-platform
-    // resolution happen when the user picks a track, without mixing result lists.
-    const items = await this.tuneweave.request(`/v1/search?${new URLSearchParams({ platform, type: "track", q: keyword.trim(), limit: String(limit), offset: String((page - 1) * limit) })}`)
+    const account = (await readMusicAccounts())[platform]
+    // Use the saved identity for search as well as playback, without mixing
+    // results from other platforms or losing rotated caller credentials.
+    const items = await this.request(`/v1/search?${new URLSearchParams({ platform, type: "track", q: keyword.trim(), limit: String(limit), offset: String((page - 1) * limit), ...(account?.alias && !account.credential ? { account: account.alias } : {}) })}`)
     return items.filter(i => i.type === "track").map(i => i.data)
   }
   async resolve(track) {
