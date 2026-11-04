@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto"
 import { resolveData } from "../path.js"
 import { assertValidProfile } from "./schema.js"
 import { generateVirtualDevice } from "../devices/generated.js"
+import { deviceAndroidVersion } from "../devices/metadata.js"
 
 // Shared read/merge/write boundary for profile mutations. Slow API work stays
 // outside this gate; callers reload the profile inside before applying a patch.
@@ -396,6 +397,10 @@ export function migrateProfile(profile, fallback = {}) {
       ...base.user,
       ...profile.user,
       qq,
+    },
+    device: {
+      ...profile.device,
+      android_version: deviceAndroidVersion(profile.device),
     },
     profile: {
       ...base.profile,

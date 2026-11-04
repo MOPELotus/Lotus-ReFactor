@@ -9,6 +9,7 @@ import {
 import { formatLocalIso } from "../time.js"
 import { cookieUidValues, parseCookieString } from "../mihoyo/cookies.js"
 import { MIHOYO } from "../mihoyo/constants.js"
+import { deviceAndroidVersion } from "./metadata.js"
 import { withPendingLoginSync, syncCurrentLoginProfile } from "../login/refresh.js"
 
 const deviceOperationsKey = Symbol.for("lotus-plugin.device-binding-operations")
@@ -121,7 +122,7 @@ export class DeviceService {
         device_fp: quick.device_fp.trim(),
         name: info.deviceName || info.name || "",
         model: info.deviceModel || info.model || "",
-        android_version: info.android_version || info.osVersion || "",
+        android_version: deviceAndroidVersion(info),
         raw: sanitizeDeviceRaw(info),
       }
     }
@@ -133,7 +134,7 @@ export class DeviceService {
         device_fp: generated.device_fp,
         name: info.deviceName,
         model: info.deviceModel,
-        android_version: info.osVersion || "",
+        android_version: deviceAndroidVersion(info),
         raw: sanitizeDeviceRaw(info),
       }
     }
@@ -298,7 +299,7 @@ function buildExtFields(info, brand, deviceGuid) {
     manufacturer: info.manufacturer || brand,
     emulatorStatus: 0,
     appMemory: "512",
-    osVersion: info.osVersion || "12",
+    osVersion: deviceAndroidVersion(info) || "12",
     vendor: "unknown",
     accelerometer: "0.10001241x9.800007x0.1999938",
     sdRemain: info.sdRemain || (info.romCapacity ? undefined : 119363),
