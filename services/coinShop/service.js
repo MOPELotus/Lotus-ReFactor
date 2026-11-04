@@ -380,7 +380,7 @@ export class CoinShopService {
           }
           await this.finish(plan, "failed", coinShopLimitMessage(result), { errorKind: limitKind }); return
         }
-        const retryable = /未到.*(时间|开始)|尚未.*(开始|开放)|系统繁忙|服务繁忙|稍后重试/.test(message) || (plan.trackingId && /未开始|未开放|已抢光|库存不足|已兑完|售罄/.test(message))
+        const retryable = /未到.*(时间|开始)|尚未.*(开始|开放)|不在商品可兑换时间中|系统繁忙|服务繁忙|稍后重试/.test(message) || (plan.trackingId && /未开始|未开放|已抢光|库存不足|已兑完|售罄/.test(message))
         if (!retryable || attempt === maxAttempts || this.now() + interval > deadline) { await this.finish(plan, "failed", message); return }
         await this.store.update(plan.id, { status: "preparing", message })
         await this.wait(interval, controller.signal)
