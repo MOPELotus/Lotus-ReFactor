@@ -149,13 +149,14 @@ export class CoinShopClient {
   }
 
   async listAll({ game, profile } = {}) {
-    const goods = []
-    for (let page = 1; page <= 20; page++) {
+    const goods = [], seen = new Set()
+    for (let page = 1; ; page++) {
       const data = await this.list({ game, profile, page })
-      goods.push(...data.goods)
+      const fresh = data.goods.filter(good => !seen.has(good.id))
+      if (data.goods.length && !fresh.length) throw new Error("商城分页未前进，请稍后重试")
+      for (const good of fresh) { seen.add(good.id); goods.push(good) }
       if (page * 20 >= data.total || data.goods.length === 0) return goods
     }
-    throw new Error("该分区商品数量过多，请缩小追踪范围")
   }
 
   async points(profile) {
