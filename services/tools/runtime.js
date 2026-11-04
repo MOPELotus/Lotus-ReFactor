@@ -30,7 +30,7 @@ export async function prepareStartupEnvironment(config, options = {}) {
   const modelEnv = options.modelEnv || new TestNineEnvService({ config: local, onProgress: progress })
   const guardedModelEnv = { ensureEnv: async () => {
     signal?.throwIfAborted()
-    preparedModels = await modelEnv.ensureEnv({ onProgress: progress, checkUpdates: true })
+    preparedModels = await modelEnv.ensureEnv({ onProgress: progress, checkUpdates: true, allowOffline: true })
     signal?.throwIfAborted()
     return preparedModels
   } }

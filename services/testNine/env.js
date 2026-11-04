@@ -17,9 +17,48 @@ export class TestNineEnvService {
   async getConfig() { return normalizeTestNineConfig(this.config || (await loadGlobalConfig()).captcha?.test_nine) }
   async ensureEnv(options = {}) {
     const config = await this.getConfig()
-    const models = (options.downloadModels !== false) ? await this.ensureModels(config, options) : await this.modelStatus(config)
+    let models
+    try {
+      models = (options.downloadModels !== false) ? await this.ensureModels(config, options) : await this.modelStatus(config)
+    } catch (error) {
+      if (!options.allowOffline) throw error
+      models = { ...await this.validateLocalModels(config), updateDeferred: true }
+    }
     await import("onnxruntime-node")
-    return { ok: models.ok, models, runtime: "onnxruntime-node", reason: models.ok ? "" : "验证码模型不完整" }
+    return { ok: models.ok, models, runtime: "onnxruntime-node", reason: models.ok ? models.updateDeferred ? "本地模型已校验，联网更新检查暂不可用" : "" : "验证码模型不完整" }
+  }
+  async validateLocalModels(config) {
+    const status = await this.modelStatus(config)
+    if (!status.ok) throw new Error("验证码模型不完整，无法离线启动")
+    let receipt
+    try { receipt = JSON.parse(await fs.readFile(path.join(status.modelDir, ".lotus-model-manifest.json"), "utf8")) }
+    catch (error) { if (error.code !== "ENOENT") throw new Error("本地模型校验记录损坏，需联网重新校验") }
+    if (receipt && (receipt.repo !== status.repo || !Array.isArray(receipt.items))) throw new Error("本地模型校验记录与配置不一致")
+    const items = []
+    const ort = receipt ? null : await import("onnxruntime-node")
+    for (const item of status.items) {
+      const hash = createHash("sha256")
+      let size = 0
+      for await (const chunk of createReadStream(item.path)) { hash.update(chunk); size += chunk.length }
+      const sha256 = hash.digest("hex")
+      if (receipt) {
+        const expected = receipt.items.find(entry => entry.file === item.file)
+        if (expected?.sha256 !== sha256 || expected.size !== size) throw new Error(`模型 ${item.file} 与已验证记录不一致，需联网修复`)
+      } else {
+        // Existing deployments have no receipt yet. Load every model before
+        // accepting a local baseline; non-empty files alone are insufficient.
+        const session = await ort.InferenceSession.create(item.path, { executionProviders: ["cpu"], intraOpNumThreads: 1, interOpNumThreads: 1 })
+        await session.release()
+      }
+      items.push({ file: item.file, sha256, size })
+    }
+    if (!receipt) await this.saveModelManifest(status.modelDir, { repo: status.repo, revision: null, items })
+    return { ...status, changed: false, revision: receipt?.revision || null, validated: true }
+  }
+  async saveModelManifest(modelDir, manifest) {
+    const file = path.join(modelDir, ".lotus-model-manifest.json"), temp = `${file}.${randomUUID()}.tmp`
+    try { await fs.writeFile(temp, JSON.stringify(manifest), { flag: "wx", mode: 0o600 }); await fs.rename(temp, file) }
+    finally { await fs.rm(temp, { force: true }) }
   }
   async modelStatus(config = null) {
     const cfg = normalizeTestNineConfig(config || await this.getConfig()), modelDir = path.resolve(rootPath, cfg.model_dir)
@@ -57,7 +96,14 @@ export class TestNineEnvService {
       }
       if (!intact) missing.push({ ...item, expected })
     }
-    if (!missing.length) return { ...status, revision: metadata.sha, changed: false }
+    const manifest = { repo: cfg.model_repo, revision: metadata.sha, items: status.items.map(item => {
+      const expected = metadata.siblings.find(entry => entry.rfilename === item.file).lfs
+      return { file: item.file, sha256: expected.sha256, size: expected.size }
+    }) }
+    if (!missing.length) {
+      await this.saveModelManifest(status.modelDir, manifest)
+      return { ...status, revision: metadata.sha, changed: false }
+    }
     await fs.mkdir(status.modelDir, { recursive: true })
     for (const item of missing) {
       await (options.onProgress || this.onProgress)?.(`下载验证码模型 ${item.file}`)
@@ -71,6 +117,7 @@ export class TestNineEnvService {
         await fs.rename(temp, item.path)
       } finally { await fs.rm(temp, { force: true }) }
     }
+    await this.saveModelManifest(status.modelDir, manifest)
     return { ...await this.modelStatus(cfg), revision: metadata.sha, changed: true }
   }
 }

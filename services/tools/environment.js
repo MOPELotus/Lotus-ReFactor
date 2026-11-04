@@ -10,7 +10,7 @@ export async function initializeEnvironment(config, { onProgress, modelEnv, ...m
     try {
       await onProgress?.("正在检查本地验证码模型。")
       const env = await (modelEnv || new TestNineEnvService({ config: local, onProgress })).ensureEnv()
-      models = { name: "本地验证码", ok: env.ok, changed: env.models?.changed === true, status: `${env.runtime} · 模型 ${env.models?.items?.filter(item => item.ok).length || 0}/${env.models?.items?.length || 0}`, reason: env.reason }
+      models = { name: "本地验证码", ok: env.ok, changed: env.models?.changed === true, updateDeferred: env.models?.updateDeferred === true, status: `${env.runtime} · 模型 ${env.models?.items?.filter(item => item.ok).length || 0}/${env.models?.items?.length || 0}`, reason: env.reason }
     } catch (error) { models = { name: "本地验证码", ok: false, reason: error.message } }
   }
   const media = await initializeMediaTools(config, { onProgress, ...mediaOptions })
