@@ -7,8 +7,9 @@ import { formatLocalIso } from "../../core/time.js"
 import { notifyProfile } from "../../core/transport/notify.js"
 import { ProfileSigninService, renderSigninFailure } from "./profileSignin.js"
 
-const scheduleTasks = new Map()
-const planTasks = new Map()
+const taskState = globalThis[Symbol.for("lotus-plugin.scheduled-signin-tasks")] ||= { schedules: new Map(), plans: new Map() }
+const scheduleTasks = taskState.schedules
+const planTasks = taskState.plans
 
 export class ScheduledSigninService {
   constructor(options = {}) {
@@ -28,7 +29,7 @@ export class ScheduledSigninService {
   }
 
   async runDuePlan(planDate, now, options = {}) {
-    const plan = await this.scheduler.getOrCreatePlan(planDate, { reconcile: true })
+    let plan = await this.scheduler.getOrCreatePlan(planDate, { reconcile: true })
     if (!plan) {
       return {
         ok: true,
@@ -37,6 +38,15 @@ export class ScheduledSigninService {
         results: [],
         reason: "plan_not_found",
       }
+    }
+    // The shared plan lock waits for any live run, including across hot reloads.
+    // A remaining marker therefore belongs to an interrupted process, not a
+    // currently executing entry. Reconcile again after clearing stale markers
+    // so disabled profiles and changed fixed times are respected on recovery.
+    if (plan.entries.some(entry => entry.runningAt)) {
+      for (const entry of plan.entries) delete entry.runningAt
+      await this.scheduler.savePlan(plan)
+      plan = await this.scheduler.getOrCreatePlan(planDate, { reconcile: true })
     }
     const dueEntries = plan.entries.filter(entry => isDue(entry, now))
     const results = []
@@ -65,7 +75,7 @@ export class ScheduledSigninService {
     const results = []
     for (const entry of plan.entries) {
       if (entry.notified && !options.force) continue
-      const profile = await loadProfile(entry.qq, entry.profileId).catch(() => null)
+      const profile = await this.loadProfile(entry.qq, entry.profileId).catch(() => null)
       if (!profile) continue
       const image = await this.renderTemplate("schedule-notice", {
         title: profile.user?.nickname || `QQ ${entry.qq}`,
