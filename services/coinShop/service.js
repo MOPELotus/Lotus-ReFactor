@@ -273,8 +273,7 @@ export class CoinShopService {
         const roles = current.account?.game_roles?.[gameKey[plan.gameBiz]]
         if (plan.role && Array.isArray(roles) && !roles.some(role => String(role.uid || role.game_uid || role) === plan.role.uid)) throw new Error("预约角色已不在 profile 绑定列表，请重新预约。")
       }
-      const maxAttempts = plan.trackingId ? Math.ceil(((plan.preStartMs || 0) + (plan.windowMs || 20000)) / interval) + 2 : 30
-      for (let attempt = 1; attempt <= maxAttempts && this.now() <= deadline; attempt++) {
+      for (let attempt = 1; this.now() <= deadline; attempt++) {
         if (controller.signal.aborted) return
         const latest = (await this.store.list()).find(p => p.id === plan.id)
         if (latest?.status !== "preparing") return
@@ -367,22 +366,26 @@ export class CoinShopService {
         })
         if (result.retcode === 0) { await this.finish(plan, "succeeded", "兑换成功，请查看米游社兑换记录或游戏内邮件。"); return }
         submitting = false
+        if (!canRetry()) {
+          await this.finish(plan, "failed", "兑换已停止或窗口已结束，未继续提交。")
+          return
+        }
         const message = String(result.message || `兑换失败（${result.retcode}）`)
         const limitKind = coinShopLimitKind(result)
-        if (limitKind) {
-          if (limitKind === "verification" && plan.trackingId && !result.captchaUnavailable && attempt < maxAttempts && this.now() + interval <= deadline) {
-            await this.store.update(plan.id, { status: "preparing", message: "商城验证未通过，将按追踪间隔重新尝试" })
-            await this.wait(interval, controller.signal)
-            continue
-          }
-          if (limitKind === "verification" && plan.trackingId && result.captchaUnavailable) {
-            await this.finish(plan, "failed", "外部验证码服务暂不可用，本次兑换已结束，追踪规则继续按轮询计划运行。", { errorKind: "verification" }); return
-          }
-          await this.finish(plan, "failed", coinShopLimitMessage(result), { errorKind: limitKind }); return
+        // An explicit rejection confirms no purchase. Keep trying throughout
+        // the configured window, including unknown business error messages.
+        // Lost POST responses still take the separate unknown-result path.
+        if (/米游币.*不足|余额不足|积分不足/.test(message)) { await this.finish(plan, "failed", message); return }
+        const failure = result.captchaUnavailable
+          ? "外部验证码服务暂不可用"
+          : coinShopLimitMessage(result) || message
+        if (this.now() + interval > deadline) {
+          const remaining = deadline - this.now()
+          if (remaining > 0) await this.wait(remaining, controller.signal)
+          await this.finish(plan, "failed", `兑换窗口已结束：${failure}`, limitKind ? { errorKind: limitKind } : {})
+          return
         }
-        const retryable = /未到.*(时间|开始)|尚未.*(开始|开放)|不在商品可兑换时间中|系统繁忙|服务繁忙|稍后重试/.test(message) || (plan.trackingId && /未开始|未开放|已抢光|库存不足|已兑完|售罄/.test(message))
-        if (!retryable || attempt === maxAttempts || this.now() + interval > deadline) { await this.finish(plan, "failed", message); return }
-        await this.store.update(plan.id, { status: "preparing", message })
+        await this.store.update(plan.id, { status: "preparing", message: `${failure}；将在兑换窗口内继续尝试` })
         await this.wait(interval, controller.signal)
       }
       await this.finish(plan, "missed", "已超过本次兑换窗口，未继续提交。")
