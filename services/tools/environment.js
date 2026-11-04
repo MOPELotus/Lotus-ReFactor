@@ -23,7 +23,7 @@ export async function initializeMediaTools(config, { onProgress, installer, tune
   const result = await (installer || new ToolInstallerService({ config: config.tools, onProgress })).ensureAll()
   try {
     const ready = await (tuneweave || new TuneWeaveService({ config: config.tuneweave })).initialize({ onProgress })
-    result.items.push({ name: "TuneWeave", ok: ready.ok, changed: ready.updated === true || ready.installed === true, status: ready.version, reason: ready.message })
+    result.items.push({ name: "TuneWeave", ok: ready.ok, changed: ready.updated === true || ready.installed === true, updateDeferred: ready.updateDeferred === true, status: ready.version, reason: ready.message })
   } catch (error) {
     result.items.push({ name: "TuneWeave", ok: false, reason: error.message })
   }

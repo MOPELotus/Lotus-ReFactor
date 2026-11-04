@@ -92,76 +92,88 @@ export class ToolInstallerService {
       if (!health.ok) await emitProgress(onProgress, `工具链：${name} 需要修复：${health.reason}`)
     }
 
-    if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
-    if (name === "ffmpeg") await removeSharedFfmpegArtifacts(toolsDir)
-    await emitProgress(onProgress, `工具链：查询 ${tool.repo} 最新版本`)
-    release = await this.fetchLatestRelease(tool.repo, normalized.github_api, null)
-    asset = pickReleaseAsset(name, release.assets || [], {
-      platform: this.platform,
-      arch: this.arch,
-      patterns: tool.asset_patterns,
-    })
-    if (!asset) throw new Error(`no release asset matched ${name} ${this.platform}/${this.arch}`)
     const receiptFile = path.join(toolsDir, `${name}-install.json`)
-    let receipt
-    try { receipt = JSON.parse(await fs.readFile(receiptFile, "utf8")) } catch (error) { if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error }
-    if (health?.ok && receipt?.repo === tool.repo && receipt.assetId === asset.id && receipt.updatedAt === asset.updated_at && receipt.digest === asset.digest) {
-      const files = await fingerprintPayload(binDir, this.platform)
-      if (JSON.stringify(files) === JSON.stringify(receipt.files)) return { name, ok: true, status: "ready", path: existing, asset: asset.name }
-    }
+    let receipt, receiptInvalid = false
+    try { receipt = JSON.parse(await fs.readFile(receiptFile, "utf8")) }
+    catch (error) { if (error instanceof SyntaxError) receiptInvalid = true; else if (error.code !== "ENOENT") throw error }
+    const localFiles = health?.ok ? await fingerprintPayload(binDir, this.platform) : null
+    const localVerified = health?.ok && !receiptInvalid && (!receipt || receipt.repo === tool.repo && JSON.stringify(localFiles) === JSON.stringify(receipt.files))
+    try {
+      if (typeof this.fetch !== "function") throw new Error("fetch is unavailable")
+      if (name === "ffmpeg") await removeSharedFfmpegArtifacts(toolsDir)
+      await emitProgress(onProgress, `工具链：查询 ${tool.repo} 最新版本`)
+      release = await this.fetchLatestRelease(tool.repo, normalized.github_api, null)
+      asset = pickReleaseAsset(name, release.assets || [], {
+        platform: this.platform,
+        arch: this.arch,
+        patterns: tool.asset_patterns,
+      })
+      if (!asset) throw new Error(`no release asset matched ${name} ${this.platform}/${this.arch}`)
+      if (health?.ok && receipt?.repo === tool.repo && receipt.assetId === asset.id && receipt.updatedAt === asset.updated_at && receipt.digest === asset.digest) {
+        const files = await fingerprintPayload(binDir, this.platform)
+        if (JSON.stringify(files) === JSON.stringify(receipt.files)) return { name, ok: true, status: "ready", path: existing, asset: asset.name }
+      }
 
-    const archiveDir = path.join(toolsDir, "downloads")
-    const extractDir = path.join(toolsDir, name)
-    await fs.mkdir(archiveDir, { recursive: true })
-    await fs.mkdir(binDir, { recursive: true })
+      const archiveDir = path.join(toolsDir, "downloads")
+      const extractDir = path.join(toolsDir, name)
+      await fs.mkdir(archiveDir, { recursive: true })
+      await fs.mkdir(binDir, { recursive: true })
 
-    const archive = path.join(archiveDir, safeFileName(asset.name))
-    const attempts = Math.max(1, Number(normalized.download_retries || DEFAULT_INSTALL_ATTEMPTS))
-    let lastError = null
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      try {
-        await fs.rm(extractDir, { recursive: true, force: true })
-        await fs.mkdir(extractDir, { recursive: true })
-        await fs.rm(archive, { force: true }).catch(() => null)
-
-        await emitProgress(onProgress, `工具链：下载 ${asset.name}${attempt > 1 ? `（重试 ${attempt}/${attempts}）` : ""}`)
-        await this.downloadAsset(asset.browser_download_url || asset.url, archive, { timeoutMs: normalized.timeout_ms })
-        if (!/^sha256:[a-f0-9]{64}$/i.test(asset.digest || "")) throw new Error("发布包缺少 SHA-256，保留原工具")
-        if (await sha256File(archive) !== asset.digest.slice(7).toLowerCase()) throw new Error("FFmpeg 发布包 SHA-256 不匹配")
-        await emitProgress(onProgress, `工具链：准备 ${asset.name}`)
-        await extractArchive(this.spawn, archive, extractDir, { timeoutMs: normalized.timeout_ms })
-
-        const executable = await findExtractedExecutable(extractDir, tool.command, this.platform)
-        if (!executable) throw new Error(`${tool.command} executable not found in ${asset.name}`)
-        await runSpawn(this.spawn, executable, ["-version"], { timeoutMs: 15000 })
-        await runSpawn(this.spawn, path.join(path.dirname(executable), commandFileName("ffprobe", this.platform)), ["-version"], { timeoutMs: 15000 })
-
-        const target = await copyToolPayload(name, executable, binDir, tool.command, this.platform)
-        const receiptTemp = `${receiptFile}.${randomUUID()}.tmp`
+      const archive = path.join(archiveDir, safeFileName(asset.name))
+      const attempts = Math.max(1, Number(normalized.download_retries || DEFAULT_INSTALL_ATTEMPTS))
+      let lastError = null
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
         try {
-          await fs.writeFile(receiptTemp, JSON.stringify({ repo: tool.repo, assetId: asset.id, updatedAt: asset.updated_at, digest: asset.digest, files: await fingerprintPayload(binDir, this.platform) }), { flag: "wx" })
-          await fs.rename(receiptTemp, receiptFile)
-        } finally { await fs.rm(receiptTemp, { force: true }) }
-        await emitProgress(onProgress, `工具链：${name} 安装完成`)
+          await fs.rm(extractDir, { recursive: true, force: true })
+          await fs.mkdir(extractDir, { recursive: true })
+          await fs.rm(archive, { force: true }).catch(() => null)
 
-        return {
-          name,
-          ok: true,
-          status: "installed",
-          repo: tool.repo,
-          asset: asset.name,
-          path: target,
-          attempts: attempt,
-        }
-      } catch (error) {
-        lastError = error
-        await cleanupBrokenInstallArtifacts(archive, extractDir)
-        if (attempt < attempts) {
-          await emitProgress(onProgress, `工具链：${name} 安装包异常，已清理并准备重下：${error.message}`)
+          await emitProgress(onProgress, `工具链：下载 ${asset.name}${attempt > 1 ? `（重试 ${attempt}/${attempts}）` : ""}`)
+          await this.downloadAsset(asset.browser_download_url || asset.url, archive, { timeoutMs: normalized.timeout_ms })
+          if (!/^sha256:[a-f0-9]{64}$/i.test(asset.digest || "")) throw new Error("发布包缺少 SHA-256，保留原工具")
+          if (await sha256File(archive) !== asset.digest.slice(7).toLowerCase()) throw new Error("FFmpeg 发布包 SHA-256 不匹配")
+          await emitProgress(onProgress, `工具链：准备 ${asset.name}`)
+          await extractArchive(this.spawn, archive, extractDir, { timeoutMs: normalized.timeout_ms })
+
+          const executable = await findExtractedExecutable(extractDir, tool.command, this.platform)
+          if (!executable) throw new Error(`${tool.command} executable not found in ${asset.name}`)
+          await runSpawn(this.spawn, executable, ["-version"], { timeoutMs: 15000 })
+          await runSpawn(this.spawn, path.join(path.dirname(executable), commandFileName("ffprobe", this.platform)), ["-version"], { timeoutMs: 15000 })
+
+          const target = await copyToolPayload(name, executable, binDir, tool.command, this.platform)
+          const receiptTemp = `${receiptFile}.${randomUUID()}.tmp`
+          try {
+            await fs.writeFile(receiptTemp, JSON.stringify({ repo: tool.repo, assetId: asset.id, updatedAt: asset.updated_at, digest: asset.digest, files: await fingerprintPayload(binDir, this.platform) }), { flag: "wx" })
+            await fs.rename(receiptTemp, receiptFile)
+          } finally { await fs.rm(receiptTemp, { force: true }) }
+          await emitProgress(onProgress, `工具链：${name} 安装完成`)
+
+          return {
+            name,
+            ok: true,
+            status: "installed",
+            repo: tool.repo,
+            asset: asset.name,
+            path: target,
+            attempts: attempt,
+          }
+        } catch (error) {
+          lastError = error
+          await cleanupBrokenInstallArtifacts(archive, extractDir)
+          if (attempt < attempts) {
+            await emitProgress(onProgress, `工具链：${name} 安装包异常，已清理并准备重下：${error.message}`)
+          }
         }
       }
+      throw new Error(`${lastError?.message || `${tool.command} install failed`}；已自动重试 ${attempts} 次`)
+    } catch (error) {
+      // Only retain the exact healthy payload checked before attempting update.
+      // Missing files, receipt mismatches and a failed rollback remain errors.
+      if (localVerified && JSON.stringify(await fingerprintPayload(binDir, this.platform)) === JSON.stringify(localFiles)) {
+        return { name, ok: true, status: "ready", path: existing, updateDeferred: true, reason: "现有 FFmpeg 已通过执行与文件检查，更新暂未完成，稍后重试。" }
+      }
+      throw error
     }
-    throw new Error(`${lastError?.message || `${tool.command} install failed`}；已自动重试 ${attempts} 次`)
   }
 
   async fetchLatestRelease(repo, api = "https://api.github.com", tag = null) {

@@ -66,8 +66,9 @@ export async function startTuneWeaveLifecycle(options = {}) {
           if (result.cleanup?.removed) changed.push("旧环境清理")
           if (!result.ok) await send(`启动环境尚未就绪：${failures.join("、") || "环境检查"}；已保留原文件，可发送 #初始化环境 重试。`)
           else if (changed.length) await send(`启动环境更新完成：${changed.join("、")}，已通过就绪检查。`)
-          const updateDeferred = result.items?.some(item => item.updateDeferred)
-          if (updateDeferred) globalThis.logger?.warn?.("[Lotus-Plugin] 本地验证码已使用校验通过的现有模型启动；联网更新检查暂不可用，稍后重试")
+          const deferred = (result.items || []).filter(item => item.updateDeferred).map(item => item.name)
+          const updateDeferred = deferred.length > 0
+          if (updateDeferred) globalThis.logger?.warn?.(`[Lotus-Plugin] ${deferred.join("、")}现有环境已通过就绪检查；更新暂未完成，稍后重试`)
           if ((!result.ok || updateDeferred) && handle.attempts < (options.maxAttempts ?? 3)) schedule(options.retryDelayMs ?? 300000)
           return result
         } catch (error) {

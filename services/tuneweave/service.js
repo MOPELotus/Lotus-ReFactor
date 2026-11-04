@@ -111,39 +111,47 @@ export class TuneWeaveService {
         if (!status.ok || status.requiresUpdate) throw new Error(status.message)
         return { ...status, already: true }
       }
-      const manifest = await this.releaseManifest()
-      if (status.reachable) {
-        const comparison = compareTuneWeaveVersions(status.version, manifest.version)
-        const intact = comparison > 0 || comparison === 0 && await this.verifyInstalled(manifest)
-        if (comparison < 0 || !intact) return this.updateInstalled({ notify: onProgress, status, manifest, repair: !intact && comparison === 0 })
-        if (!status.ok) throw new Error(status.message)
-        return { ...status, already: true }
+      try {
+        const manifest = await this.releaseManifest()
+        if (status.reachable) {
+          const comparison = compareTuneWeaveVersions(status.version, manifest.version)
+          const intact = comparison > 0 || comparison === 0 && await this.verifyInstalled(manifest)
+          if (comparison < 0 || !intact) return await this.updateInstalled({ notify: onProgress, status, manifest, repair: !intact && comparison === 0 })
+          if (!status.ok) throw new Error(status.message)
+          return { ...status, already: true }
+        }
+        this.localUrl()
+        let release
+        if (!await this.verifyInstalled(manifest)) {
+          await onProgress("正在下载 TuneWeave 官方发布文件并校验 SHA-256。")
+          release = await this.downloadRelease(manifest)
+          let backup = null
+          const previous = `${this.executable}.previous-${crypto.randomUUID()}`
+          try {
+            try { await fs.rename(this.executable, previous); backup = previous } catch (error) { if (error.code !== "ENOENT") throw error }
+            await fs.rename(release.file, this.executable)
+            const ready = await this.startInstalled(release.version)
+            if (backup) await fs.rm(backup, { force: true })
+            return { ...ready, installed: true }
+          } catch (error) {
+            if (backup) {
+              await fs.rename(backup, this.executable)
+              try { await this.startInstalled() } catch {}
+            }
+            throw error
+          } finally { await fs.rm(release.file, { force: true }) }
+        }
+        await onProgress("正在启动本机 TuneWeave 服务。")
+        const ready = await this.startInstalled(release?.version)
+        if (compareTuneWeaveVersions(ready.version, manifest.version) < 0) return await this.updateInstalled({ notify: onProgress, status: ready, manifest })
+        return { ...ready, installed: Boolean(release) }
+      } catch (error) {
+        // Update/verification availability is separate from service readiness.
+        // Never accept an unhealthy service or one below the required version.
+        const current = await this.status()
+        if (!current.ok || compareTuneWeaveVersions(current.version, TUNEWEAVE_REQUIRED_VERSION) < 0) throw error
+        return { ...current, already: true, updateDeferred: true, message: "现有 TuneWeave 服务可用，联网更新或校验暂未完成，稍后重试。" }
       }
-      this.localUrl()
-      let release
-      if (!await this.verifyInstalled(manifest)) {
-        await onProgress("正在下载 TuneWeave 官方发布文件并校验 SHA-256。")
-        release = await this.downloadRelease(manifest)
-        let backup = null
-        const previous = `${this.executable}.previous-${crypto.randomUUID()}`
-        try {
-          try { await fs.rename(this.executable, previous); backup = previous } catch (error) { if (error.code !== "ENOENT") throw error }
-          await fs.rename(release.file, this.executable)
-          const ready = await this.startInstalled(release.version)
-          if (backup) await fs.rm(backup, { force: true })
-          return { ...ready, installed: true }
-        } catch (error) {
-          if (backup) {
-            await fs.rename(backup, this.executable)
-            try { await this.startInstalled() } catch {}
-          }
-          throw error
-        } finally { await fs.rm(release.file, { force: true }) }
-      }
-      await onProgress("正在启动本机 TuneWeave 服务。")
-      const ready = await this.startInstalled(release?.version)
-      if (compareTuneWeaveVersions(ready.version, manifest.version) < 0) return this.updateInstalled({ notify: onProgress, status: ready, manifest })
-      return { ...ready, installed: Boolean(release) }
     })
   }
 
