@@ -159,11 +159,16 @@ export class AtlasUpdateService {
         reason: result.reason || "version_check_failed",
       }
     }
+    const versions = parseVersionOutput(result.stdout)
+    const requested = requestedArgumentValues(args, "game").flatMap(value => value.split(",")).map(game => game.trim()).filter(game => game && game !== "all")
+    if (!Object.values(versions).some(version => version.latest) || requested.some(game => !versions[game]?.latest)) {
+      return { ...result, ok: false, command, args, reason: "version_check_incomplete", versions }
+    }
     return {
       ...result,
       command,
       args,
-      versions: parseVersionOutput(result.stdout),
+      versions,
     }
   }
 }
@@ -225,7 +230,7 @@ export async function readLocalVersionSnapshot(config = {}, fsImpl = fs) {
     mapReady: true,
     itemsReady,
     fetchedAt: map.meta?.fetchedAt || "",
-    versions: normalizeLocalVersions(map.games),
+    versions: normalizeLocalVersions(map.games, config),
   }
 }
 
@@ -370,11 +375,35 @@ async function readJson(file, fsImpl) {
   return JSON.parse(await fsImpl.readFile(file, "utf8"))
 }
 
-function normalizeLocalVersions(games = {}) {
+function requestedArgumentValues(args, name) {
+  const values = []
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] === `--${name}`) values.push(String(args[++index] || ""))
+    else if (String(args[index]).startsWith(`--${name}=`)) values.push(String(args[index]).slice(name.length + 3))
+  }
+  return values
+}
+
+function normalizeLocalVersions(games = {}, config = {}) {
+  const selectedPages = new Map()
+  for (const value of requestedArgumentValues(config.update_args || [], "page")) {
+    const separator = value.indexOf("=")
+    if (separator < 0) continue
+    const game = value.slice(0, separator)
+    selectedPages.set(game, [...(selectedPages.get(game) || []), ...value.slice(separator + 1).split(",").filter(Boolean)])
+  }
   const result = {}
   for (const [game, value] of Object.entries(games || {})) {
+    const locale = Object.entries(value?.locales || {}).find(([id, entry]) =>
+      id === (config.locale || "简体中文") || entry.locale?.folder === (config.locale || "简体中文"))?.[1]
+    const pages = locale?.pages || {}
+    const expected = [...new Set(selectedPages.get(game) || Object.keys(pages))]
+    const versions = expected.map(page => pages[page]?.sampled ? "" : String(pages[page]?.version || ""))
+    // A challenge-only scrape updates game.latestVersion while retaining old
+    // character/weapon pages. Only actual page versions prove a complete update.
+    const complete = versions.length > 0 && versions.every(Boolean) && new Set(versions).size === 1
     result[game] = {
-      latest: String(value?.game?.latestVersion || ""),
+      latest: complete ? versions[0] : "",
       live: String(value?.game?.liveVersion || ""),
     }
   }
