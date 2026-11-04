@@ -1,4 +1,4 @@
-export const TUNEWEAVE_REQUIRED_VERSION = "1.0.0-beta.2"
+export const TUNEWEAVE_REQUIRED_VERSION = "1.0.0-beta.3"
 
 export function compareTuneWeaveVersions(left, right) {
   const parse = value => {

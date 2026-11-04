@@ -44,4 +44,4 @@ B站搜索、详情及播放清单使用 TuneWeave，下载由 JS 完成，FFmpe
 
 登录推荐发送 `#B站登录`。二维码由 TuneWeave 创建和保存，Lotus 仅保存账号引用。Cookie、SESSDATA 的手填配置入口已移除，视频搜索与播放只使用 TuneWeave 保存的会话引用。直播间信息通过公开接口查询，不再附带旧 Cookie。旧账号文件保留；升级时配置中的旧凭据会先备份到本机 `data/bilibili/legacy/`，再清理旧字段，无法导入的会话需重新扫码。
 
-建议使用 [TuneWeave 1.0.0-beta.2](https://github.com/MOPELotus/TuneWeave/releases/tag/v1.0.0-beta.2) 或更新版本。beta.2 已取消播放清单中的 CDN 域名、端口与路径白名单，兼容 B站返回的新备用地址，无需额外实验补丁。
+需要 [TuneWeave 1.0.0-beta.3](https://github.com/MOPELotus/TuneWeave/releases/tag/v1.0.0-beta.3) 或更新版本，兼容搜索中的混合卡片和播放清单中的重复格式；播放地址继续支持 B站返回的 CDN 与备用地址，无需额外实验补丁。
