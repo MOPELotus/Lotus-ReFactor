@@ -11,6 +11,7 @@ import {
   BilibiliService,
   formatNumber,
   normalizeDownloadConfig,
+  resolveCommandPath,
 } from "../services/bilibili/service.js"
 import { buildMediaMessageText } from "../services/media/message.js"
 import { sendMediaFile, mediaFailureMessage } from "../services/media/files.js"
@@ -219,7 +220,10 @@ export class LotusBilibili extends BasePlugin {
     try {
       const installPermission = new PermissionService({ permissions: globalConfig.permissions })
         .explain(this.e, "tools.install")
-      if (installPermission.ok) {
+      const existingTools = await Promise.all(["ffmpeg", "ffprobe"].map(name => resolveCommandPath(name, downloadConfig.tools_path)))
+      // A video request must not wait for GitHub update checks when the
+      // installed tools are present. Startup maintenance checks their integrity.
+      if (installPermission.ok && existingTools.some(file => !file)) {
         const tools = await new ToolInstallerService({ config: globalConfig.tools }).ensureAll()
         if (!tools.ok) {
           throw new Error(`工具链初始化失败：${tools.items?.filter(item => !item.ok).map(item => `${item.name}:${item.reason}`).join(" / ") || "unknown"}`)
