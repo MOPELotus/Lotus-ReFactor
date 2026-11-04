@@ -26,12 +26,28 @@ export async function prepareStartupEnvironment(config, options = {}) {
     tools: { ...config.tools },
     captcha: { ...config.captcha, test_nine: { ...local, enable: isLocal } },
   }
-  let preparedModels
+  let preparedModels, captchaFailure
+  const startPreparedCaptcha = async () => {
+    if (!preparedModels?.ok) return
+    try {
+      const server = options.captchaServer || new TestNineServerService({ config: local, envService: { ensureEnv: async () => preparedModels } })
+      if (preparedModels.models?.changed && server.status?.().running) server.stop()
+      const ready = await server.start()
+      signal?.throwIfAborted()
+      if (!ready.ok) throw new Error("local server not ready")
+    } catch (error) {
+      signal?.throwIfAborted()
+      captchaFailure = { name: "本地验证码服务", ok: false, reason: error.code === "EADDRINUSE"
+        ? "本地验证码端口被占用，未停止占用进程；请检查旧服务，原环境已保留"
+        : "本地监听未就绪；已保留原环境" }
+    }
+  }
   const modelEnv = options.modelEnv || new TestNineEnvService({ config: local, onProgress: progress })
   const guardedModelEnv = { ensureEnv: async () => {
     signal?.throwIfAborted()
     preparedModels = await modelEnv.ensureEnv({ onProgress: progress, checkUpdates: true, allowOffline: true })
     signal?.throwIfAborted()
+    await startPreparedCaptcha()
     return preparedModels
   } }
   const tuneweave = { initialize: async ({ onProgress }) => {
@@ -43,20 +59,7 @@ export async function prepareStartupEnvironment(config, options = {}) {
   } }
   const result = await initializeEnvironment(effective, { modelEnv: guardedModelEnv, installer: options.installer, tuneweave, onProgress: progress })
   signal?.throwIfAborted()
-  if (preparedModels?.ok) {
-    try {
-      const server = options.captchaServer || new TestNineServerService({ config: local, envService: { ensureEnv: async () => preparedModels } })
-      if (preparedModels.models?.changed && server.status?.().running) server.stop()
-      const ready = await server.start()
-      signal?.throwIfAborted()
-      if (!ready.ok) throw new Error("local server not ready")
-    } catch (error) {
-      signal?.throwIfAborted()
-      result.items.push({ name: "本地验证码服务", ok: false, reason: error.code === "EADDRINUSE"
-        ? "本地验证码端口被占用，未停止占用进程；请检查旧服务，原环境已保留"
-        : "本地监听未就绪；已保留原环境" })
-    }
-  }
+  if (captchaFailure) result.items.push(captchaFailure)
   result.ok = result.items.every(item => item.ok)
   if (result.ok && preparedModels?.ok) {
     try { result.cleanup = await (options.cleanup || cleanupLegacyEnvironment)({ config, signal }) }
