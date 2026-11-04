@@ -38,8 +38,11 @@ export class CoinShopService {
 
   async initialize() {
     if (!this.initializing) this.initializing = (async () => {
-      if ((await this.store.listTrackers()).some(rule => rule.pollUnit !== "minutes" || !Number.isFinite(rule.pollMs) || rule.pollMs < 60000)) await this.store.changeTrackers(rules => {
-        for (const rule of rules) if (rule.pollUnit !== "minutes" || !Number.isFinite(rule.pollMs) || rule.pollMs < 60000) { rule.pollMs = 1800000; rule.pollUnit = "minutes" }
+      if ((await this.store.listTrackers()).some(rule => "afterMs" in rule || rule.pollUnit !== "minutes" || !Number.isFinite(rule.pollMs) || rule.pollMs < 60000)) await this.store.changeTrackers(rules => {
+        for (const rule of rules) {
+          delete rule.afterMs
+          if (rule.pollUnit !== "minutes" || !Number.isFinite(rule.pollMs) || rule.pollMs < 60000) { rule.pollMs = 1800000; rule.pollUnit = "minutes" }
+        }
       })
       const plans = await this.store.list()
       if (plans.some(p => p.status === "submitting" || p.status === "preparing")) {
@@ -119,7 +122,7 @@ export class CoinShopService {
     const plan = {
       id: randomUUID().replaceAll("-", "").slice(0, 12), qq: String(qq), profileId: id, accountId: accountId(profile), botId: String(botId),
       gameBiz: good.gameBiz,
-      ...(tracking ? { trackingId: tracking.id, cycleKey: tracking.cycleKey, preStartMs: tracking.leadMs, retryIntervalMs: tracking.intervalMs, windowMs: tracking.afterMs } : {}),
+      ...(tracking ? { trackingId: tracking.id, cycleKey: tracking.cycleKey, preStartMs: tracking.leadMs, retryIntervalMs: tracking.intervalMs } : {}),
       goodsId: good.id, goodsName: good.name, type: good.type, price: good.price,
       role, addressId: good.type === 1 ? String(addressId) : "", addressLabel,
       immediate,
@@ -198,7 +201,7 @@ export class CoinShopService {
     this.accountLocks.add(plan.accountId)
     let submitting = false
     try {
-      if (this.now() > plan.opensAt + 30000) {
+      if (!plan.trackingId && this.now() > plan.opensAt + 30000) {
         await this.finish(plan, "missed", "已经错过预约场次，未提交兑换，请重新预约。")
         return
       }
@@ -240,7 +243,9 @@ export class CoinShopService {
         }
       }
       const interval = plan.retryIntervalMs || 500
-      let deadline = plan.opensAt + (plan.windowMs || 20000)
+      const dynamicWindow = Boolean(plan.trackingId)
+      let deadline = dynamicWindow ? Infinity : plan.opensAt + (plan.windowMs || 20000)
+      let nextStateCheck = 0
       let externalDeadlineExtended = false
       let manualDeadlineExtended = false
       const reporter = createCaptchaEventReporter({ send: text => this.notify(plan, text) })
@@ -281,6 +286,33 @@ export class CoinShopService {
           await this.cancel(plan.qq, plan.id); return
         }
         submitting = false
+        if (dynamicWindow && this.now() >= nextStateCheck) {
+          let fresh, points
+          try {
+            fresh = await this.client.detail(plan.goodsId, profile)
+            points = await this.client.points(profile)
+          } catch (error) {
+            // A failed read is not evidence that stock or the sale has ended.
+            await this.store.update(plan.id, { status: "preparing", message: "官方库存或余额暂时查询失败，将继续检查" }, ["preparing"])
+            await this.wait(Math.max(2000, interval), controller.signal)
+            continue
+          }
+          if (!canRetry()) return
+          nextStateCheck = this.now() + Math.max(2000, interval)
+          const serverNow = fresh.serverNow || this.now()
+          const reason = fresh.status === "ended" ? "官方商品兑换已结束"
+            : serverNow >= plan.opensAt && fresh.status === "scheduled" && fresh.opensAt > plan.opensAt + 1000 ? "官方已切换至下一期开放时间"
+            : serverNow >= plan.opensAt && (fresh.status === "sold_out" || (!fresh.unlimited && fresh.stock === 0)) ? "官方库存已售罄"
+            : points < plan.price ? "米游币余额不足"
+            : ""
+          if (reason) { await this.finish(plan, "failed", `${reason}，本轮尝试结束，继续追踪后续场次。`); return }
+          this.assertGood(fresh)
+          if (fresh.price !== plan.price || fresh.type !== plan.type || fresh.gameBiz !== good.gameBiz) throw new Error("商品价格、类型或游戏绑定已变化，请重新预约。")
+          if (serverNow < plan.opensAt && fresh.status === "scheduled" && Math.abs(fresh.opensAt - plan.opensAt) > 1000) {
+            await this.store.update(plan.id, { status: "scheduled", opensAt: fresh.opensAt, message: "官方调整了开放时间，预约已同步" }, ["preparing"])
+            return
+          }
+        }
         const context = {
           onCaptchaEvent,
           beforeCaptchaRequest: async () => {
@@ -303,7 +335,7 @@ export class CoinShopService {
             assertBinding(current)
           },
           captchaSignal: plan.trackingId
-            ? AbortSignal.any([controller.signal, AbortSignal.timeout(Math.max(1, Math.ceil(deadline - this.now())))])
+            ? AbortSignal.any([controller.signal, AbortSignal.timeout(45000)])
             : AbortSignal.any([controller.signal, captchaController.signal]),
           onCaptchaRisk: async () => {
             submitting = false
@@ -362,7 +394,11 @@ export class CoinShopService {
           // Persist immediately before dispatch; only the synchronous client
           // callback marks the in-memory request as actually being submitted.
           if (!await this.store.update(plan.id, { status: "submitting", attempts: attempt, ...(attempt === 1 ? { firstAttemptAt: this.now() } : {}), message: this.now() < plan.opensAt ? "开放前连续尝试兑换" : "正在提交兑换" }, ["preparing"])) return { retcode: -1, message: "兑换计划已取消，未提交。" }
-          return this.client.exchange(plan, currentProfile, controller.signal, context)
+          return this.client.exchange(plan, currentProfile, controller.signal, context).catch(error => {
+            if (submitting || error.code === "LOTUS_ACCOUNT_CHANGED" || /变化|失效|已不在|余额不足/.test(error.message)) throw error
+            // A captcha failure happens after an explicit non-purchase response.
+            return { retcode: error.retcode ?? -1, message: error.message }
+          })
         })
         if (result.retcode === 0) { await this.finish(plan, "succeeded", "兑换成功，请查看米游社兑换记录或游戏内邮件。"); return }
         submitting = false

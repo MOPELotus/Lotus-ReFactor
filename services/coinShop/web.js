@@ -212,8 +212,8 @@ export class CoinShopWeb {
       }
       if (req.method === "POST" && route === "/api/trackers") {
         const input = await this.body(req)
-        const { profileId, mode, game, itemType, goodsIds, keywords, maxPrice, spendLimit, followSameName, addressId, pollMinutes, leadSeconds, intervalMs, afterSeconds } = input
-        const tracker = await this.service.tracking.create({ qq: session.qq, botId: session.botId, profileId, mode, game, itemType, goodsIds, keywords, maxPrice, spendLimit, followSameName, addressId, pollMinutes, leadSeconds, intervalMs, afterSeconds })
+        const { profileId, mode, game, itemType, goodsIds, keywords, maxPrice, spendLimit, followSameName, addressId, pollMinutes, leadSeconds, intervalMs } = input
+        const tracker = await this.service.tracking.create({ qq: session.qq, botId: session.botId, profileId, mode, game, itemType, goodsIds, keywords, maxPrice, spendLimit, followSameName, addressId, pollMinutes, leadSeconds, intervalMs })
         this.json(res, 200, { tracker: publicPlan(tracker) }); return
       }
       const trackerMatch = route.match(/^\/api\/trackers\/([a-f0-9]{12})\/(pause|resume)$/)

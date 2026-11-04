@@ -48,7 +48,7 @@ export class CoinShopTracking {
   }
 
   async create({ qq, profileId = 1, botId = "", mode, game, itemType, goodsIds = [], keywords = [], maxPrice, spendLimit,
-    followSameName = true, addressId = "", pollMinutes = 30, leadSeconds = 5, intervalMs = 500, afterSeconds = 20 }) {
+    followSameName = true, addressId = "", pollMinutes = 30, leadSeconds = 5, intervalMs = 500 }) {
     await this.service.initialize()
     if (!["goods", "category"].includes(mode)) throw new Error("追踪方式无效")
     if (!Array.isArray(goodsIds) || goodsIds.length > 20 || goodsIds.some(id => !/^\d+$/.test(String(id)))) throw new Error("具体商品最多选择 20 件，商品 ID 必须是数字")
@@ -56,7 +56,7 @@ export class CoinShopTracking {
     if (!Array.isArray(keywords) || keywords.length > 10 || keywords.some(word => typeof word !== "string" || word.length > 80)) throw new Error("关键词格式错误")
     const priceLimit = optionalLimit(maxPrice), totalLimit = optionalLimit(spendLimit)
     for (const limit of [priceLimit, totalLimit]) if (limit !== null && (!Number.isSafeInteger(limit) || limit < 0)) throw new Error("米游币上限应为非负整数，不填表示不限")
-    for (const [value, min, max] of [[pollMinutes, 1, 1440], [leadSeconds, 0, 30], [intervalMs, 250, 5000], [afterSeconds, 5, 60]]) {
+    for (const [value, min, max] of [[pollMinutes, 1, 1440], [leadSeconds, 0, 30], [intervalMs, 250, 5000]]) {
       if (!Number.isInteger(Number(value)) || Number(value) < min || Number(value) > max) throw new Error("轮询或连续请求参数超出允许范围")
     }
     const id = normalizeProfileId(profileId)
@@ -77,7 +77,7 @@ export class CoinShopTracking {
       keywords: keywords.map(word => word.trim()).filter(Boolean), followSameName: Boolean(followSameName), maxPrice: priceLimit, spendLimit: totalLimit,
       role: targets.type === "role" ? targets.items[0] : null, gameBiz: targets.gameBiz || "",
       addressId: address?.id || "", addressLabel: address?.label || "", pollMs: Number(pollMinutes) * 60000, pollUnit: "minutes",
-      leadMs: Number(leadSeconds) * 1000, intervalMs: Number(intervalMs), afterMs: Number(afterSeconds) * 1000,
+      leadMs: Number(leadSeconds) * 1000, intervalMs: Number(intervalMs),
       enabled: true, createdAt: this.service.now(), message: "持续追踪中，等待官方商品状态变化",
     }
     if (!rule.accountId) throw new Error("profile 缺少米游社账号 ID")
@@ -193,7 +193,7 @@ export class CoinShopTracking {
           const { spent, held } = this.usage(rule, plans)
           if (rule.spendLimit !== null && spent + held + good.price > rule.spendLimit) { snapshot.message = "剩余追踪预算不足，等待调整预算或暂停规则"; continue }
           await service.reserve({ qq: rule.qq, profileId: rule.profileId, goodsId: good.id, uid: rule.role?.uid, addressId: rule.addressId, botId: rule.botId,
-            immediate: false, tracking: { id: rule.id, cycleKey, role: rule.role, gameBiz: rule.gameBiz, leadMs: rule.leadMs, intervalMs: rule.intervalMs, afterMs: rule.afterMs } })
+            immediate: false, tracking: { id: rule.id, cycleKey, role: rule.role, gameBiz: rule.gameBiz, leadMs: rule.leadMs, intervalMs: rule.intervalMs } })
           snapshot.status = "exchanging"
           snapshot.message = "已进入开放前连续请求阶段，成功后继续追踪后续批次"
           snapshot.nextPollAt = service.now() + 1000
