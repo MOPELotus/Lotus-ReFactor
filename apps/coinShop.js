@@ -38,7 +38,7 @@ export class LotusCoinShop extends BasePlugin {
     try {
       await this.web.start((await this.getConfig()).coin_shop)
       const url = this.web.issueTicket(String(this.e.user_id), String(this.e.self_id || ""), this.e.isMaster === true)
-      await replyText(this, `米游社功能\n${url}\n\n专属登录链接 10 分钟内有效，使用一次后失效。请勿转发。\n进入总页管理自己的 profile、签到、社区任务、米游币与兑换计划。`)
+      await replyText(this, `米游社功能\n${url}\n\n专属登录链接 ${this.web.ticketMinutes?.() ?? 10} 分钟内有效，使用一次后失效。请勿转发。\n进入总页管理自己的 profile、签到、社区任务、米游币与兑换计划。`)
     } catch (error) { await replyText(this, `[米游币兑换]${error.message}`) }
     return true
   }
@@ -49,7 +49,7 @@ export class LotusCoinShop extends BasePlugin {
     try {
       await this.web.start((await this.getConfig()).coin_shop)
       const url = this.web.issuePanelTicket(String(this.e.user_id), String(this.e.self_id || ""), true)
-      await replyText(this, `荷花管理面板\n${url}\n\n仅主人使用：链接 10 分钟有效且仅能使用一次，登录后管理会话有效期为 30 分钟。请勿转发。`)
+      await replyText(this, `荷花管理面板\n${url}\n\n仅主人使用：链接 ${this.web.ticketMinutes?.("panel") ?? 10} 分钟有效且仅能使用一次，登录后管理会话有效期为 30 分钟。请勿转发。`)
     } catch (error) { await replyText(this, `[荷花管理面板]${error.message}`) }
     return true
   }

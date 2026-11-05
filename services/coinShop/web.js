@@ -28,8 +28,13 @@ export class CoinShopWeb {
   }
 
   async start(config = {}, bot = globalThis.Bot) {
-    if (this.server || this.shared) return this.status()
+    const tickets = Object.fromEntries(["ticket_minutes", "panel_ticket_minutes"].map(key => [key, config[key] ?? this.config?.[key] ?? 10]))
+    for (const value of Object.values(tickets)) {
+      if (!Number.isSafeInteger(value) || value < 1 || !Number.isSafeInteger(this.now() + value * 60000)) throw new Error("网页登录链接有效期须为正整数分钟")
+    }
+    if (this.server || this.shared) { Object.assign(this.config, tickets); return this.status() }
     this.config = { enable: true, mode: "auto", host: "127.0.0.1", port: 18164, path: "/lotus/coin-shop", public_url: "", icp_number: "", session_hours: 8, ...config }
+    Object.assign(this.config, tickets)
     const cfg = this.config
     if (!/^\/[a-zA-Z0-9_/-]+$/.test(cfg.path) || cfg.path === "/" || cfg.path.includes("//")) throw new Error("商城挂载路径格式错误")
     cfg.path = cfg.path.replace(/\/$/, "")
@@ -72,6 +77,8 @@ export class CoinShopWeb {
 
   panelPath() { return this.config.path.replace(/\/[^/]+$/, "") + "/panel" }
 
+  ticketMinutes(purpose = "user") { return this.config[purpose === "panel" ? "panel_ticket_minutes" : "ticket_minutes"] }
+
   mountRoute(route, handler) {
     if (!/^\/[a-zA-Z0-9_/-]+$/.test(route) || route.includes("//") || route === "/" || this.routes.has(route)
       || [this.config.path, this.panelPath()].some(base => route === base || route.startsWith(base + "/") || base.startsWith(route + "/"))) throw new Error("网页挂载路径冲突")
@@ -108,7 +115,7 @@ export class CoinShopWeb {
     this.prune()
     for (const [key, ticket] of this.tickets) if (ticket.qq === String(qq) && ticket.purpose === purpose) this.tickets.delete(key)
     const value = secret()
-    this.tickets.set(digest(value), { qq: String(qq), botId: String(botId), owner: owner === true, purpose, expires: this.now() + 10 * 60000 })
+    this.tickets.set(digest(value), { qq: String(qq), botId: String(botId), owner: owner === true, purpose, expires: this.now() + this.ticketMinutes(purpose) * 60000 })
     const url = purpose === "panel" ? new URL(this.panelPath() + "/", this.status().url).href : this.status().url
     return `${url}#ticket=${value}`
   }

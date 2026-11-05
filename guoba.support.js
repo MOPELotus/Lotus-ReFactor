@@ -22,6 +22,7 @@ const ARRAY_FIELDS = new Set([
 ])
 
 const NUMBER_FIELDS = new Set([
+  "coin_shop.ticket_minutes", "coin_shop.panel_ticket_minutes",
   "music.search_limit", "music.session_timeout_ms", "music.download_timeout_ms", "music.max_size_mb",
   "bilibili.download.concurrency",
   "captcha.refresh.max_attempts",
@@ -101,6 +102,9 @@ const SCOPE_LABELS = {
 }
 
 const GUOBA_SCHEMAS = [
+  group("网页登录"),
+  number("coin_shop.ticket_minutes", "用户登录链接有效期", "单位分钟，正整数，默认 10；用于米游社功能页的一次性登录链接，新链接立即采用新设置。"),
+  number("coin_shop.panel_ticket_minutes", "管理链接有效期", "单位分钟，正整数，默认 10；仅影响主人管理面板的一次性登录链接，不改变登录后的会话时长。"),
   group("签到调度"),
   sw("scheduler.enable", "启用自动调度", "关闭后只允许手动签到。"),
   cron("scheduler.plan_generate_cron", "生成计划时间", "每天按此 cron 生成次日签到表。"),

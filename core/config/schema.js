@@ -68,6 +68,9 @@ export function validateGlobalConfig(config) {
   validateAtlasConfig(config.atlas, errors)
   validatePermissionConfig(config.permissions, errors)
   const shop = config.coin_shop
+  for (const field of ["ticket_minutes", "panel_ticket_minutes"]) {
+    if (!Number.isSafeInteger(shop?.[field]) || shop[field] < 1 || !Number.isSafeInteger(Date.now() + shop[field] * 60000)) errors.push(`coin_shop.${field} must be positive integer minutes`)
+  }
   if (!isObject(shop) || typeof shop.enable !== "boolean" || !["auto", "shared", "standalone"].includes(shop.mode)
       || typeof shop.host !== "string" || !Number.isInteger(shop.port) || shop.port < 1 || shop.port > 65535
       || typeof shop.path !== "string" || !/^\/[a-zA-Z0-9_/-]+$/.test(shop.path) || shop.path === "/"
