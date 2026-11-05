@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import { rootPath } from "../../core/path.js"
 import { notifyUser } from "../../core/transport/notify.js"
+import { collectMasterIds } from "../../core/transport/masters.js"
 
 const DEFAULT_OUTPUT_LIMIT = 12000
 const GIT_STATUS_ARGS = ["status", "--short", "--ignore-submodules=dirty"]
@@ -143,134 +144,68 @@ export async function syncTrackedSubmodules(options = {}) {
   const {
     cwd = rootPath,
     outputLimit = DEFAULT_OUTPUT_LIMIT,
+    timeoutMs = 120000,
     runner = runGit,
   } = options
-  const status = await runner(["submodule", "status", "--recursive"], {
-    cwd,
-    outputLimit,
-    allowFailure: true,
-  })
-  if (status.code !== 0) {
-    return {
-      ok: false,
-      action: "submodule_status_failed",
-      message: "无法读取子模块状态。",
-      detail: status.stderr || status.stdout,
+  const run = args => runner(args, { cwd, outputLimit, timeoutMs, allowFailure: true })
+  let pending = []
+  try {
+    const status = await run(["submodule", "status", "--recursive"])
+    if (status.code !== 0) return submoduleFailure("submodule_status_failed", "无法读取子模块状态。", status)
+    // Keep the leading status character: trimming would hide a synchronized entry.
+    pending = String(status.stdout || "").split(/\r?\n/).filter(line => /^[+\-U]/.test(line))
+    if (!pending.length) return { ok: true, action: "submodules_up_to_date", message: "子模块提交已同步。" }
+    if (pending.some(line => line.startsWith("U"))) {
+      return { ok: false, action: "submodule_conflict", message: "子模块引用存在合并冲突，已保留现场，请手动处理。", pending }
     }
-  }
-
-  const pending = splitLines(status.stdout).filter(line => /^[+\-U]/.test(line))
-  if (!pending.length) {
-    return {
-      ok: true,
-      action: "submodules_up_to_date",
-      message: "子模块提交已同步。",
+    // Git checkout alone may carry local edits to another commit. Check all initialized
+    // descendants first, including untracked files, before changing any checkout.
+    const clean = await run(["submodule", "foreach", "--quiet", "--recursive",
+      'lotus_changes=$(git status --porcelain --untracked-files=normal --ignore-submodules=all) || exit 1; if test -n "$lotus_changes"; then printf "%s\\n" "$displaypath has local changes"; exit 1; fi'])
+    if (clean.code !== 0) return submoduleFailure("submodule_dirty", "子模块有本地改动或状态检查失败，已保留现场，请手动处理。", clean, pending)
+    const update = await run(["submodule", "update", "--init", "--recursive", "--checkout"])
+    if (update.code !== 0) return submoduleFailure("submodule_update_failed", "未能同步荷花指定的子模块版本，已保留现有文件，请检查网络或本地改动。", update, pending)
+    const verified = await run(["submodule", "status", "--recursive"])
+    if (verified.code !== 0 || /^[+\-U]/m.test(verified.stdout || "")) {
+      return submoduleFailure("submodule_verify_failed", "子模块同步后仍与荷花指定版本不一致，请手动检查。", verified, pending)
     }
-  }
-
-  const update = await runner(["submodule", "update", "--init", "--recursive"], {
-    cwd,
-    outputLimit,
-    allowFailure: true,
-  })
-  if (update.code !== 0) {
-    return {
-      ok: false,
-      action: "submodule_update_failed",
-      message: "子模块提交不匹配，但自动更新失败。",
-      pending,
-      detail: update.stderr || update.stdout,
-    }
-  }
-  return {
-    ok: true,
-    action: "submodules_updated",
-    message: "已同步子模块追踪的提交。",
-    pending,
+    return { ok: true, action: "submodules_updated", message: "已同步子模块追踪的提交。", pending }
+  } catch (error) {
+    return { ok: false, action: "submodule_update_failed", message: "子模块启动同步失败，已保留现有文件，请检查网络或本地改动。", detail: error.message, pending }
   }
 }
 
-/**
- * Check whether tracked submodules have commits newer than the parent pointer.
- * This is intentionally read/notify-only: startup must never rewrite the checkout.
- */
-export async function checkTrackedSubmoduleRemoteUpdates(options = {}) {
+function submoduleFailure(action, message, result, pending = []) {
+  return { ok: false, action, message, pending, detail: result.stderr || result.stdout, timedOut: Boolean(result.timedOut) }
+}
+
+// Startup happens before adapters connect. Retry private delivery for a bounded
+// period, remembering successful recipients to avoid duplicate startup messages.
+export async function notifySubmoduleSyncFailure(result, options = {}) {
+  if (result?.ok !== false) return { ok: true, skipped: true }
   const {
-    cwd = rootPath,
-    outputLimit = DEFAULT_OUTPUT_LIMIT,
-    runner = runGit,
-    notify = true,
-    config = {},
+    initialDelayMs = 30000, retryDelayMs = 30000, maxAttempts = 10,
+    collectMasters = collectMasterIds, notify = notifyUser,
+    wait = milliseconds => new Promise(resolve => { const timer = setTimeout(resolve, milliseconds); timer.unref?.() }),
   } = options
-
-  const listed = await runner(["submodule", "status", "--recursive"], {
-    cwd,
-    outputLimit,
-    allowFailure: true,
-  })
-  if (listed.code !== 0) {
-    return { ok: false, action: "submodule_status_failed", updates: [], message: "无法读取子仓库状态。" }
+  const sent = new Set()
+  const message = `[荷花插件]启动时未能同步所需子模块：${result.message}\n已保留现有文件；请检查网络和本地改动，处理后重启机器人。`
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await wait(attempt === 0 ? initialDelayMs : retryDelayMs)
+    try {
+      const ids = await collectMasters()
+      for (const id of ids) {
+        if (sent.has(String(id))) continue
+        const delivered = await notify(id, message, { prefer: "private", onlyKnownFriend: false, allowGroupFallback: false, at: false })
+        if (delivered?.ok) sent.add(String(id))
+      }
+      if (ids.length && ids.every(id => sent.has(String(id)))) return { ok: true, notified: [...sent] }
+    } catch (error) {
+      globalThis.logger?.debug?.(`[Lotus-Plugin] submodule failure notification pending: ${error.message}`)
+    }
   }
-
-  const updates = []
-  for (const line of splitLines(listed.stdout)) {
-    const match = line.match(/^[+\-U]?([0-9a-f]+)\s+([^\s]+)/i)
-    if (!match) continue
-    const submodulePath = match[2]
-    const submoduleCwd = pathJoin(cwd, submodulePath)
-    const remote = await runner(["remote", "update", "--prune"], {
-      cwd: submoduleCwd,
-      outputLimit,
-      allowFailure: true,
-    })
-    if (remote.code !== 0) continue
-    const head = await runner(["rev-parse", "HEAD"], { cwd: submoduleCwd, outputLimit, allowFailure: true })
-    const upstream = await runner(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "origin/HEAD"], {
-      cwd: submoduleCwd,
-      outputLimit,
-      allowFailure: true,
-    })
-    if (head.code !== 0 || upstream.code !== 0) continue
-    const counts = await runner(["rev-list", "--left-right", "--count", `HEAD...${upstream.stdout.trim()}`], {
-      cwd: submoduleCwd,
-      outputLimit,
-      allowFailure: true,
-    })
-    const [ahead, behind] = parseAheadBehind(counts.stdout)
-    if (behind > 0) updates.push({ path: submodulePath, ahead, behind, head: head.stdout.trim().slice(0, 12), upstream: upstream.stdout.trim() })
-  }
-
-  const result = {
-    ok: true,
-    action: updates.length ? "submodules_behind_remote" : "submodules_current",
-    updates,
-    message: updates.length ? `检测到 ${updates.length} 个子仓库有未同步提交。` : "子仓库均已同步到远端。",
-  }
-  if (notify && updates.length) await notifySubmoduleUpdates(updates, config)
-  return result
-}
-
-async function notifySubmoduleUpdates(updates, config = {}) {
-  const masters = collectMasterIds(config)
-  if (!masters.length) return
-  const lines = updates.map(item => `- ${item.path}: 落后 ${item.behind} 个提交（当前 ${item.head}）`)
-  const message = `[荷花插件]开机检测发现子仓库未同步：\n${lines.join("\n")}\n请手动更新并检查主项目引用的 commit。`
-  for (const master of masters) {
-    await notifyUser(master, message, { prefer: "private", onlyKnownFriend: false }).catch(error => {
-      globalThis.logger?.warn?.(`[Lotus-Plugin] submodule update notification failed: ${error.message}`)
-    })
-  }
-}
-
-function collectMasterIds(config = {}) {
-  const values = [config.masterQQ, config.master, config.master_qq, config.masters]
-  const runtime = globalThis.Bot?.config || globalThis.Bot?.cfg || {}
-  values.push(runtime.masterQQ, runtime.master, runtime.master_qq)
-  return [...new Set(values.flatMap(value => Array.isArray(value) ? value : [value]).map(String).filter(Boolean))]
-}
-
-function pathJoin(base, child) {
-  return `${String(base).replace(/[\\/]$/, "")}/${String(child).replace(/\\/g, "/")}`
+  globalThis.logger?.warn?.("[Lotus-Plugin] 子模块同步失败通知未全部送达，请检查主人配置及机器人连接。")
+  return { ok: false, notified: [...sent] }
 }
 
 export function runGit(args, options = {}) {
@@ -278,12 +213,30 @@ export function runGit(args, options = {}) {
     cwd = rootPath,
     allowFailure = false,
     outputLimit = DEFAULT_OUTPUT_LIMIT,
+    timeoutMs = 120000,
   } = options
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, {
       cwd,
       windowsHide: true,
+      detached: process.platform !== "win32",
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     })
+    let timedOut = false
+    let killTimer
+    const stop = signal => {
+      try {
+        if (process.platform !== "win32") process.kill(-child.pid, signal)
+        else child.kill(signal)
+      } catch { /* The process may already have exited. */ }
+    }
+    const timer = setTimeout(() => {
+      timedOut = true
+      stop("SIGTERM")
+      killTimer = setTimeout(() => stop("SIGKILL"), 2000)
+      killTimer.unref?.()
+    }, timeoutMs)
+    timer.unref?.()
     let stdout = ""
     let stderr = ""
 
@@ -293,15 +246,18 @@ export function runGit(args, options = {}) {
     child.stderr.on("data", chunk => {
       stderr = appendLimited(stderr, chunk, outputLimit)
     })
-    child.on("error", reject)
+    child.on("error", error => { clearTimeout(timer); clearTimeout(killTimer); reject(error) })
     child.on("close", code => {
+      clearTimeout(timer)
+      clearTimeout(killTimer)
       const result = {
-        code,
+        code: timedOut ? 124 : code,
+        timedOut,
         stdout,
         stderr,
         args,
       }
-      if (code === 0 || allowFailure) {
+      if ((!timedOut && code === 0) || allowFailure) {
         resolve(result)
         return
       }
