@@ -16,6 +16,21 @@ export class MiaoProfileQueryBridge {
     this.loadHardChallengeSummary = options.loadHardChallengeSummary || loadHardChallengeSummary
   }
 
+  async refreshTalent(options = {}) {
+    const ProfileStat = await this.loadProfileStat()
+    return this.run(options, event => ProfileStat.refreshTalent(event))
+  }
+
+  async reloadProfile(options = {}) {
+    const ProfileList = await this.loadProfileList()
+    return this.run(options, event => ProfileList.reload(event))
+  }
+
+  async deleteProfile(options = {}) {
+    const ProfileList = await this.loadProfileList()
+    return this.run(options, event => ProfileList.del(event))
+  }
+
   async artisList(options = {}) {
     const fn = await this.loadProfileArtis()
     return this.run(options, event => fn(event))
@@ -48,7 +63,7 @@ export class MiaoProfileQueryBridge {
 
   async talentStat(options = {}) {
     const ProfileStat = await this.loadProfileStat()
-    return this.run(options, event => ProfileStat.render(event, "talent", false))
+    return this.run(options, event => ProfileStat.stat(event))
   }
 
   async roleCombatStat(options = {}) {

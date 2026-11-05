@@ -31,6 +31,9 @@ export class LotusProfileQuery extends BasePlugin {
     this.starRail = options.starRail || new StarRailChallengeService(options)
   }
 
+  async miaoRefreshTalent() { return this.runMiao("refreshTalent") }
+  async miaoReloadProfile() { return this.runMiao("reloadProfile") }
+  async miaoDeleteProfile() { return this.runMiao("deleteProfile") }
   async miaoArtisList() { return this.runMiao("artisList") }
   async miaoGroupRank() { return this.runMiao("groupRank") }
   async zzzGachaView() { return this.runZzz("gachaLog") }
@@ -78,7 +81,7 @@ export class LotusProfileQuery extends BasePlugin {
   async runMiao(method, fixedGame = "") {
     const parsed = splitProfileSuffix(this.e.msg)
     const userId = String(this.e.user_id)
-    const game = fixedGame || miaoGameFromMessage(parsed.message)
+    const game = fixedGame || (method === "artisList" && /遗器/.test(parsed.message) ? "sr" : miaoGameFromMessage(parsed.message))
     return this.runProfileQuery({
       userId,
       profileId: parsed.profileId,
@@ -202,7 +205,8 @@ function miaoGameFromMessage(message = "") {
 }
 
 function normalizeMiaoCommand(message = "", game = "gs", method = "") {
-  const text = String(message || "").trim()
+  let text = String(message || "").trim().replace(/^#原神/, "#")
+  if (method === "talentStat") text = text.replace(/行迹/g, "天赋")
   if (text.startsWith("*")) return `#星铁${text.replace(/^\*+/, "")}`
   if (game === "sr" && text.startsWith("#") && !/^#星铁/.test(text)) return text.replace(/^#/, "#星铁")
   const command = text.replace(/^#原神/, "#").replace(/^#(喵喵)?当期/, "#$1本期")

@@ -13,6 +13,10 @@ const GACHA_STAT = `#(?:原神|星铁)?(?:喵喵)?(?:(?:全部)?(?:抽卡|抽奖
 
 // Shared by personal-query dispatch and the achievement/atlas pass-through guards.
 export const PERSONAL_QUERY_RULES = Object.freeze([
+  { reg: `^#(?:星铁|原神)?(?:强制)?(?:刷新|更新)(?:所有|角色)*(?:天赋|技能|行迹)${P}$`, fnc: "miaoRefreshTalent" },
+  { reg: `^#(?:星铁|原神)?(?:加载|重新加载|重载)面板${P}$`, fnc: "miaoReloadProfile" },
+  { reg: `^#(?:星铁|原神)?(?:删除全部面板|删除面板|删除面板数据)${P}$`, fnc: "miaoDeleteProfile" },
+  { reg: `^#星铁(?:我的)?(?:今日|今天|明日|明天|周[1-6一二三四五六])*(?:[五四54]星)?(?:技能|天赋|行迹)+(?:汇总|统计|列表)?${P}$`, fnc: "miaoTalentStat" },
   { reg: `^${Z}抽卡(?:分析|记录|统计)${P}$`, fnc: "zzzGachaView" },
   { reg: `^#(?:星铁|原神)?(?:圣遗物|遗器)列表${P}$`, fnc: "miaoArtisList" },
   { reg: `^#(?!(?:zzz|ZZZ|绝区零))(?:星铁|原神)?(?!(?:重置|重设|刷新|更新|重新加载|开启|打开|启用|关闭|禁用))(?:群|群内)?.+(?:排名|排行)(?:榜)?${P}$`, fnc: "miaoGroupRank" },
