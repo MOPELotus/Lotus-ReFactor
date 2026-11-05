@@ -1,3 +1,4 @@
+import { ZZZ_COMMAND_PREFIX } from "../core/intercept/game-prefix.js"
 import { createProfileRequestGuard } from "../core/login/requestGuard.js"
 import { createRequestCaptchaReporter } from "../core/captcha/notify.js"
 const BasePlugin = globalThis.plugin
@@ -72,7 +73,7 @@ export class LotusGachaLog extends BasePlugin {
           fnc: "starRailGachaView",
         },
         {
-          reg: `^(?:[%％](?:zzz|ZZZ|绝区零)?|[#/](?:zzz|ZZZ|绝区零)|(?:zzz|ZZZ|绝区零))(刷新|更新)抽卡(链接|记录)?${PROFILE_ID_SUFFIX_PATTERN}$`,
+          reg: `^${ZZZ_COMMAND_PREFIX}(刷新|更新)抽卡(链接|记录)?${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "zzzGachaLog",
         },
       ],

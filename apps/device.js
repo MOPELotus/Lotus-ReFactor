@@ -1,3 +1,4 @@
+import { ZZZ_COMMAND_PREFIX, normalizeZzzPrefix } from "../core/intercept/game-prefix.js"
 const BasePlugin = globalThis.plugin
 
 import fs from "node:fs/promises"
@@ -27,11 +28,11 @@ export class LotusDevice extends BasePlugin {
       priority: LOTUS_INTERCEPT_PRIORITY,
       rule: [
         {
-          reg: `^#(原神|星铁|绝区零)?绑定设备(?:信息)?${PROFILE_ID_SUFFIX_PATTERN}(?:\\s+[\\s\\S]*)?$`,
+          reg: `^(?:#(?:原神|星铁)?|${ZZZ_COMMAND_PREFIX})绑定设备(?:信息)?${PROFILE_ID_SUFFIX_PATTERN}(?:\\s+[\\s\\S]*)?$`,
           fnc: "bindDevice",
         },
         {
-          reg: `^#设备信息${PROFILE_ID_SUFFIX_PATTERN}$`,
+          reg: `^(?:#(?:原神|星铁)?|${ZZZ_COMMAND_PREFIX})设备信息${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "deviceInfo",
         },
       ],
@@ -130,7 +131,7 @@ export class LotusDevice extends BasePlugin {
 }
 
 function parseDeviceProfileId(message = "") {
-  const match = String(message).match(/^#(?:原神|星铁|绝区零)?绑定设备(?:信息)?(\d*)/)
+  const match = normalizeZzzPrefix(message).match(/^#(?:原神|星铁|绝区零)?绑定设备(?:信息)?(\d*)/)
   return normalizeProfileId(match?.[1] || 1)
 }
 

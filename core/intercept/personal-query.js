@@ -1,10 +1,11 @@
+import { ZZZ_COMMAND_PREFIX } from "./game-prefix.js"
 import { PROFILE_ID_REQUIRED_SUFFIX_PATTERN } from "../config/profile.js"
 import { WEB_COMMAND_EXCLUSION } from "./web-commands.js"
 
 // 个人查询的无后缀形式也由 Lotus 接管，并与显式 profile 1 走同一条路径。
 // 无后缀分支要求命令不以数字结尾，避免把游戏 UID 误判成 profile 指令。
 const P = `(?:(?:${PROFILE_ID_REQUIRED_SUFFIX_PATTERN})|(?<!\\d))`
-const Z = "(?:[%％](?:zzz|ZZZ|绝区零)?|[#/](?:zzz|ZZZ|绝区零)|(?:zzz|ZZZ|绝区零))"
+const Z = ZZZ_COMMAND_PREFIX
 const SR_CHALLENGE_WORDS = "(?:深渊|忘却|忘却之庭|混沌|混沌回忆|虚构|虚构叙事|末日|末日幻影|异乡|异相|异向|仲裁|异相仲裁)"
 
 // Explicit gacha statistics belong to the gacha bridge, not role proficiency.

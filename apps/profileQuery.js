@@ -1,3 +1,4 @@
+import { normalizeZzzPrefix } from "../core/intercept/game-prefix.js"
 import { createRequestCaptchaReporter } from "../core/captcha/notify.js"
 const BasePlugin = globalThis.plugin
 
@@ -59,7 +60,7 @@ export class LotusProfileQuery extends BasePlugin {
   async zzzExplorationDetail() { return this.runZzz("explorationDetail") }
   async zzzRank() {
     const parsed = splitProfileSuffix(this.e.msg)
-    const text = parsed.message.replace(/^(?:[%％](?:zzz|绝区零)?|[#/](?:zzz|绝区零)|(?:zzz|绝区零))/i, "").trim()
+    const text = normalizeZzzPrefix(parsed.message, "").trim()
     // 默认“排名”是纯面板分；明确写“综合榜”才使用加权分。
     // 兼容“面板/圣遗物/驱动盘”别名，并从角色名中剥离关键词。
     const character = text
@@ -215,10 +216,7 @@ function normalizeMiaoCommand(message = "", game = "gs", method = "") {
 }
 
 function normalizeZzzCommand(message = "") {
-  const text = String(message || "").trim()
-    .replace(/^％/, "%")
-    .replace(/^(?:[#/](?:zzz|绝区零)|(?:zzz|绝区零))/i, "%")
-    .replace(/^%(?:zzz|绝区零)/i, "%")
+  const text = normalizeZzzPrefix(message, "%")
     .replace(/^%(?:本期|当期)/, "%")
     .replace(/式舆防卫(?!(?:战))/, "式舆防卫战")
   // ZZZ-Plugin 的 rulePrefix 要求命令带 zzz/绝区零 标识；Lotus 对外

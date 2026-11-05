@@ -1,3 +1,4 @@
+import { ZZZ_COMMAND_PREFIX } from "../core/intercept/game-prefix.js"
 import { isAccountChangedError } from "../core/login/refresh.js"
 import { createRequestCaptchaReporter } from "../core/captcha/notify.js"
 const BasePlugin = globalThis.plugin
@@ -47,7 +48,7 @@ export class LotusDailyNote extends BasePlugin {
           fnc: "starRailDailyNote",
         },
         {
-          reg: `^%体力${PROFILE_ID_SUFFIX_PATTERN}$`,
+          reg: `^${ZZZ_COMMAND_PREFIX}(?:体力|note|每日|便笺|便签)${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "zzzDailyNote",
         },
         {
