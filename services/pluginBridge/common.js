@@ -80,6 +80,7 @@ export function summarizeReply(payload) {
   if (Array.isArray(payload)) return payload.map(summarizeReply).filter(Boolean).join("\n")
   if (typeof payload === "string") return payload
   if (payload?.type === "image") return "[图片]"
+  if (["node", "forward"].includes(payload?.type)) return "[合并转发]"
   if (["button", "keyboard"].includes(payload?.type)) return ""
   if (payload?.type === "text") return String(payload.text ?? payload.data?.text ?? "")
   if (payload?.file) return "[文件]"
@@ -93,12 +94,27 @@ export function cleanBridgeReply(payload) {
     return clean.length ? clean : null
   }
   if (["button", "keyboard"].includes(payload?.type)) return null
+  if (payload?.type === "node") {
+    const data = Array.isArray(payload.data)
+      ? payload.data.map(cleanForwardNode).filter(Boolean)
+      : cleanForwardNode(payload.data)
+    return data && (!Array.isArray(data) || data.length) ? { ...payload, data } : null
+  }
   return payload
+}
+
+function cleanForwardNode(node) {
+  if (!node || typeof node !== "object") return node
+  if (node.type) return cleanBridgeReply(node)
+  const result = { ...node }
+  const fields = ["message", "content"].filter(key => key in node)
+  for (const key of fields) result[key] = cleanBridgeReply(node[key])
+  return fields.length && fields.every(key => result[key] === null) ? null : result
 }
 
 export function shouldForwardReply(payload) {
   if (Array.isArray(payload)) return payload.some(shouldForwardReply)
-  return payload?.type === "image" || typeof payload?.file === "string"
+  return ["image", "node", "forward"].includes(payload?.type) || typeof payload?.file === "string"
 }
 
 export async function importRuntimeModule(pluginName, ...segments) {
