@@ -1,4 +1,9 @@
 version: 1
+coin_shop:
+  ticket_minutes: 10
+  panel_ticket_minutes: 10
+  session_hours: 8
+  panel_session_hours: 24
 scheduler:
   enable: true
   plan_generate_cron: "0 0 0 * * ? *"

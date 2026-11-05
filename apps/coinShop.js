@@ -7,11 +7,16 @@ import { replyText } from "../core/transport/reply.js"
 import { CoinShopService } from "../services/coinShop/service.js"
 import { CoinShopWeb } from "../services/coinShop/web.js"
 import { startGtMaintenance } from "../services/gtManual/runtime.js"
+import { collectMasterIds } from "../core/transport/masters.js"
+import { resolveData } from "../core/path.js"
 
 const serviceKey = Symbol.for("Lotus-Plugin.coinShop")
 if (!globalThis[serviceKey]) {
   const service = new CoinShopService()
-  globalThis[serviceKey] = { service, web: new CoinShopWeb({ service }) }
+  globalThis[serviceKey] = { service, web: new CoinShopWeb({ service,
+    isOwner: async session => session.owner === true && (await collectMasterIds()).includes(String(session.qq)),
+    sessionFile: resolveData("web", "sessions.json"),
+  }) }
 }
 
 export class LotusCoinShop extends BasePlugin {
@@ -38,7 +43,7 @@ export class LotusCoinShop extends BasePlugin {
     try {
       await this.web.start((await this.getConfig()).coin_shop)
       const url = this.web.issueTicket(String(this.e.user_id), String(this.e.self_id || ""), this.e.isMaster === true)
-      await replyText(this, `米游社功能\n${url}\n\n专属登录链接 ${this.web.ticketMinutes?.() ?? 10} 分钟内有效，使用一次后失效。请勿转发。\n进入总页管理自己的 profile、签到、社区任务、米游币与兑换计划。`)
+      await replyText(this, `米游社功能\n${url}\n\n专属登录链接 ${this.web.ticketMinutes?.() ?? 10} 分钟内有效，使用一次后失效。登录后当前浏览器令牌有效期为 ${this.web.sessionHours?.("user") ?? 8} 小时，机器人重启后仍可使用，退出后撤销。请勿转发。\n进入总页管理自己的 profile、签到、社区任务、米游币与兑换计划。`)
     } catch (error) { await replyText(this, `[米游币兑换]${error.message}`) }
     return true
   }
@@ -49,7 +54,7 @@ export class LotusCoinShop extends BasePlugin {
     try {
       await this.web.start((await this.getConfig()).coin_shop)
       const url = this.web.issuePanelTicket(String(this.e.user_id), String(this.e.self_id || ""), true)
-      await replyText(this, `荷花管理面板\n${url}\n\n仅主人使用：链接 ${this.web.ticketMinutes?.("panel") ?? 10} 分钟有效且仅能使用一次，登录后管理会话有效期为 30 分钟。请勿转发。`)
+      await replyText(this, `荷花管理面板\n${url}\n\n仅主人使用：链接 ${this.web.ticketMinutes?.("panel") ?? 10} 分钟有效且仅能使用一次；登录后当前浏览器令牌有效期为 ${this.web.sessionHours?.("panel") ?? 24} 小时，机器人重启后保留，每次访问仍核对主人资格，退出后撤销。请勿转发。`)
     } catch (error) { await replyText(this, `[荷花管理面板]${error.message}`) }
     return true
   }

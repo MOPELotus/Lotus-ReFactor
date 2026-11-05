@@ -4,6 +4,7 @@ import { readPanelConfig, savePanelConfig } from "../panel/config.js"
 import fs from "node:fs/promises"
 import crypto from "node:crypto"
 import { listProfileIds, loadLoggedInProfile, normalizeProfileId } from "../../core/config/profile.js"
+import { WebSessionStore } from "./sessions.js"
 
 const digest = value => crypto.createHash("sha256").update(value).digest("hex")
 const secret = () => crypto.randomBytes(32).toString("base64url")
@@ -21,6 +22,9 @@ export class CoinShopWeb {
     this.now = options.now || Date.now
     this.tickets = new Map()
     this.sessions = new Map()
+    this.sessionStore = options.sessionFile ? new WebSessionStore(options.sessionFile, this.now) : null
+    this.sessionsReady = null
+    this.sessionWrites = Promise.resolve()
     this.server = null
     this.shared = null
     this.config = null
@@ -32,15 +36,25 @@ export class CoinShopWeb {
     for (const value of Object.values(tickets)) {
       if (!Number.isSafeInteger(value) || value < 1 || !Number.isSafeInteger(this.now() + value * 60000)) throw new Error("网页登录链接有效期须为正整数分钟")
     }
-    if (this.server || this.shared) { Object.assign(this.config, tickets); return this.status() }
-    this.config = { enable: true, mode: "auto", host: "127.0.0.1", port: 18164, path: "/lotus/coin-shop", public_url: "", icp_number: "", session_hours: 8, ...config }
-    Object.assign(this.config, tickets)
+    const sessions = { session_hours: config.session_hours ?? this.config?.session_hours ?? 8,
+      panel_session_hours: config.panel_session_hours ?? this.config?.panel_session_hours ?? 24 }
+    for (const value of Object.values(sessions)) {
+      if (!Number.isFinite(value) || value * 3600 < 1 || !Number.isSafeInteger(this.now() + value * 3600000)) throw new Error("浏览器令牌有效期须为正数小时，不能短于一秒")
+    }
+    if (this.server || this.shared) { Object.assign(this.config, tickets, sessions); return this.status() }
+    if (this.sessionStore) {
+      this.sessionsReady ||= this.sessionStore.load().then(stored => { this.sessions = stored })
+      await this.sessionsReady
+      if (this.server || this.shared) { Object.assign(this.config, tickets, sessions); return this.status() }
+    }
+    this.config = { enable: true, mode: "auto", host: "127.0.0.1", port: 18164, path: "/lotus/coin-shop", public_url: "", icp_number: "", ...config }
+    Object.assign(this.config, tickets, sessions)
     const cfg = this.config
     if (!/^\/[a-zA-Z0-9_/-]+$/.test(cfg.path) || cfg.path === "/" || cfg.path.includes("//")) throw new Error("商城挂载路径格式错误")
     cfg.path = cfg.path.replace(/\/$/, "")
     if (cfg.public_url && !/^https?:$/.test(new URL(cfg.public_url).protocol)) throw new Error("商城外部地址需使用 HTTP 或 HTTPS")
     if (!["auto", "shared", "standalone"].includes(cfg.mode)) throw new Error("商城服务模式错误")
-    if (!Number.isInteger(cfg.port) || cfg.port < 0 || cfg.port > 65535 || !Number.isFinite(cfg.session_hours) || cfg.session_hours < 1 || cfg.session_hours > 24) throw new Error("商城端口或会话时长配置错误")
+    if (!Number.isInteger(cfg.port) || cfg.port < 0 || cfg.port > 65535) throw new Error("商城端口配置错误")
     const handler = (req, res) => void this.handle(req, res)
     const app = bot?.express
     if (cfg.mode !== "standalone" && app?.use) {
@@ -78,6 +92,19 @@ export class CoinShopWeb {
   panelPath() { return this.config.path.replace(/\/[^/]+$/, "") + "/panel" }
 
   ticketMinutes(purpose = "user") { return this.config[purpose === "panel" ? "panel_ticket_minutes" : "ticket_minutes"] }
+
+  sessionHours(purpose = "user") { return this.config[purpose === "panel" ? "panel_session_hours" : "session_hours"] }
+
+  updateSessions(mutate) {
+    const write = this.sessionWrites.catch(() => {}).then(async () => {
+      const previous = new Map(this.sessions)
+      mutate(this.sessions)
+      try { await this.sessionStore?.save(this.sessions) }
+      catch (error) { this.sessions = previous; throw error }
+    })
+    this.sessionWrites = write
+    return write
+  }
 
   mountRoute(route, handler) {
     if (!/^\/[a-zA-Z0-9_/-]+$/.test(route) || route.includes("//") || route === "/" || this.routes.has(route)
@@ -132,7 +159,9 @@ export class CoinShopWeb {
       this.shared = null
     }
     if (this.server) { await new Promise(resolve => this.server.close(resolve)); this.server = null }
+    await this.sessionWrites.catch(() => {})
     this.sessions.clear()
+    this.sessionsReady = null
     this.tickets.clear()
   }
 
@@ -194,12 +223,14 @@ export class CoinShopWeb {
         const ticket = typeof input.ticket === "string" ? this.tickets.get(digest(input.ticket)) : null
         if (!ticket) throw Object.assign(new Error("登录链接无效或已过期，请私聊机器人获取新链接"), { status: 401 })
         if (ticket.purpose !== purpose || panel && !await this.isOwner(ticket)) throw Object.assign(new Error("登录链接不适用于此页面"), { status: 403 })
+        if (this.tickets.get(digest(input.ticket)) !== ticket || ticket.expires <= this.now()) throw Object.assign(new Error("登录链接已使用或已过期，请获取新链接"), { status: 401 })
         this.tickets.delete(digest(input.ticket))
         const sessionId = secret(), csrf = secret()
-        const maxAge = panel ? 1800 : Math.floor(this.config.session_hours * 3600)
-        this.sessions.set(digest(sessionId), { ...ticket, csrf, expires: this.now() + maxAge * 1000 })
+        const maxAge = Math.floor(this.sessionHours(purpose) * 3600)
+        const browserSession = { ...ticket, csrf, expires: this.now() + maxAge * 1000 }
+        await this.updateSessions(sessions => sessions.set(digest(sessionId), browserSession))
         res.setHeader("Set-Cookie", `${sessionCookie}=${sessionId}; Path=${base}/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${this.status().url.startsWith("https:") ? "; Secure" : ""}`)
-        this.json(res, 200, { csrf, qq: ticket.qq, owner: await this.isOwner(ticket), now: this.now(), expiresAt: this.now() + maxAge * 1000 })
+        this.json(res, 200, { csrf, qq: ticket.qq, owner: await this.isOwner(ticket), now: this.now(), expiresAt: browserSession.expires })
         return
       }
       const value = String(req.headers.cookie || "").split(/;\s*/).find(part => part.startsWith(sessionCookie + "="))?.slice(sessionCookie.length + 1)
@@ -209,7 +240,8 @@ export class CoinShopWeb {
       if (mutating && req.headers["x-csrf-token"] !== session.csrf) throw Object.assign(new Error("页面凭证已失效，请刷新页面"), { status: 403 })
       if (req.method === "GET" && route === "/api/session") { this.json(res, 200, { csrf: session.csrf, qq: session.qq, owner: await this.isOwner(session), now: this.now(), expiresAt: session.expires }); return }
       if (req.method === "POST" && route === "/api/logout") {
-        this.sessions.delete(digest(value)); res.setHeader("Set-Cookie", `${sessionCookie}=; Path=${base}/; HttpOnly; SameSite=Strict; Max-Age=0`)
+        await this.updateSessions(sessions => sessions.delete(digest(value)))
+        res.setHeader("Set-Cookie", `${sessionCookie}=; Path=${base}/; HttpOnly; SameSite=Strict; Max-Age=0${this.status().url.startsWith("https:") ? "; Secure" : ""}`)
         this.json(res, 200, { ok: true }); return
       }
       if (panel) {

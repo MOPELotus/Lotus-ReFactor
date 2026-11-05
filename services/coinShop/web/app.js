@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id)
-const state = { csrf: "", profile: 1, page: 1, game: "", goods: [], plans: [], trackers: [], games: [], tab: "overview", nowOffset: 0, catalogRequest: 0 }
+const state = { csrf: "", expiresAt: 0, profile: 1, page: 1, game: "", goods: [], plans: [], trackers: [], games: [], tab: "overview", nowOffset: 0, catalogRequest: 0 }
 const states = { available: "正在兑换", scheduled: "等待开放", sold_out: "已兑完", ended: "已结束", unknown: "状态待确认" }
 const planStates = { scheduled: "等待开放", preparing: "准备兑换", submitting: "正在提交", succeeded: "兑换成功", failed: "未成功", cancelled: "已取消", missed: "已错过", unknown: "结果待确认" }
 function el(tag, className, text) { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node }
@@ -17,6 +17,7 @@ function showLogin(message) { stopCaptchaPolling(); state.csrf = ""; $("dashboar
 function run(fn) { return async event => { try { await fn(event) } catch (error) { toast(error.message) } } }
 function syncClock() {
   const now = Date.now() + state.nowOffset
+  if (state.csrf && state.expiresAt && now >= state.expiresAt) showLogin("浏览器令牌已到期，请私聊机器人获取新的专属登录链接。")
   $("clock").textContent = time(now)
   document.querySelectorAll("[data-deadline]").forEach(node => {
     const remaining = Math.max(0, Math.ceil((Number(node.dataset.deadline) - now) / 1000))
@@ -137,7 +138,8 @@ async function init() {
     const ticket = new URLSearchParams(location.hash.slice(1)).get("ticket")
     if (location.hash) history.replaceState(null, "", location.pathname + location.search)
     const session = ticket ? await post("session", { ticket }) : await api("session")
-    state.csrf = session.csrf; state.nowOffset = session.now - Date.now()
+    state.csrf = session.csrf; state.expiresAt = session.expiresAt; state.nowOffset = session.now - Date.now()
+    $("session-expiry").textContent = `浏览器令牌有效至 ${time(session.expiresAt)}（北京时间）；退出将撤销当前令牌。`
     const { profiles } = await api("profiles")
     const usable = profiles.filter(profile => profile.loggedIn)
     if (!usable.length) { showLogin("尚未绑定可用账号，请先在机器人中扫码登录。"); return }
@@ -155,7 +157,7 @@ $("previous").addEventListener("click", run(async () => { state.page--; await lo
 $("next").addEventListener("click", run(async () => { state.page++; await loadCatalog() }))
 $("tab-goods").addEventListener("click", () => switchTab("goods")); $("tab-plans").addEventListener("click", run(async () => { switchTab("plans"); await loadPlans() }))
 $("refresh").addEventListener("click", run(async () => { await Promise.all([loadOverview(), loadCatalog(), loadPlans(), loadTrackers()]); toast("已刷新官方数据") }))
-$("logout").addEventListener("click", run(async () => { await post("logout", {}); state.csrf = ""; showLogin("已退出。下次请私聊机器人获取新的专属登录链接。") }))
+$("logout").addEventListener("click", run(async () => { await post("logout", {}); state.csrf = ""; showLogin("已退出并撤销当前浏览器令牌。下次请私聊机器人获取新的专属登录链接。") }))
 $("tab-trackers").addEventListener("click", run(async () => { switchTab("trackers"); await loadTrackers() }))
 $("new-tracker").addEventListener("click", run(() => openTracking()))
 $("tracking-mode").addEventListener("change", trackingMode)

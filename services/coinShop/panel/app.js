@@ -31,7 +31,7 @@ function renderGroup(index) {
     }
     else if (schema.component === "Switch") { input = el("input"); input.type = "checkbox"; input.checked = Boolean(value); field.classList.add("switch-row") }
     else if (schema.component === "InputTextArea") { input = el("textarea"); input.rows = 3; input.value = value ?? "" }
-    else { input = el("input"); input.type = schema.component === "InputPassword" ? "password" : schema.component === "InputNumber" ? "number" : "text"; input.value = value ?? ""; if (state.configured.has(schema.field)) input.placeholder = "已配置，留空保持" }
+    else { input = el("input"); input.type = schema.component === "InputPassword" ? "password" : schema.component === "InputNumber" ? "number" : "text"; if (schema.component === "InputNumber") input.step = "any"; input.value = value ?? ""; if (state.configured.has(schema.field)) input.placeholder = "已配置，留空保持" }
     input.name = schema.field; state.inputs.set(schema.field, { input, schema }); field.append(input)
     input.addEventListener("input", () => {
       const choice = schema.component === "Select" && schema.componentProps?.options?.find(option => String(option.value) === input.value)
@@ -49,7 +49,7 @@ async function init() {
   try {
     const ticket = new URLSearchParams(location.hash.slice(1)).get("ticket"); if (location.hash) history.replaceState(null, "", location.pathname + location.search)
     const session = await api("session", ticket ? { ticket } : undefined)
-    state.csrf = session.csrf; state.expiresAt = session.expiresAt; state.nowOffset = session.now - Date.now(); $("expiry").textContent = `会话至 ${new Date(session.expiresAt).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit" })}`
+    state.csrf = session.csrf; state.expiresAt = session.expiresAt; state.nowOffset = session.now - Date.now(); $("expiry").textContent = `浏览器令牌至 ${new Date(session.expiresAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}`
     const data = await api("config"); state.values = data.values; state.configured = new Set(data.configured)
     for (const schema of data.schemas) { if (!schema.field) state.groups.push({ name: schema.label || "设置", schemas: [] }); else { if (!state.groups.length) state.groups.push({ name: "常规", schemas: [] }); state.groups.at(-1).schemas.push(schema) } }
     $("categories").replaceChildren(...state.groups.map((group, index) => { const button = el("button", "", group.name); button.type = "button"; button.addEventListener("click", () => renderGroup(index)); return button }))
@@ -67,6 +67,6 @@ $("config-form").addEventListener("submit", async event => {
     renderGroup(state.active); $("save-status").textContent = "当前分类已保存"; toast(result.message || "配置已保存")
   } catch (error) { toast(error.message) } finally { $("save").disabled = false }
 })
-$("logout").addEventListener("click", async () => { try { await api("logout", {}); showLogin("已退出，请私聊机器人获取新的管理链接。") } catch (error) { toast(error.message) } })
-setInterval(() => { if (state.csrf && Date.now() + state.nowOffset >= state.expiresAt) showLogin("管理会话已到期，请私聊机器人获取新链接。") }, 1000)
+$("logout").addEventListener("click", async () => { try { await api("logout", {}); showLogin("已退出并撤销当前浏览器令牌，请私聊机器人获取新的管理链接。") } catch (error) { toast(error.message) } })
+setInterval(() => { if (state.csrf && Date.now() + state.nowOffset >= state.expiresAt) showLogin("管理浏览器令牌已到期，请私聊机器人获取新链接。") }, 1000)
 void init()

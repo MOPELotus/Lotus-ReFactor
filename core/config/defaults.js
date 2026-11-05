@@ -27,6 +27,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     public_url: "",
     icp_number: "",
     session_hours: 8,
+    panel_session_hours: 24,
     ticket_minutes: 10,
     panel_ticket_minutes: 10,
   },
