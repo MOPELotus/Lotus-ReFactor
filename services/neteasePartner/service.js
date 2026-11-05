@@ -8,6 +8,7 @@ import QRCode from "qrcode"
 import { TuneWeaveService } from "../tuneweave/service.js"
 import { resolveQrProfile } from "../tuneweave/auth.js"
 import { saveMusicAccount } from "../music/accounts.js"
+import { PartnerReviewService, collectReviewContext } from "./review.js"
 
 let taskRunning = null
 const accountWrites = new Map()
@@ -23,6 +24,7 @@ export class NeteasePartnerService {
   constructor(options = {}) {
     this.tuneweave = options.tuneweave || new TuneWeaveService({ config: options.config, fetch: options.fetch })
     this.scorer = options.scorer || weightedScore
+    this.reviewer = options.reviewer || new PartnerReviewService({ fetch: options.fetch })
     this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)))
     this.now = options.now || (() => new Date())
     this.accountsFile = options.accountsFile || resolveData("netease", "accounts.yaml")
@@ -158,6 +160,7 @@ export class NeteasePartnerService {
     const delayMax = Number(config.delay_ms_max ?? 11000)
     const completed = new Map()
     const pending = new Map()
+    const reviewRecords = new Map()
     const summary = { uid: account.uid, nickname: account.nickname || `用户_${account.uid}`, total: 20, success: 0, skip: 0, fail: 20, attempts: 0, details: [], evaluations: [], results: [] }
 
     for (let attempt = 1; attempt <= 2 && completed.size < 20; attempt++) {
@@ -202,12 +205,32 @@ export class NeteasePartnerService {
             const score = this.scorer()
             const extraScore = buildExtraScore(dimensions, this.scorer)
             if (!availableComments.length) availableComments.push(...comments)
-            const comment = account.comment === false ? "" : availableComments.splice(Math.floor(Math.random() * availableComments.length), 1)[0] || ""
+            let comment = ""
+            if (account.comment !== false) {
+              if (!config.review?.mode || config.review.mode === "fixed") {
+                comment = availableComments.splice(Math.floor(Math.random() * availableComments.length), 1)[0] || ""
+                // Count UTF-16 code units conservatively, including emoji.
+                if (comment.length > (config.review?.max_chars ?? 140)) {
+                  summary.details.push(`${name}: 固定乐评超过字数设置，未发布评论。`)
+                  comment = ""
+                }
+              } else {
+                try {
+                  const context = await collectReviewContext(work, (uri, data) => this.partnerApi(account, uri, data))
+                  const review = await this.reviewer.generate(context, config.review)
+                  comment = review.comment
+                  reviewRecords.set(id, { mode: config.review.mode, sources: review.sources, contextWarnings: context.warnings })
+                } catch (error) {
+                  reviewRecords.set(id, { mode: config.review.mode, error: error.message })
+                  summary.details.push(`${name}: ${error.message}；本首仅提交评分。`)
+                }
+              }
+            }
             payload = { taskId: taskRes.data?.id, workId: work.id, score, tags: `${score}-A-1`, customTags: "[]", comment, syncYunCircle: "true", syncComment: comment ? "true" : "false", extraScore: JSON.stringify(extraScore), source: "mp-music-partner" }
             if (item.isExtra) payload.extraResource = "true"
             pending.set(id, payload)
           }
-          const record = { workId: id, name, score: payload.score, extraScore: JSON.parse(payload.extraScore), dimensions, comment: payload.comment, commentPosted: Boolean(payload.comment), attempt }
+          const record = { workId: id, name, score: payload.score, extraScore: JSON.parse(payload.extraScore), dimensions, comment: payload.comment, commentPosted: Boolean(payload.comment), review: reviewRecords.get(id), attempt }
           await this.sleep(randomDelay(delayMin, delayMax))
           try {
             const post = await this.partnerApi(account, "/api/music/partner/work/evaluate", payload)

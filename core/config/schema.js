@@ -437,6 +437,26 @@ function validateNeteasePartnerConfig(netease = {}, errors) {
   if (!Array.isArray(netease.comments) || !netease.comments.every(isString)) {
     errors.push("netease_partner.comments must be an array of strings")
   }
+  const review = netease.review
+  if (!isObject(review)) {
+    errors.push("netease_partner.review must be an object")
+    return
+  }
+  if (!["fixed", "responses", "codex"].includes(review.mode)) errors.push("netease_partner.review.mode must be fixed, responses or codex")
+  if (!Number.isInteger(review.max_chars) || review.max_chars < 20 || review.max_chars > 500) {
+    errors.push("netease_partner.review.max_chars must be an integer from 20 to 500")
+  }
+  if (!isPositiveInteger(review.timeout_ms)) errors.push("netease_partner.review.timeout_ms must be a positive integer")
+  for (const field of ["codex_command", "model", "api_url", "api_key"]) {
+    if (!isString(review[field])) errors.push(`netease_partner.review.${field} must be a string`)
+  }
+  if (review.mode === "codex" && !String(review.codex_command || "").trim()) errors.push("netease_partner.review.codex_command is required in codex mode")
+  try {
+    const url = new URL(review.api_url)
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("invalid URL")
+  } catch {
+    errors.push("netease_partner.review.api_url must be an HTTP(S) URL without credentials")
+  }
 }
 
 function validateAtlasConfig(atlas = {}, errors) {

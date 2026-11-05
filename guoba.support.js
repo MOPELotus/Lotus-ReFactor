@@ -60,6 +60,8 @@ const NUMBER_FIELDS = new Set([
   "netease_partner.login_poll_ms",
   "netease_partner.delay_ms_min",
   "netease_partner.delay_ms_max",
+  "netease_partner.review.max_chars",
+  "netease_partner.review.timeout_ms",
   "atlas.max_results",
   "atlas.update_timeout_ms",
   "atlas.update_output_limit",
@@ -263,7 +265,18 @@ const GUOBA_SCHEMAS = [
   number("netease_partner.login_poll_ms", "登录轮询间隔", "单位毫秒。"),
   number("netease_partner.delay_ms_min", "最小操作间隔", "单位毫秒。"),
   number("netease_partner.delay_ms_max", "最大操作间隔", "单位毫秒。"),
-  textArea("netease_partner.comments", "默认评论", "每行一条评论。"),
+  select("netease_partner.review.mode", "乐评生成方式", [
+    { label: "固定评论库", value: "fixed" },
+    { label: "Responses API 联网生成", value: "responses" },
+    { label: "本机 Codex CLI 联网生成", value: "codex" },
+  ], "默认保留固定评论库。AI 模式结合歌曲、作者和歌词等资料联网核实；生成失败时跳过评论，不换成无关套话。"),
+  textArea("netease_partner.comments", "固定评论库", "仅固定模式使用，每行一条评论；更新不会覆盖已有配置。"),
+  number("netease_partner.review.max_chars", "乐评字数上限", "20～500 个字符，默认 140；这是可调整的保守生成限制，不代表已确认平台接口的硬性上限。"),
+  number("netease_partner.review.timeout_ms", "AI 乐评生成超时", "单位毫秒，默认 180000；超时后跳过本首评论。"),
+  input("netease_partner.review.codex_command", "Codex CLI 程序", "默认 codex，填写可执行文件名或绝对路径；需机器人运行用户提前完成本机 Codex 登录。"),
+  input("netease_partner.review.model", "乐评模型", "Codex CLI 留空沿用本机默认模型；Responses API 必须明确填写模型。"),
+  input("netease_partner.review.api_url", "Responses API 地址", "完整 Responses 接口地址，默认 https://api.openai.com/v1/responses；服务须支持 web_search 联网工具。"),
+  password("netease_partner.review.api_key", "Responses API 密钥", "仅 Responses 模式使用；Codex CLI 使用本机登录，不需要此密钥。"),
 
 
   group("图鉴"),

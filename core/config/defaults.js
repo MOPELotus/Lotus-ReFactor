@@ -187,6 +187,15 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     delay_ms_min: 8000,
     delay_ms_max: 11000,
     comments: ["打卡支持"],
+    review: {
+      mode: "fixed",
+      max_chars: 140,
+      timeout_ms: 180000,
+      codex_command: "codex",
+      model: "",
+      api_url: "https://api.openai.com/v1/responses",
+      api_key: "",
+    },
   },
   atlas: {
     data_root: "data/atlas",

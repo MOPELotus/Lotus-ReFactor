@@ -148,6 +148,14 @@ netease_partner:
   delay_ms_max: 11000
   comments:
     - 打卡支持
+  review:
+    mode: fixed # fixed / responses / codex
+    max_chars: 140 # 保守生成限制，可设置 20～500；不是平台已确认的硬性上限
+    timeout_ms: 180000
+    codex_command: codex
+    model: ""
+    api_url: https://api.openai.com/v1/responses
+    api_key: ""
 atlas:
   data_root: data/atlas
   locale: 简体中文
