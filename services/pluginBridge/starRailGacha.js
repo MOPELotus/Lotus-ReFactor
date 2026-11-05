@@ -38,7 +38,8 @@ export class StarRailGachaDisplayBridge {
       const renderer = new GcLogApp()
       renderer.e = event
       renderer.reply = event.reply.bind(event)
-      const image = await renderer.renderImg("genshin", "html/gacha/gacha-log", renderData, { retType: "base64" })
+      const template = event.isAll ? "html/gacha/gacha-all-log" : "html/gacha/gacha-log"
+      const image = await renderer.renderImg("genshin", template, renderData, { retType: "base64" })
       if (!image) throw new Error("miao 星铁抽卡模板渲染失败")
       return {
         image,
