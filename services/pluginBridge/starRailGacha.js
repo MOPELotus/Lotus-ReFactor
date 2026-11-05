@@ -128,6 +128,7 @@ export function buildMiaoPoolRecords(pool = {}, numericType, uid) {
       item_type: record.item?.item_type === "ItemType_Avatar" ? "角色" : "光锥",
       rank_type: "5",
       gacha_type: String(numericType),
+      ...(typeof record.is_up === "boolean" ? { is_up: record.is_up } : {}),
       time,
     })
     addFillers(Math.max(0, nonNegativeInt(record.gacha_count) - 1), time)
