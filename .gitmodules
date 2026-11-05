@@ -1,3 +1,6 @@
 [submodule "nanoka-atlas-backend"]
 	path = nanoka-atlas-backend
 	url = https://github.com/MOPELotus/nanoka-atlas-backend.git
+[submodule "gt-manual"]
+	path = gt-manual
+	url = https://github.com/MOPELotus/GT-Manual.git
