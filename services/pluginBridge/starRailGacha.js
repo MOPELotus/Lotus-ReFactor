@@ -24,7 +24,10 @@ export class StarRailGachaDisplayBridge {
     const renderUserId = `lotus-render-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     try {
       await this.mirror({ qq: renderUserId, uid, data })
-      const display = await renderMiaoGacha({ e, qq: renderUserId, uid, game: "sr", viewMessage, loadGacha: this.loadMiaoGacha })
+      const starRailRecords = Object.fromEntries(Object.entries(MIAO_POOL_TYPES).map(([pool, type]) =>
+        [type, buildMiaoPoolRecords(data?.pools?.[pool], type, uid)]))
+      const display = await renderMiaoGacha({ e, qq: renderUserId, uid, game: "sr", viewMessage, starRailRecords,
+        loadGacha: this.loadMiaoGacha })
       if (display) return display
       const [GachaLog, GcLogApp] = await Promise.all([this.loadGachaLog(), this.loadGcLogApp()])
       const event = createRenderEvent(e, uid, renderUserId, viewMessage)
