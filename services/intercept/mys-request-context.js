@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
-import { listAllProfiles } from "../../core/config/profile.js"
+import { listAllProfiles, getProfileSnapshotGuard, getProfileLifetime } from "../../core/config/profile.js"
 import { parseCookieString } from "../../core/mihoyo/cookies.js"
 import { MIHOYO_PROTOCOL, mihoyoUserAgent } from "../../core/mihoyo/constants.js"
 import { buildDeviceFpPayload } from "../../core/devices/service.js"
@@ -57,7 +57,7 @@ function profileRecord(profile, requireDevice = false) {
     const stoken = cookieContext(`stuid=${profile.account.stuid};stoken=${profile.account.stoken};${profile.account.mid ? `mid=${profile.account.mid};` : ""}`)
     if (stoken && stoken.id === cookie.id && (!cookie.mid || !stoken.mid || cookie.mid === stoken.mid)) keys.push(stoken.key)
   }
-  return { ...cookie, keys, profileKey: profileKey(profile), device: structuredClone(profile.device || {}) }
+  return { ...cookie, keys, profileKey: profileKey(profile), device: structuredClone(profile.device || {}), guard: getProfileSnapshotGuard(profile) }
 }
 
 // Registry holds credential hashes and device information, never raw cookies.
@@ -67,7 +67,7 @@ export function updateMysProfileRegistry(profile) {
   try {
     const record = profileRecord(profile, true)
     const previous = state.profiles.get(key)
-    if (previous && (!record || previous.key !== record.key)) retire(previous)
+    if (previous && (!record || previous.keys.some(key => !record.keys.includes(key)))) retire(previous)
     state.revisions.set(key, ++state.revision)
     if (record) state.profiles.set(key, record)
     else state.profiles.delete(key)
@@ -123,6 +123,7 @@ export function bindMysRequestProfile(api, profile) {
   if (!api || typeof api !== "object") return api
   const record = profileRecord(profile), cookie = cookieContext(api.cookie)
   if (!record || !cookie || !record.keys.includes(cookie.key)) throw fail()
+  assertProfileRecordCurrent(record)
   state.bindings.set(api, { kind: "profile", record, revision: state.revisions.get(record.profileKey) || 0 })
   return api
 }
@@ -130,6 +131,7 @@ export function bindMysRequestProfile(api, profile) {
 export function withMysRequestProfile(profile, operation) {
   const record = profileRecord(profile)
   if (!record) throw fail()
+  assertProfileRecordCurrent(record)
   return state.scope.run({ kind: "profile", record, revision: state.revisions.get(record.profileKey) || 0 }, operation)
 }
 
@@ -165,15 +167,16 @@ function profileBinding(api, cookie) {
   if (explicit && scoped?.kind === "profile") {
     const a = explicit.record, b = scoped.record
     if (a.profileKey !== b.profileKey || a.id !== b.id || (a.mid && b.mid && a.mid !== b.mid)
-      || (a.device.id && b.device.id && (a.device.id !== b.device.id || text(a.device.fp) !== text(b.device.fp)))) throw fail()
+      || deviceSignature(a.device) !== deviceSignature(b.device)) throw fail()
   }
   const binding = explicit || scoped
   if (binding?.kind !== "profile") return null
   if (!binding.record.keys.includes(cookie.key)) throw fail()
+  assertProfileRecordCurrent(binding.record)
   const revision = state.revisions.get(binding.record.profileKey) || 0
   if (revision !== binding.revision) {
     const latest = state.profiles.get(binding.record.profileKey)
-    if (!latest || latest.key !== binding.record.key || latest.device.id !== binding.record.device.id || text(latest.device.fp) !== text(binding.record.device.fp)) throw fail()
+    if (!latest || latest.key !== binding.record.key || deviceSignature(latest.device) !== deviceSignature(binding.record.device)) throw fail()
   }
   return binding.record
 }
@@ -184,13 +187,32 @@ function ownerMatches(owner, cookie, records) {
   return owned.key === cookie.key || records.some(record => record.key === owned.key && record.keys.includes(cookie.key))
 }
 
-function uniqueDevice(records) {
-  const signature = device => JSON.stringify({
+function deviceSignature(device = {}) {
+  return JSON.stringify({
     id: text(device.id), fp: text(device.fp), name: device.name || "", model: device.model || "",
     android_version: device.android_version || "", raw: device.raw || {},
   }, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
     ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value)
-  const signatures = new Set(records.map(record => signature(record.device)))
+}
+
+function assertProfileRecordCurrent(record) {
+  if (record.guard) {
+    const guard = record.guard
+    const generation = globalThis[Symbol.for("lotus.loginAccount.state")]?.accountGenerations?.get(record.profileKey) || 0
+    if (`${guard.qq}:${guard.profileId}` !== record.profileKey || guard.generation !== generation
+      || guard.lifetime !== getProfileLifetime(guard.qq, guard.profileId)) throw fail()
+  }
+  const latest = state.profiles.get(record.profileKey)
+  if (latest) {
+    if (latest.key !== record.key || latest.keys.length !== record.keys.length
+      || latest.keys.some(key => !record.keys.includes(key))
+      || deviceSignature(latest.device) !== deviceSignature(record.device)) throw fail()
+  } else if (state.revisions.has(record.profileKey)
+    && (record.device.id || (state.retired.get(record.key) || 0) > Date.now())) throw fail()
+}
+
+function uniqueDevice(records) {
+  const signatures = new Set(records.map(record => deviceSignature(record.device)))
   if (signatures.size !== 1) throw fail()
   return records[0].device
 }
