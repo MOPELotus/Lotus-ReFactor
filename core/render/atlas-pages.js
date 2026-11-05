@@ -133,6 +133,31 @@ function elementOf(data) {
   if (/草/.test(elem)) return 'dendro'
   return 'sr'
 }
+function characterSkillGroups(view) {
+  const skills = view.skills || []
+  const extras = [...(view.passives || []), ...(view.enhancements || [])]
+  if (view.game === '原神') {
+    return [
+      ...skills.slice(0, 3).map((card, index) => ({ section: ['普通攻击', '元素战技', '元素爆发'][index], cards: [card] })),
+      { section: '其他天赋', cards: [...skills.slice(3), ...extras] },
+    ]
+  }
+  const definitions = view.game === '星铁' ? [
+    ['普通攻击', /普攻|普通攻击/], ['战技', /战技/], ['终结技', /终结技/],
+    ['天赋与行迹', /天赋/], ['秘技与地图攻击', /秘技|地图攻击/],
+  ] : [
+    ['普通攻击', /普通攻击/], ['特殊技', /特殊技/], ['连携技与终结技', /连携技|终结技/],
+    ['闪避与支援', /闪避|支援/], ['核心能力与潜能', /核心/],
+  ]
+  const groups = definitions.map(([section]) => ({ section, cards: [] }))
+  const extraGroup = groups[view.game === '星铁' ? 3 : 4]
+  for (const card of skills) {
+    const index = definitions.findIndex(([, pattern]) => pattern.test(card.type || ''))
+    ;(index < 0 ? extraGroup : groups[index]).cards.push(card)
+  }
+  extraGroup.cards.push(...extras)
+  return groups
+}
 function groupsOf(data) {
   const view = data.view || {}, groups = []
   const add = (section, blocks) => { if (blocks.length) groups.push({ section, blocks }) }
@@ -146,10 +171,7 @@ function groupsOf(data) {
     if (meta.length) overview.push(textBlock(meta.map(m => `${m.label}：${m.value}`).join(' · '), { color: GOLD }))
     overview.push(...factsBlocks(view.stats || []))
     add('角色总览', overview)
-    add(view.game === '星铁' ? '技能与行迹' : view.game === '绝区零' ? '技能与核心能力' : '技能与天赋', [
-      ...cardBlocks(view.skills),
-      ...cardBlocks([...(view.passives || []), ...(view.enhancements || [])]),
-    ])
+    for (const group of characterSkillGroups(view)) add(group.section, cardBlocks(group.cards))
     add(view.game === '星铁' ? '星魂' : view.game === '绝区零' ? '影画' : '命座', cardBlocks(view.constellations))
     const materialGroups = view.materialGroups?.length ? view.materialGroups : [{ title: '养成材料', items: view.materials || [] }]
     const blocks = []
