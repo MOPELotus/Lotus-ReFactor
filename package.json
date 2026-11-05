@@ -18,5 +18,10 @@
     "skia-canvas": "3.0.8",
     "sql.js": "^1.15.2",
     "yaml": "^2.8.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "follow-redirects": "1.16.2"
+    }
   }
 }
