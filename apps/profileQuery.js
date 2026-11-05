@@ -30,6 +30,9 @@ export class LotusProfileQuery extends BasePlugin {
     this.starRail = options.starRail || new StarRailChallengeService(options)
   }
 
+  async miaoArtisList() { return this.runMiao("artisList") }
+  async miaoGroupRank() { return this.runMiao("groupRank") }
+  async zzzGachaView() { return this.runZzz("gachaLog") }
   async miaoProfileList() { return this.runMiao("profileList") }
   async miaoProfileDetail() { return this.runMiao("profileDetail") }
   async miaoProfileStat() { return this.runMiao("profileStat") }

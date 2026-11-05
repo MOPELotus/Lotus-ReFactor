@@ -1,13 +1,17 @@
 import { importRuntimeModule } from "./common.js"
+import { renderMiaoGacha } from "./miaoGacha.js"
 
 export class GenshinGachaDisplayBridge {
   constructor(options = {}) {
     this.loadGachaLog = options.loadGachaLog || loadGachaLog
     this.loadGcLogApp = options.loadGcLogApp || loadGcLogApp
+    this.loadMiaoGacha = options.loadMiaoGacha
   }
 
   async render({ e, qq, uid, viewMessage = "#原神角色记录" } = {}) {
     if (!qq || !uid) throw new Error("miao 原神抽卡渲染缺少 QQ 或 UID")
+    const display = await renderMiaoGacha({ e, qq, uid, game: "gs", viewMessage, loadGacha: this.loadMiaoGacha })
+    if (display) return display
     const [GachaLog, GcLogApp] = await Promise.all([this.loadGachaLog(), this.loadGcLogApp()])
     const event = createRenderEvent(e, qq, uid, viewMessage)
     const model = new GachaLog(event)
@@ -32,7 +36,7 @@ function createRenderEvent(e, qq, uid, viewMessage) {
     ...e,
     msg: viewMessage,
     original_msg: viewMessage,
-    isAll: /全部/.test(String(viewMessage)),
+    isAll: /^#(?:原神|星铁)?全部记录$/.test(String(viewMessage)),
     isSr: false,
     game: "gs",
     uid: String(uid),

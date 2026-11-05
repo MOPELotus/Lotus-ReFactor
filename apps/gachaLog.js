@@ -23,6 +23,7 @@ import {
 import { ZzzGachaBridge } from "../services/pluginBridge/zzzGacha.js"
 import { GenshinGachaDisplayBridge } from "../services/pluginBridge/genshinGacha.js"
 import { StarRailGachaDisplayBridge } from "../services/pluginBridge/starRailGacha.js"
+import { normalizeGachaView } from "../services/pluginBridge/miaoGacha.js"
 import { StarRailGachaService } from "../services/starRailGacha/service.js"
 import { MiniappGachaService } from "../services/miniappGacha/service.js"
 
@@ -47,7 +48,15 @@ export class LotusGachaLog extends BasePlugin {
           fnc: "genshinGachaLog",
         },
         {
-          reg: `^#(原神)?(全部)?(抽卡|抽奖|角色|武器|集录|常驻|up|新手|全部)池*(记录|祈愿|分析)${PROFILE_ID_SUFFIX_PATTERN}$`,
+          reg: `^#(?:原神)?(?:喵喵)?版本(?:全部)?统计${PROFILE_ID_SUFFIX_PATTERN}$`,
+          fnc: "genshinGachaView",
+        },
+        {
+          reg: `^(?:[*]|#星铁)(?:喵喵)?版本(?:全部)?统计${PROFILE_ID_SUFFIX_PATTERN}$`,
+          fnc: "starRailGachaView",
+        },
+        {
+          reg: `^#(?:原神)?(?:喵喵)?(?:(?:全部)?(?:抽卡|抽奖|角色|武器|集录|常驻|up|新手)池?(?:全部)?|全部)(?:记录|祈愿|分析|统计)${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "genshinGachaView",
         },
         {
@@ -59,15 +68,11 @@ export class LotusGachaLog extends BasePlugin {
           fnc: "starRailGachaLog",
         },
         {
-          reg: `^\\*(星铁)?(全部)?(抽卡|抽奖|角色|角色联动|光锥|光锥联动|常驻|新手|全部)池*(记录|祈愿|分析)${PROFILE_ID_SUFFIX_PATTERN}$`,
+          reg: `^(?:\\*|#星铁)(?:星铁)?(?:喵喵)?(?:(?:全部)?(?:角色联动|光锥联动|抽卡|抽奖|角色|光锥|武器|常驻|up|新手)池?(?:全部)?|全部)(?:记录|祈愿|分析|统计)${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "starRailGachaView",
         },
         {
-          reg: `^%更新抽卡记录${PROFILE_ID_SUFFIX_PATTERN}$`,
-          fnc: "zzzGachaLog",
-        },
-        {
-          reg: `^#(zzz|ZZZ|绝区零)(刷新|更新)抽卡(链接|记录)?${PROFILE_ID_SUFFIX_PATTERN}$`,
+          reg: `^(?:[%％](?:zzz|ZZZ|绝区零)?|[#/](?:zzz|ZZZ|绝区零)|(?:zzz|ZZZ|绝区零))(刷新|更新)抽卡(链接|记录)?${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "zzzGachaLog",
         },
       ],
@@ -494,24 +499,11 @@ function gameLabel(game) {
 }
 
 function viewMessageForStarRail(message = "") {
-  const text = String(message).replace(/\\d+$/, "")
-  if (/全部/.test(text)) return "#星铁全部记录"
-  if (/角色联动/.test(text)) return "#星铁角色联动记录"
-  if (/光锥联动/.test(text)) return "#星铁光锥联动记录"
-  if (/光锥/.test(text)) return "#星铁光锥记录"
-  if (/常驻/.test(text)) return "#星铁常驻记录"
-  if (/新手/.test(text)) return "#星铁新手记录"
-  return "#星铁角色记录"
+  return normalizeGachaView(message, "sr")
 }
 
 function viewMessageForGenshin(message = "") {
-  const text = String(message).replace(/\d+$/, "")
-  if (/全部/.test(text)) return "#原神全部记录"
-  if (/武器/.test(text)) return "#原神武器记录"
-  if (/集录/.test(text)) return "#原神集录记录"
-  if (/常驻/.test(text)) return "#原神常驻记录"
-  if (/新手/.test(text)) return "#原神新手记录"
-  return "#原神角色记录"
+  return normalizeGachaView(message, "gs")
 }
 
 export function translateGachaError(error) {

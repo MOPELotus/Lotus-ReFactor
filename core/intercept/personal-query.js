@@ -7,8 +7,17 @@ const P = `(?:(?:${PROFILE_ID_REQUIRED_SUFFIX_PATTERN})|(?<!\\d))`
 const Z = "(?:[%％](?:zzz|ZZZ|绝区零)?|[#/](?:zzz|ZZZ|绝区零)|(?:zzz|ZZZ|绝区零))"
 const SR_CHALLENGE_WORDS = "(?:深渊|忘却|忘却之庭|混沌|混沌回忆|虚构|虚构叙事|末日|末日幻影|异乡|异相|异向|仲裁|异相仲裁)"
 
+// Explicit gacha statistics belong to the gacha bridge, not role proficiency.
+const GACHA_STAT = `#(?:原神|星铁)?(?:喵喵)?(?:(?:全部)?(?:抽卡|抽奖|角色|武器|光锥|常驻|集录|up)池?(?:全部)?|全部)统计${P}$`
+
 // Shared by personal-query dispatch and the achievement/atlas pass-through guards.
 export const PERSONAL_QUERY_RULES = Object.freeze([
+  { reg: `^${Z}抽卡(?:分析|记录|统计)${P}$`, fnc: "zzzGachaView" },
+  { reg: `^#(?:星铁|原神)?(?:圣遗物|遗器)列表${P}$`, fnc: "miaoArtisList" },
+  { reg: `^#(?!(?:zzz|ZZZ|绝区零))(?:星铁|原神)?(?!(?:重置|重设|刷新|更新|重新加载|开启|打开|启用|关闭|禁用))(?:群|群内)?.+(?:排名|排行)(?:榜)?${P}$`, fnc: "miaoGroupRank" },
+  { reg: `^#(?:星铁|原神)?(?:群|群内)?(?:排名|排行)?(?:最强|最高|最高分|最牛|第一|极限)+.+${P}$`, fnc: "miaoGroupRank" },
+  { reg: `^#星铁(?:喵喵)?(?:角色|查询|查询角色|角色查询|人物)${P}$`, fnc: "miaoAvatarList" },
+  { reg: `^#星铁(?:我的)?(?:物理|火|冰|雷|风|量子|虚数)*(?:角色|练度|五|四|5|4|星)+(?:汇总|统计|列表)(?:force|五|四|5|4|星)*${P}$`, fnc: "miaoProfileStat" },
   { reg: `^#(?:星铁|原神)?(?:面板角色|角色面板|面板)(?:列表)?\\s*${P}$`, fnc: "miaoProfileList" },
   { reg: `^\\*(?:面板角色|角色面板|面板)(?:列表)?\\s*${P}$`, fnc: "miaoProfileList" },
   { reg: `^#(?!(?:zzz|ZZZ|绝区零))(?!(?:原神|星铁)?(?:更新面板|面板更新|全部面板更新|更新全部面板))[\\s\\S]{1,}(?:详细|详情|面板|面版|圣遗物|遗器|武器|伤害)\\s*${P}$`, fnc: "miaoProfileDetail" },
@@ -40,7 +49,7 @@ export const PERSONAL_QUERY_RULES = Object.freeze([
   { reg: `^${Z}(?:枯萎苗圃|枯萎|苗圃)\\s*${P}$`, fnc: "zzzHollowZero" },
   { reg: `^${Z}(?:迷失之地|迷失)\\s*${P}$`, fnc: "zzzHollowZeroS2" },
   { reg: `^${Z}(?:区域收集|收集|探索|探索度)\\s*${P}$`, fnc: "zzzExplorationDetail" },
-].map(rule => ({ ...rule, reg: rule.reg.replace(/^\^/, `^${WEB_COMMAND_EXCLUSION}`) })))
+].map(rule => ({ ...rule, reg: rule.reg.replace(/^\^/, `^${WEB_COMMAND_EXCLUSION}${rule.fnc === "miaoProfileStat" ? `(?!${GACHA_STAT})` : ""}`) })))
 
 const compiled = PERSONAL_QUERY_RULES.map(rule => ({ ...rule, pattern: new RegExp(rule.reg) }))
 

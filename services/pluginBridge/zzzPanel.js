@@ -81,6 +81,7 @@ export class ZzzProfileQueryBridge {
     this.loadClimbingTowerClass = options.loadClimbingTowerClass || (() => loadZzzAppClass("climbingTower.js", "ClimbingTower"))
     this.loadMonthlyClass = options.loadMonthlyClass || (() => loadZzzAppClass("monthly.js", "monthly"))
     this.loadHollowZeroClass = options.loadHollowZeroClass || (() => loadZzzAppClass("hollowZero.js", "HollowZero"))
+    this.loadGachaClass = options.loadGachaClass || (() => loadZzzAppClass("gachalog.js", "GachaLog"))
     this.loadExplorationDetailClass = options.loadExplorationDetailClass || (() => loadZzzAppClass("explorationDetail.js", "ExplorationDetail"))
     this.loadMysApiClass = options.loadMysApiClass || loadMysApiClass
     this.registerProfile = options.registerProfile || registerProfileWithGenshin
@@ -141,6 +142,10 @@ export class ZzzProfileQueryBridge {
 
   async explorationDetail(options = {}) {
     return this.run({ ...options, PluginClass: await this.loadExplorationDetailClass(), method: "explorationDetail" })
+  }
+
+  async gachaLog(options = {}) {
+    return this.run({ ...options, PluginClass: await this.loadGachaClass(), method: "gachaLogAnalysis" })
   }
 
   async groupRank({ e, profile, profileId = 1, command, mode = "weighted", character, forwardReplies = true } = {}) {

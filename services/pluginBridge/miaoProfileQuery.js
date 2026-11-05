@@ -6,12 +6,24 @@ import { withMysRequestProfile } from "../intercept/mys-request-context.js"
 export class MiaoProfileQueryBridge {
   constructor(options = {}) {
     this.registerProfile = options.registerProfile || registerProfileWithGenshin
+    this.loadProfileArtis = options.loadProfileArtis || loadProfileArtis
+    this.loadProfileRank = options.loadProfileRank || loadProfileRank
     this.loadProfileList = options.loadProfileList || loadProfileList
     this.loadProfileDetail = options.loadProfileDetail || loadProfileDetail
     this.loadProfileStat = options.loadProfileStat || loadProfileStat
     this.loadAbyssSummary = options.loadAbyssSummary || loadAbyssSummary
     this.loadRoleCombatSummary = options.loadRoleCombatSummary || loadRoleCombatSummary
     this.loadHardChallengeSummary = options.loadHardChallengeSummary || loadHardChallengeSummary
+  }
+
+  async artisList(options = {}) {
+    const fn = await this.loadProfileArtis()
+    return this.run(options, event => fn(event))
+  }
+
+  async groupRank(options = {}) {
+    const fn = await this.loadProfileRank()
+    return this.run(options, event => fn(event))
   }
 
   async profileList(options = {}) {
@@ -109,4 +121,12 @@ async function loadRoleCombatSummary() {
 async function loadHardChallengeSummary() {
   const mod = await importRuntimeModule("miao-plugin", "apps", "stat", "HardChallengeSummary.js")
   return mod.HardChallengeSummary
+}
+
+async function loadProfileArtis() {
+  return (await importRuntimeModule("miao-plugin", "apps", "profile", "ProfileArtis.js")).profileArtisList
+}
+
+async function loadProfileRank() {
+  return (await importRuntimeModule("miao-plugin", "apps", "profile", "ProfileRank.js")).groupRank
 }
