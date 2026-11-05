@@ -36,7 +36,7 @@ export class LotusDailyNote extends BasePlugin {
           fnc: "genshinDailyNote",
         },
         {
-          reg: `^#?(体力|树脂|查询体力|便笺|便签)${PROFILE_ID_SUFFIX_PATTERN}$`,
+          reg: `^#?(?:原神)?(体力|树脂|查询体力|便笺|便签)${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "genshinDailyNote",
         },
         {
@@ -44,7 +44,7 @@ export class LotusDailyNote extends BasePlugin {
           fnc: "starRailDailyNote",
         },
         {
-          reg: `^#星铁体力${PROFILE_ID_SUFFIX_PATTERN}$`,
+          reg: `^#星铁(?:体力|开拓力|便笺|便签|note|每日)${PROFILE_ID_SUFFIX_PATTERN}$`,
           fnc: "starRailDailyNote",
         },
         {
