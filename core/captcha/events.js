@@ -15,7 +15,7 @@ export async function emitCaptchaEvent(context = {}, event = {}) {
 // tickets, provider credentials, and private manual polling URLs at any depth.
 const PUBLIC_TYPES = new Set([
   "captcha:start", "captcha:provider-start", "captcha:provider-fail", "captcha:provider-skip",
-  "captcha:provider-wait", "captcha:refresh-challenge", "captcha:manual-link", "captcha:success", "captcha:fail",
+  "captcha:provider-wait", "captcha:refresh-challenge", "captcha:manual-link", "captcha:manual-legacy", "captcha:success", "captcha:fail",
 ])
 const PUBLIC_PROVIDERS = new Set(["test_nine", "ttocr", "gtmanual", "vision_ai", "challenge_refresh"])
 const PUBLIC_REASONS = new Set([
@@ -71,7 +71,7 @@ function publicManualLink(value) {
 }
 
 export function isUserVisibleCaptchaEvent(event = {}) {
-  return ["captcha:start", "captcha:manual-link", "captcha:success", "captcha:fail"].includes(event.type)
+  return ["captcha:start", "captcha:manual-link", "captcha:manual-legacy", "captcha:success", "captcha:fail"].includes(event.type)
 }
 
 export function formatCaptchaMessage(event = {}) {
@@ -100,6 +100,8 @@ export function formatCaptchaMessage(event = {}) {
       return "[荷花插件]当前验证码参数已失效，正在重新请求验证码。"
     case "captcha:manual-link":
       return `[荷花插件]自动验证未通过，需要你手动完成验证：${event.link}`
+    case "captcha:manual-legacy":
+      return "[荷花插件]当前外部人工验证服务为旧版，仅支持部分极验 v3。建议机器人主人启用荷花内置人工验证服务，或更新外部 GT-Manual。"
     case "captcha:success":
       return "[荷花插件]验证码已通过，正在继续处理原请求。"
     case "captcha:fail":

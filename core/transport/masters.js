@@ -15,7 +15,7 @@ export async function collectMasterIds(bot = globalThis.Bot) {
 export async function notifyBotMasters(message, { bot = globalThis.Bot } = {}) {
   const ids = await collectMasterIds(bot)
   const results = await Promise.all(ids.map(id => notifyUser(id, message, { bot, onlyKnownFriend: false, allowGroupFallback: false, at: false })))
-  if (!ids.length || results.some(result => !result.ok)) globalThis.logger?.warn?.("[Lotus-Plugin] TuneWeave 主人私聊通知未全部送达")
+  if (!ids.length || results.some(result => !result.ok)) globalThis.logger?.warn?.("[Lotus-Plugin] 主人私聊通知未全部送达")
   return { ok: Boolean(ids.length) && results.every(result => result.ok), results }
 }
 

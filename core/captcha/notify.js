@@ -52,7 +52,7 @@ export function createCaptchaEventReporter(options = {}) {
 
   return async event => {
     if (!isUserVisibleCaptchaEvent(event) || !event?.message) return false
-    if (event.type === "captcha:manual-link") {
+    if (["captcha:manual-link", "captcha:manual-legacy"].includes(event.type)) {
       await send(event.message)
       return true
     }

@@ -86,6 +86,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     },
     gtmanual: {
       enable: true,
+      internal_enable: true,
       verify_addr: "https://gt.lotusshared.cn/GTest/register?key=114514",
       timeout_ms: 180000,
       poll_interval_ms: 1500,

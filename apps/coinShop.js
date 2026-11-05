@@ -6,6 +6,7 @@ import { USER_WEB_COMMAND_REG, OWNER_WEB_COMMAND_REG } from "../core/intercept/w
 import { replyText } from "../core/transport/reply.js"
 import { CoinShopService } from "../services/coinShop/service.js"
 import { CoinShopWeb } from "../services/coinShop/web.js"
+import { startGtMaintenance } from "../services/gtManual/runtime.js"
 
 const serviceKey = Symbol.for("Lotus-Plugin.coinShop")
 if (!globalThis[serviceKey]) {
@@ -26,6 +27,7 @@ export class LotusCoinShop extends BasePlugin {
   async init() {
     try { await this.web.start((await this.getConfig()).coin_shop) }
     catch (error) { globalThis.logger?.warn?.(`[Lotus-Plugin] 米游币兑换网页启动失败：${error.message}`) }
+    startGtMaintenance({ getConfig: this.getConfig })
   }
 
   async coinShop() {

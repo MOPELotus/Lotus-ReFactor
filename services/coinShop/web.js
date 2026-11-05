@@ -24,6 +24,7 @@ export class CoinShopWeb {
     this.server = null
     this.shared = null
     this.config = null
+    this.routes = new Map()
   }
 
   async start(config = {}, bot = globalThis.Bot) {
@@ -71,6 +72,30 @@ export class CoinShopWeb {
 
   panelPath() { return this.config.path.replace(/\/[^/]+$/, "") + "/panel" }
 
+  mountRoute(route, handler) {
+    if (!/^\/[a-zA-Z0-9_/-]+$/.test(route) || route.includes("//") || route === "/" || this.routes.has(route)
+      || [this.config.path, this.panelPath()].some(base => route === base || route.startsWith(base + "/") || base.startsWith(route + "/"))) throw new Error("网页挂载路径冲突")
+    this.routes.set(route, handler)
+    let layers = []
+    if (this.shared) {
+      const { app, stack } = this.shared
+      const length = stack.length
+      app.use(route, (req, res) => void this.handle(req, res))
+      layers = stack.splice(length)
+      stack.unshift(...layers)
+      this.shared.layers.push(...layers)
+    }
+    return () => {
+      if (this.routes.get(route) !== handler) return
+      this.routes.delete(route)
+      handler.close?.()
+      for (const layer of layers) {
+        const index = this.shared?.stack.indexOf(layer) ?? -1
+        if (index >= 0) this.shared.stack.splice(index, 1)
+      }
+    }
+  }
+
   issuePanelTicket(qq, botId = "", owner = false) {
     if (owner !== true) throw Object.assign(new Error("只有机器人主人可以获取管理面板链接"), { status: 403 })
     return this.issueTicket(qq, botId, true, "panel")
@@ -93,6 +118,8 @@ export class CoinShopWeb {
   }
 
   async close() {
+    for (const handler of this.routes.values()) handler.close?.()
+    this.routes.clear()
     if (this.shared) {
       for (const layer of this.shared.layers) { const i = this.shared.stack.indexOf(layer); if (i >= 0) this.shared.stack.splice(i, 1) }
       this.shared = null
@@ -129,6 +156,9 @@ export class CoinShopWeb {
       this.prune()
       const original = req.originalUrl || req.url
       const url = new URL(original, "http://localhost")
+      for (const [route, handler] of this.routes) {
+        if (url.pathname === route || url.pathname.startsWith(route + "/")) return await handler(req, res)
+      }
       const panel = url.pathname === this.panelPath() || url.pathname.startsWith(this.panelPath() + "/")
       if (!panel && this.config.enable === false) { this.json(res, 404, { error: "用户页面已关闭" }); return }
       const base = panel ? this.panelPath() : this.config.path

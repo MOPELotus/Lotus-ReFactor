@@ -1,6 +1,7 @@
 import { requestJson, sleep } from "../http.js"
 import { captchaFail, captchaOk, captchaVersion, hasCaptchaV4Response, normalizeCaptchaV4Solution } from "../result.js"
 import { emitCaptchaEvent } from "../events.js"
+import { detectGtCapabilities } from "../../../services/gtManual/capabilities.js"
 
 const TERMINAL_REASONS = new Set(["manual_closed", "manual_sdk_error", "manual_invalid_result", "manual_submission_failed", "manual_expired"])
 
@@ -9,7 +10,7 @@ export const gtManualProvider = {
   supportedVersions: [3, 4],
 
   isAvailable(config = {}) {
-    return config.enable !== false && Boolean(config.verify_addr || config.verifyAddr)
+    return config.enable !== false && (config.internal_enable === true || Boolean(config.verify_addr || config.verifyAddr))
   },
 
   async solve(challenge, config = {}, context = {}) {
@@ -27,6 +28,22 @@ export const gtManualProvider = {
     if (expired()) return fail("manual_timeout")
 
     try {
+      let address = config.verify_addr || config.verifyAddr
+      if (config.internal_enable === true) {
+        const { ensureInternalGt } = await import("../../../services/gtManual/runtime.js")
+        const connection = await ensureInternalGt()
+        address = connection.address
+        context = { ...context, fetch: connection.fetch }
+      } else if (config.internal_enable === false) {
+        const { stopInternalGt } = await import("../../../services/gtManual/runtime.js")
+        stopInternalGt()
+        const capability = await detectGtCapabilities(address, context)
+        if (capability.kind === "legacy") {
+          await emitCaptchaEvent(context, { type: "captcha:manual-legacy", provider: this.name })
+          if (version === 4) return fail("unsupported_captcha_version", { skipped: true })
+        }
+      }
+      if (expired()) return fail("manual_timeout")
       const payload = version === 4 ? {
         captchaVersion: 4,
         captchaId: challenge.captchaId || challenge.captcha_id,
@@ -34,7 +51,7 @@ export const gtManualProvider = {
         ...(typeof challenge.userInfo === "string" ? { userInfo: challenge.userInfo } : {}),
       } : { gt: challenge.gt, challenge: challenge.challenge }
       const requestTimeout = Math.max(1, finiteNumber(config.request_timeout_ms || 15000, 15000))
-      const created = await requestJson(config.verify_addr || config.verifyAddr, {
+      const created = await requestJson(address, {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
         timeoutMs: Math.min(requestTimeout, deadline - Date.now()),
       }, context)

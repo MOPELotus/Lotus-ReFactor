@@ -260,6 +260,7 @@ function validateCaptchaConfig(captcha = {}, errors) {
     errors.push("captcha.ttocr.poll_interval_ms must be at least 1000")
   }
   validateProvider(captcha.gtmanual, "captcha.gtmanual", errors, ["verify_addr"])
+  if (typeof captcha.gtmanual?.internal_enable !== "boolean") errors.push("captcha.gtmanual.internal_enable must be a boolean")
   validateProvider(captcha.vision_ai, "captcha.vision_ai", errors, ["api", "key"])
 }
 
