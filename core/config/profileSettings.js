@@ -2,6 +2,7 @@ import {
   listProfileIds,
   loadLoggedInProfile,
   normalizeProfileId,
+  PROFILE_ID_SUFFIX_PATTERN,
   parseProfileIdFromMessage,
   saveProfile,
   withProfileWrite,
@@ -45,6 +46,11 @@ const ROLE_GAME_KEYS = {
   绝: "zzz",
   zzz: "zzz",
 }
+
+// A profile suffix needs a separator before the UID; attached 8–10 digit
+// values are the UID itself and always target the default profile.
+export const ROLE_UID_COMMAND_PATTERN = `^#(?:绑定|设置|切换)(?:原神|星铁|崩铁|绝区零|绝)(?:uid|UID)(?:${PROFILE_ID_SUFFIX_PATTERN}\\s+)?[1-9]\\d{7,9}$`
+const roleUidCommand = /^#(绑定|设置|切换)(原神|星铁|崩铁|绝区零|绝)(uid|UID)(?:(\d{0,3})\s+([1-9]\d{7,9})|([1-9]\d{7,9}))$/
 
 export async function updateProfileSettings({ e, message, nickname = "", store = {}, config } = {}) {
   const userId = String(e?.user_id || "")
@@ -220,13 +226,13 @@ export function parseProfileSettingsCommand(message = "") {
     }
   }
 
-  match = text.match(/^#(绑定|设置|切换)(原神|星铁|崩铁|绝区零|绝)(uid|UID)(\d*)\s*(\d{8,10})$/)
+  match = text.match(roleUidCommand)
   if (match) {
     return {
       ok: true,
       type: "roleUid",
       game: ROLE_GAME_KEYS[match[2]],
-      uid: match[5],
+      uid: match[5] || match[6],
     }
   }
 
@@ -243,8 +249,8 @@ export function parseProfileIdFromSettingsMessage(message = "") {
   if (osLang) return normalizeProfileId(osLang[1] || 1)
   const cloudToken = text.match(/^#绑定云(?:原神|绝区零)token(\d*)\s+.+$/)
   if (cloudToken) return normalizeProfileId(cloudToken[1] || 1)
-  const roleUid = text.match(/^#(?:绑定|设置|切换)(?:原神|星铁|崩铁|绝区零|绝)(?:uid|UID)(\d*)\s*\d{8,10}$/)
-  if (roleUid) return normalizeProfileId(roleUid[1] || 1)
+  const roleUid = text.match(roleUidCommand)
+  if (roleUid) return normalizeProfileId(roleUid[4] || 1)
   return parseProfileIdFromMessage(text)
 }
 

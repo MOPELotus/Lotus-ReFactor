@@ -10,6 +10,7 @@ import {
 } from "../core/config/profile.js"
 import {
   parseProfileIdFromSettingsMessage,
+  ROLE_UID_COMMAND_PATTERN,
   updateProfileSettings,
 } from "../core/config/profileSettings.js"
 import { PermissionService } from "../core/permissions/service.js"
@@ -43,7 +44,7 @@ export class LotusProfileSettings extends BasePlugin {
         { reg: `^#设置(国际服|海外服)语言${PROFILE_ID_SUFFIX_PATTERN}\\s+[a-zA-Z_-]+$`, fnc: "updateSettings" },
         { reg: `^#绑定云(原神|绝区零)token${PROFILE_ID_SUFFIX_PATTERN}\\s+.+$`, fnc: "updateSettings" },
         { reg: `^#(启用|开启|关闭|禁用)云(原神|绝区零)(签到)?${PROFILE_ID_SUFFIX_PATTERN}$`, fnc: "updateSettings" },
-        { reg: `^#(绑定|设置|切换)(原神|星铁|崩铁|绝区零|绝)(uid|UID)${PROFILE_ID_SUFFIX_PATTERN}\\s*\\d{8,10}$`, fnc: "updateSettings" },
+        { reg: ROLE_UID_COMMAND_PATTERN, fnc: "updateSettings" },
       ],
     })
   }

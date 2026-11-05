@@ -70,12 +70,12 @@ export class LotusGenshinTeamDamage extends BasePlugin {
 }
 
 export function splitTeamDamageProfile(message = "") {
-  const suffix = splitProfileSuffix(message)
-  if (suffix.hasProfileSuffix) return suffix
-
   const text = String(message || "").trim()
-  const match = text.match(/^(#队伍伤害(?:详情|过程|全图)?)([1-9]\d{0,2})(?=\D)([\s\S]*)$/)
-  if (!match) return suffix
+  const match = text.match(/^(#队伍伤害(?:详情|过程|全图)?)([1-9]\d{0,2})(?=\D|$)([\s\S]*)$/)
+  const suffix = () => /(?:lv|等级)\s*\d+$/i.test(text)
+    ? { hasProfileSuffix: false, message: text, profileId: 1 }
+    : splitProfileSuffix(text)
+  if (!match) return suffix()
   try {
     const profileId = normalizeProfileId(match[2])
     return {
@@ -84,7 +84,7 @@ export function splitTeamDamageProfile(message = "") {
       message: `${match[1]}${match[3]}`.trim(),
     }
   } catch {
-    return suffix
+    return suffix()
   }
 }
 

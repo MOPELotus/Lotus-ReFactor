@@ -71,7 +71,8 @@ export const PROFILE_ID_REQUIRED_SUFFIX_PATTERN = "(?:[1-9]|[1-9]\\d|1\\d\\d|2[0
 export const PROFILE_ID_SUFFIX_PATTERN = `${PROFILE_ID_REQUIRED_SUFFIX_PATTERN}?`
 
 export function normalizeProfileId(value = 1) {
-  const profileId = Number(value || 1)
+  const input = value === undefined || value === null || value === "" ? 1 : value
+  const profileId = typeof input === "string" || typeof input === "number" ? Number(input) : NaN
   if (!Number.isInteger(profileId) || profileId < 1 || profileId > MAX_PROFILE_ID) {
     throw new Error(`Invalid profileId: ${value}. Profile id must be 1-${MAX_PROFILE_ID}.`)
   }
