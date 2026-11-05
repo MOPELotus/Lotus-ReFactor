@@ -19,12 +19,25 @@ function renderGroup(index) {
   for (const schema of group.schemas) {
     const value = state.dirty.has(schema.field) ? state.dirty.get(schema.field) : state.values[schema.field], field = el("label", "field"), label = el("span", "field-label", schema.label)
     field.append(label); let input
-    if (schema.component === "Select") { input = el("select"); for (const choice of schema.componentProps?.options || []) { const option = el("option", "", choice.label); option.value = choice.value; input.append(option) } input.value = value }
+    if (schema.component === "Select") {
+      input = el("select")
+      const options = schema.componentProps?.options || []
+      for (const choice of options) { const option = el("option", "", choice.label); option.value = choice.value; input.append(option) }
+      // Preserve existing custom values when a setting gains a fixed choice list.
+      if (value !== undefined && value !== null && !options.some(choice => String(choice.value) === String(value))) {
+        const option = el("option", "", `当前自定义值：${value}`); option.value = value; input.append(option)
+      }
+      input.value = value ?? ""
+    }
     else if (schema.component === "Switch") { input = el("input"); input.type = "checkbox"; input.checked = Boolean(value); field.classList.add("switch-row") }
     else if (schema.component === "InputTextArea") { input = el("textarea"); input.rows = 3; input.value = value ?? "" }
     else { input = el("input"); input.type = schema.component === "InputPassword" ? "password" : schema.component === "InputNumber" ? "number" : "text"; input.value = value ?? ""; if (state.configured.has(schema.field)) input.placeholder = "已配置，留空保持" }
     input.name = schema.field; state.inputs.set(schema.field, { input, schema }); field.append(input)
-    input.addEventListener("input", () => { state.dirty.set(schema.field, schema.component === "Switch" ? input.checked : schema.component === "InputNumber" ? Number(input.value) : input.value); $("save-status").textContent = "有未保存的修改" })
+    input.addEventListener("input", () => {
+      const choice = schema.component === "Select" && schema.componentProps?.options?.find(option => String(option.value) === input.value)
+      state.dirty.set(schema.field, schema.component === "Switch" ? input.checked : schema.component === "InputNumber" ? Number(input.value) : choice ? choice.value : input.value)
+      $("save-status").textContent = "有未保存的修改"
+    })
     if (schema.bottomHelpMessage) field.append(el("small", "", schema.bottomHelpMessage))
     if (state.configured.has(schema.field)) { const clearLabel = el("span", "clear-secret"), clear = el("input"); clear.type = "checkbox"; clear.checked = state.clears.has(schema.field); clear.setAttribute("aria-label", "清除" + schema.label); clear.addEventListener("change", () => { if (clear.checked) state.clears.add(schema.field); else state.clears.delete(schema.field); $("save-status").textContent = "有未保存的修改" }); clearLabel.append(clear, el("span", "", "清除此密钥")); field.append(clearLabel) }
     fields.push(field)
