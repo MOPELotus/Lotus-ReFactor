@@ -231,7 +231,7 @@ const STATIC_QUERY_ALIASES = Object.freeze({
   星见雅: { game: "绝区零", aliases: ["雅"] },
   雾切之回光: { game: "原神", aliases: ["雾切"] },
   冰封迷途的勇士: { game: "原神", aliases: ["冰风迷途的勇士"] },
-  安娜丝塔夏: { game: "原神", aliases: ["安娜斯塔夏"] },
+  安娜丝塔夏: { game: "原神", aliases: ["安娜斯塔夏", "女皇", "冰神", "雪王"] },
 })
 
 const SHORTCUT_GAME_BY_PREFIX = Object.freeze({
