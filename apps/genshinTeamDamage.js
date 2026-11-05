@@ -28,7 +28,11 @@ export class LotusGenshinTeamDamage extends BasePlugin {
   }
 
   async teamDamage() {
-    const parsed = splitTeamDamageProfile(this.e.msg)
+    let parsed
+    try { parsed = splitTeamDamageProfile(this.e.msg) } catch {
+      await replyText(this, "[荷花插件]profile 编号需为 1–255，请检查队伍伤害指令中的编号。")
+      return true
+    }
     const profileId = parsed.hasProfileSuffix ? parsed.profileId : 1
     const command = parsed.message
     const userId = String(this.e.user_id)
@@ -71,20 +75,16 @@ export class LotusGenshinTeamDamage extends BasePlugin {
 
 export function splitTeamDamageProfile(message = "") {
   const text = String(message || "").trim()
-  const match = text.match(/^(#队伍伤害(?:详情|过程|全图)?)([1-9]\d{0,2})(?=\D|$)([\s\S]*)$/)
+  const match = text.match(/^(#队伍伤害(?:详情|过程|全图)?)(\d+)(?=\D|$)([\s\S]*)$/)
   const suffix = () => /(?:lv|等级)\s*\d+$/i.test(text)
     ? { hasProfileSuffix: false, message: text, profileId: 1 }
     : splitProfileSuffix(text)
   if (!match) return suffix()
-  try {
-    const profileId = normalizeProfileId(match[2])
-    return {
-      hasProfileSuffix: true,
-      profileId,
-      message: `${match[1]}${match[3]}`.trim(),
-    }
-  } catch {
-    return suffix()
+  const profileId = normalizeProfileId(match[2])
+  return {
+    hasProfileSuffix: true,
+    profileId,
+    message: `${match[1]}${match[3]}`.trim(),
   }
 }
 
