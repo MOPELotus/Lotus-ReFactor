@@ -113,7 +113,11 @@ export async function runMediaProcess(command, args, { cwd, env, timeoutMs = 600
     child.on("error", error => { cleanup(); reject(error) })
     child.on("close", code => {
       cleanup()
-      if (aborted || timedOut || code !== 0) reject(new Error(aborted ? "媒体处理已取消" : timedOut ? `${command} 执行超时` : `${command} 执行失败：${output}`))
+      if (!aborted && !timedOut && code !== 0 && /No space left on device|ENOSPC|Disk quota exceeded/i.test(output)) {
+        const error = new Error("服务器磁盘空间不足，媒体处理失败。请联系机器人主人清理空间后重试。")
+        error.code = "ENOSPC"
+        reject(error)
+      } else if (aborted || timedOut || code !== 0) reject(new Error(aborted ? "媒体处理已取消" : timedOut ? `${command} 执行超时` : `${command} 执行失败：${output}`))
       else resolve({ code, output })
     })
   })

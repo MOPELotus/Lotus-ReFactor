@@ -261,14 +261,15 @@ export class LotusBilibili extends BasePlugin {
   }
 
   async renderError(title, error) {
+    const diskFull = error.code === "ENOSPC" || error.code === "EDQUOT" || /No space left on device|Disk quota exceeded/i.test(error.message)
     const image = await renderStatusCard({
       title,
       subtitle: "荷花插件 Bilibili",
       badge: "失败",
-      message: error.message,
+      message: diskFull ? "服务器磁盘空间不足，暂时无法下载或合并视频。" : error.message,
       userId: this.e.user_id,
       items: [
-        { label: "建议", value: "检查链接是否有效，或稍后重试。" },
+        { label: "建议", value: diskFull ? "请联系机器人主人清理磁盘空间后重试。" : "检查链接是否有效，或稍后重试。" },
       ],
     }, {
       saveId: `lotus-bili-error-${this.e.user_id || "user"}`,
