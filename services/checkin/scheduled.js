@@ -12,6 +12,8 @@ const taskState = globalThis[Symbol.for("lotus-plugin.scheduled-signin-tasks")] 
 const scheduleTasks = taskState.schedules
 const planTasks = taskState.plans
 const COMMUNITY_RETRY_DELAYS = [10, 60, 180].map(minutes => minutes * 60_000)
+const COMMUNITY_RETRY_FALLBACK_DELAY = 6 * 60 * 60_000
+export const COMMUNITY_RETRY_FINAL_CRON = "0 50,59 23 * * ? *"
 
 export class ScheduledSigninService {
   constructor(options = {}) {
@@ -27,7 +29,8 @@ export class ScheduledSigninService {
   async runDue(options = {}) {
     const now = options.now || this.now()
     const planDate = options.date || dateString(now)
-    return runScheduleTask(`run-due:${planDate}`, () => runPlanTask(planDate, () => this.runDuePlan(planDate, now, options)))
+    const task = options.communityRetriesOnly ? "community-retries" : "run-due"
+    return runScheduleTask(`${task}:${planDate}`, () => runPlanTask(planDate, () => this.runDuePlan(planDate, now, options)))
   }
 
   async runDuePlan(planDate, now, options = {}) {
@@ -50,14 +53,19 @@ export class ScheduledSigninService {
       await this.scheduler.savePlan(plan)
       plan = await this.scheduler.getOrCreatePlan(planDate, { reconcile: true })
     }
-    const dueEntries = plan.entries.filter(entry => isDue(entry, now))
+    const dueEntries = plan.entries.filter(entry => (!options.communityRetriesOnly || entry.communityRetry) && isDue(entry, now))
     const results = []
     for (const entry of dueEntries) {
       const previous = entry.communityRetry
-      if (previous && dateString(this.now()) !== planDate) break
+      const startedAt = this.now()
+      if (previous && dateString(startedAt) !== planDate) break
+      const finalRetry = previous && startedAt.getTime() >= communityRetryCutoff(startedAt)
+      const retryDeadline = previous && new Date(startedAt).setHours(24, 0, 0, 0)
       entry.runningAt = formatLocalIso()
       await this.scheduler.savePlan(plan)
-      const outcome = await this.runEntry(entry, { ...options, communityRetryForums: previous?.forums })
+      const remaining = retryDeadline && retryDeadline - this.now().getTime()
+      const retrySignal = retryDeadline ? (remaining > 0 ? AbortSignal.timeout(remaining) : AbortSignal.abort()) : undefined
+      const outcome = await this.runEntry(entry, { ...options, communityRetryForums: previous?.forums, retrySignal })
       const retryForums = outcome.result?.retryCommunityForums || []
       const attempts = previous ? previous.attempts + 1 : 0
       const tasks = outcome.result?.tasks || []
@@ -65,8 +73,7 @@ export class ScheduledSigninService {
         (row.status === "failed" || row.status === "unverified") && !row.retryable))
       const message = outcome.message || outcome.error?.message || ""
       const initialMessage = previous?.initialMessage ?? message
-      const delay = COMMUNITY_RETRY_DELAYS[attempts]
-      const nextAt = delay && new Date(this.now().getTime() + delay)
+      const nextAt = retryForums.length && !finalRetry && nextCommunityRetry(this.now(), attempts, planDate)
       if (retryForums.length && nextAt && dateString(nextAt) === planDate) {
         entry.communityRetry = { forums: retryForums, attempts, nextAt: nextAt.toISOString(), otherFailure, initialMessage }
       } else {
@@ -89,8 +96,10 @@ export class ScheduledSigninService {
           details,
         ]
         if (entry.communityRetry) {
-          const time = formatLocalIso(new Date(entry.communityRetry.nextAt)).slice(11, 16)
-          lines.push(`预计 ${time} 后再试：${retryForums.map(communityForumName).join("、")}。`)
+          const retryAt = new Date(entry.communityRetry.nextAt)
+          const time = formatLocalIso(retryAt).slice(11, 16)
+          const action = retryAt.getTime() >= communityRetryCutoff(retryAt) ? "做今天最后一次补签" : "再试"
+          lines.push(`预计 ${time} 后${action}：${retryForums.map(communityForumName).join("、")}。`)
         } else if (!retriedAll) {
           lines.push("今日自动补跑已结束，仍有社区未确认签到。")
         }
@@ -207,6 +216,7 @@ export class ScheduledSigninService {
         refresh: true,
         source: options.communityRetryForums ? "scheduled_community_retry" : "scheduled",
         communityRetryForums: options.communityRetryForums,
+        signal: options.retrySignal,
         onCaptchaEvent: async event => {
           await captchaReporter(event).catch(error => {
             logger?.warn?.(`[Lotus-Plugin] captcha notify failed: ${error.message}`)
@@ -258,6 +268,20 @@ function isDue(entry, now) {
   if (entry.done || entry.runningAt) return false
   if (entry.communityRetry) return Date.parse(entry.communityRetry.nextAt) <= now.getTime()
   return timeToMinute(entry.time) <= now.getHours() * 60 + now.getMinutes()
+}
+
+function communityRetryCutoff(now) {
+  return new Date(now).setHours(23, 50, 0, 0)
+}
+
+function nextCommunityRetry(now, attempts, planDate) {
+  if (dateString(now) !== planDate) return null
+  const cutoff = communityRetryCutoff(now)
+  const delay = COMMUNITY_RETRY_DELAYS[attempts] ?? COMMUNITY_RETRY_FALLBACK_DELAY
+  const next = now.getTime() < cutoff
+    ? Math.min(now.getTime() + delay, cutoff)
+    : new Date(now).setHours(23, 59, 0, 0)
+  return next > now.getTime() ? new Date(next) : null
 }
 
 function timeToMinute(value = "00:00") {

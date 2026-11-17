@@ -6,7 +6,7 @@ import { PermissionService } from "../core/permissions/service.js"
 import { SchedulerService, cronToMinuteOfDay, nextDateString } from "../core/scheduler/service.js"
 import { renderStatusCard } from "../core/render/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
-import { ScheduledSigninService } from "../services/checkin/scheduled.js"
+import { COMMUNITY_RETRY_FINAL_CRON, ScheduledSigninService } from "../services/checkin/scheduled.js"
 import {
   applySchedulerSettings,
   describeSchedulerSettings,
@@ -35,6 +35,7 @@ export class LotusScheduler extends BasePlugin {
         fnc: this.runDueCheckins.bind(this),
         log: false,
       },
+      this.communityRetryFinalTask(),
       {
         name: "荷花插件生成明日签到计划",
         cron: "0 0 0 * * ? *",
@@ -60,6 +61,7 @@ export class LotusScheduler extends BasePlugin {
           fnc: this.runDueCheckins.bind(this),
           log: false,
         },
+        this.communityRetryFinalTask(),
         {
           name: "荷花插件生成明日签到计划",
           cron: globalConfig.scheduler?.plan_generate_cron || "0 0 0 * * ? *",
@@ -259,6 +261,15 @@ export class LotusScheduler extends BasePlugin {
     })
     await replyImage(this, image, "[荷花插件]调度配置已更新。")
     return true
+  }
+
+  communityRetryFinalTask() {
+    return {
+      name: "荷花插件社区签到当日兜底",
+      cron: COMMUNITY_RETRY_FINAL_CRON,
+      fnc: () => this.runDueCheckins({ communityRetriesOnly: true }),
+      log: false,
+    }
   }
 
   async runDueCheckins(options = {}) {
