@@ -308,12 +308,18 @@ async function loadOverview() {
   const cloud = el("div", "option-grid");form.append(el("h3", "", "云游戏"),cloud)
   add("cloud.genshin", "云原神", settings.cloud.genshin, cloud);add("cloud.zzz", "云绝区零", settings.cloud.zzz, cloud)
   form.append(el("p", "muted", "海外与云游戏需先通过现有聊天指令绑定各自凭证。"))
+  const redemption = settings.autoRedeem || { enabled: false, games: ["gs", "sr", "zzz"] }
+  const redeemOptions = el("div", "option-grid")
+  form.append(el("h3", "", "前瞻兑换码"), redeemOptions)
+  add("autoRedeemEnabled", "自动兑换国服前瞻码", redemption.enabled, redeemOptions)
+  for (const [id, label] of [["gs", "原神"], ["sr", "星穹铁道"], ["zzz", "绝区零"]]) add("redeem." + id, label, redemption.games.includes(id), redeemOptions)
+  form.append(el("p", "muted", "原神、星铁等 3 条码出齐再兑，绝区零等 1 条。使用当前绑定角色，结果沿用签到通知渠道。"))
   const actions = el("div", "section-head"), save = el("button", "primary", "保存设置"), start = el("button", "secondary", data.running ? "任务执行中" : "立即执行签到与任务")
   save.type="submit";start.type="button";start.id="miyoushe-run";start.disabled=data.running;actions.append(save,start);form.append(actions)
   form.addEventListener("submit",run(async event => {
     event.preventDefault();save.disabled=true
-    try { const patch={ tasks:{},cn:{},os:{},cloud:{},forums:[] }
-      for(const [key,input] of fields){const [group,field]=key.split(".");if(group==="forum"){if(input.checked)patch.forums.push(Number(field))}else if(field)patch[group][field]=input.checked;else patch[key]=input.checked}
+    try { const patch={ tasks:{},cn:{},os:{},cloud:{},forums:[],autoRedeem:{games:[]} }
+      for(const [key,input] of fields){const [group,field]=key.split(".");if(group==="forum"){if(input.checked)patch.forums.push(Number(field))}else if(group==="redeem"){if(input.checked)patch.autoRedeem.games.push(field)}else if(key==="autoRedeemEnabled")patch.autoRedeem.enabled=input.checked;else if(field)patch[group][field]=input.checked;else patch[key]=input.checked}
       await post("miyoushe/settings",{profileId:profile,settings:patch});toast("已保存，与聊天管理同步")
     }finally{save.disabled=false}
   }))

@@ -28,6 +28,12 @@ export function validateProfile(profile) {
   validateNotify(profile.profile?.notify, errors)
   validateGames(profile.games, errors)
   validateCloudGames(profile.cloud_games, errors)
+  if (profile.auto_redeem !== undefined && (!isObject(profile.auto_redeem)
+    || typeof profile.auto_redeem.enable !== "boolean"
+    || !Array.isArray(profile.auto_redeem.games)
+    || profile.auto_redeem.games.some(game => !["gs", "sr", "zzz"].includes(game)))) {
+    errors.push("auto_redeem must contain a boolean enable and supported games")
+  }
 
   return errors
 }

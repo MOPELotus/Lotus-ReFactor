@@ -240,6 +240,7 @@ export function createDefaultProfile({ qq, profileId = 1, nickname = "", generat
       fixed_time: "",
       allow_random: true,
     },
+    auto_redeem: { enable: false, games: ["gs", "sr", "zzz"] },
     mihoyobbs: {
       enable: false,
       tasks: {

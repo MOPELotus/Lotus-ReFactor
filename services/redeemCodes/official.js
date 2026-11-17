@@ -50,6 +50,27 @@ export function parseExpiry(text, referenceMs) {
   return null
 }
 
+export function previewAnnouncement(posts, newestVersion) {
+  for (const post of [...posts].sort((a, b) => Number(b.created_at) - Number(a.created_at))) {
+    if (versionOf(post.subject) !== newestVersion || !/前瞻|特别节目/.test(post.subject)) continue
+    const reference = Number(post.created_at) * 1000
+    if (!Number.isFinite(reference) || reference <= 0) continue
+    const text = plainText(post.structured_content || post.content)
+    const match = text.match(/(?:前瞻|特别节目)[^。！？\n]{0,35}?将于\s*(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})[:：](\d{2})(?:[^。！？\n]{0,20}?)(?:播出|开播|开启|首播)/)
+    if (!match) continue
+    const [, explicitYear, monthText, dayText, hourText, minuteText] = match
+    const [month, day, hour, minute] = [monthText, dayText, hourText, minuteText].map(Number)
+    const published = new Date(reference + 8 * 3600_000)
+    const year = Number(explicitYear || (published.getUTCFullYear() + Number(published.getUTCMonth() === 11 && month === 1)))
+    const startAt = Date.UTC(year, month - 1, day, hour - 8, minute)
+    const normalized = new Date(startAt + 8 * 3600_000)
+    if (month < 1 || month > 12 || day !== normalized.getUTCDate() || hour > 23 || minute > 59
+      || startAt < reference || startAt - reference > 45 * 86400_000) continue
+    return { startAt, postId: String(post.post_id), title: post.subject }
+  }
+  return null
+}
+
 export function activityIds(value) {
   // Structured posts contain JSON-escaped links. Restrict to official livestream pages.
   const raw = JSON.stringify(value).replace(/\\+u0026/gi, "&").replace(/\\+u003d/gi, "=").replace(/\\+/g, "").replace(/&amp;/g, "&")
@@ -73,10 +94,18 @@ export class MiyoliveProvider {
     const headers = { "x-rpc-client_type": "2", "x-rpc-act_id": actId, Referer: "https://www.miyoushe.com/" }
     let body
     try {
-      const response = await this.fetch(url, { headers, signal: AbortSignal.timeout(10000) })
+      let response
+      for (const waitMs of [0, 800, 1800]) {
+        if (waitMs) await delay(waitMs)
+        response = await this.fetch(url, { headers, signal: AbortSignal.timeout(Math.min(10000, Math.max(1, deadline - Date.now()))) })
+        if (response.status !== 403 || waitMs === 1800 || deadline - Date.now() < 3000) break
+        await response.body?.cancel().catch(() => {})
+      }
       if (!response.ok) {
         const error = new Error(`官方接口 HTTP ${response.status}`)
         error.retryable = response.status >= 500 || response.status === 429
+        error.httpStatus = response.status
+        await response.body?.cancel().catch(() => {})
         throw error
       }
       body = await response.json()
@@ -159,8 +188,10 @@ export class MiyoliveProvider {
         activityIds(post).forEach(id => ids.add(id))
       }
     }
+    const announcement = previewAnnouncement(posts, newestVersion)
     // On discovery failures, do not present an old remembered activity as current.
     if (homeResult.status === "rejected" || postsResult.status === "rejected") {
+      if (announcement?.startAt > this.now()) return { activity: null, posts, newestVersion, activities: [], announcement }
       throw new Error(`活动发现不完整：${errors.join("；")}`)
     }
     const candidates = [...new Set([...ids, ...remembered])].slice(0, 12)
@@ -170,16 +201,17 @@ export class MiyoliveProvider {
       return { ...data, actId }
     }))
     if (candidates.some((id, i) => navigationIds.has(id) && indexes[i].status === "rejected")) {
+      if (announcement?.startAt > this.now()) return { activity: null, posts, newestVersion, activities: [], announcement }
       throw new Error("官方活动详情暂不可用，请稍后重试")
     }
     const activities = indexes.flatMap(result => result.status === "fulfilled" && result.value ? [result.value] : [])
       .sort((a, b) => parseOfficialDate(b.live.start) - parseOfficialDate(a.live.start))
     const activity = activities[0]
     if (!activity) {
-      if (candidates.length && indexes.some(r => r.status === "rejected")) throw new Error("官方活动详情暂不可用，请稍后重试")
-      return { activity: null, posts, newestVersion, activities: [] }
+      if (candidates.length && indexes.some(r => r.status === "rejected") && !(announcement?.startAt > this.now())) throw new Error("官方活动详情暂不可用，请稍后重试")
+      return { activity: null, posts, newestVersion, activities: [], announcement }
     }
-    return { activity, posts, newestVersion, activities: activities.map(a => a.actId) }
+    return { activity, posts, newestVersion, activities: activities.map(a => a.actId), announcement }
   }
 
   async codes(activity) {

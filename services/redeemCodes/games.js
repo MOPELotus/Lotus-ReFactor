@@ -7,6 +7,12 @@ export const REDEEM_GAMES = Object.freeze([
   { id: "bh3", name: "崩坏三", aliases: ["崩三", "崩坏三", "崩坏3"], prefix: [], community: "bh3", gids: 1, uid: "73565430", provider: "miyolive" },
 ])
 
+export const AUTO_REDEEM_GAMES = Object.freeze({
+  gs: { count: 3, biz: "hk4e_cn", host: "hk4e-api.mihoyo.com", regions: ["cn_gf01", "cn_qd01"] },
+  sr: { count: 3, biz: "hkrpg_cn", host: "public-operation-hkrpg.mihoyo.com", regions: ["prod_gf_cn", "prod_qd_cn"] },
+  zzz: { count: 1, biz: "nap_cn", host: "public-operation-nap.mihoyo.com", regions: ["prod_gf_cn", "prod_qd_cn"] },
+})
+
 export function parseRedeemCommand(message, games = REDEEM_GAMES) {
   let text = String(message || "").trim()
   if (!/(?:兑换码|code)$/i.test(text)) return null

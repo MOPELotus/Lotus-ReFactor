@@ -33,8 +33,13 @@ export class RedeemCodeService {
       if (!provider) throw new Error("该游戏的官方来源尚未接入")
       const found = await provider.discover(game, this.history[game.id] || [])
       await this.saveHistory(game.id, found.activities || [])
-      const { activity, newestVersion, posts } = found
+      const { activity, newestVersion, posts, announcement } = found
       const version = activity ? versionOf(activity.live.title) : ""
+      if (announcement?.startAt > this.now() && (!version || compareVersions(newestVersion, version) >= 0)) {
+        const start = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(announcement.startAt)
+        return { ...base, version: newestVersion, title: announcement.title, status: "unreleased", startAt: announcement.startAt,
+          source: `https://www.miyoushe.com/${game.community}/article/${announcement.postId}`, reason: `官宣 ${start}（北京时间）开播，兑换码尚未发放` }
+      }
       // Discovering the next preview must invalidate the previous preview immediately,
       // even if its old page and code endpoint are still alive.
       if (activity && newestVersion && (!version || compareVersions(newestVersion, version) > 0)) {
@@ -67,7 +72,7 @@ export class RedeemCodeService {
           if (expiry) { expirySource = `https://www.miyoushe.com/${game.community}/article/${post.post_id}`; break }
         }
       }
-      const result = { ...base, title: activity.live.title, version, actId: activity.actId, codeVersion: activity.live.code_ver, source: pageUrl, expiry, expirySource }
+      const result = { ...base, title: activity.live.title, version, actId: activity.actId, codeVersion: activity.live.code_ver, source: pageUrl, expiry, expirySource, startAt: startMs }
       if (startMs > this.now() || Number(activity.live.remain) > 0) return { ...result, status: "unreleased", reason: "前瞻尚未开始，兑换码尚未发放" }
       if (expiry && expiry.ms <= this.now()) return { ...result, status: "expired" }
       const entries = await provider.codes(activity)

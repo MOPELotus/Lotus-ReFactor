@@ -8,6 +8,7 @@ import { SIGNIN_GAMES } from "./tasks.js"
 import { createCaptchaEventReporter } from "../../core/captcha/notify.js"
 import { isUserVisibleCaptchaEvent, formatCaptchaMessage } from "../../core/captcha/events.js"
 import { notifyUser } from "../../core/transport/notify.js"
+import { AUTO_REDEEM_GAMES } from "../redeemCodes/games.js"
 
 const CAPTCHA_STATE_TTL_MS = 60 * 60 * 1000
 const MAX_CAPTCHA_JOBS = 100
@@ -34,7 +35,10 @@ export function publicMiyousheSettings(profile) {
     cn: Object.fromEntries(SIGNIN_GAMES.map(g => [g.key, Boolean(profile.games?.cn?.[g.key]?.checkin)])),
     os: Object.fromEntries(SIGNIN_GAMES.filter(g => g.osAct).map(g => [g.key, Boolean(profile.games?.os?.[g.key]?.checkin)])),
     osEnabled: Boolean(profile.games?.os?.enable), cloud: Object.fromEntries(["genshin", "zzz"].map(k => [k, Boolean(profile.cloud_games?.cn?.[k]?.enable)])),
-    notify: Boolean(profile.profile?.notify?.enable) }
+    notify: Boolean(profile.profile?.notify?.enable), autoRedeem: {
+      enabled: profile.auto_redeem?.enable === true,
+      games: [...(profile.auto_redeem?.games || Object.keys(AUTO_REDEEM_GAMES))],
+    } }
 }
 export class MiyousheManagement {
   constructor(options = {}) { this.loadProfile = options.loadProfile || loadLoggedInProfile; this.saveProfile = options.saveProfile || saveProfile; this.client = options.client || new MiyousheClient(options); this.runner = options.runner || new ProfileSigninService({ render: false }); this.runs = new Map(); this.captchaJobs = new Map(); this.notify = options.notify || notifyUser; this.bot = options.bot; this.now = options.now || Date.now; this.scheduler = options.scheduler || new SchedulerService(); this.loadConfig = options.loadConfig || loadGlobalConfig }
@@ -59,7 +63,19 @@ export class MiyousheManagement {
     const id = normalizeProfileId(profileId)
     return withProfileWrite(String(qq), id, async () => {
       const profile = await this.loadProfile(String(qq), id)
-      if (input.enabled === true && !profile.enabled && !new PermissionService({ permissions: (await this.loadConfig()).permissions }).can(actor, "checkin.register")) throw Object.assign(new Error("当前不允许注册自动签到，请联系机器人主人"), { status: 403 })
+      if ((input.enabled === true && !profile.enabled || input.autoRedeem?.enabled === true && !profile.auto_redeem?.enable)
+        && !new PermissionService({ permissions: (await this.loadConfig()).permissions }).can(actor, "checkin.register")) throw Object.assign(new Error("当前不允许注册自动任务，请联系机器人主人"), { status: 403 })
+      if (input.autoRedeem !== undefined) {
+        const value = input.autoRedeem
+        if (!value || typeof value !== "object" || Array.isArray(value)
+          || value.enabled !== undefined && typeof value.enabled !== "boolean"
+          || value.games !== undefined && (!Array.isArray(value.games) || value.games.some(game => !Object.hasOwn(AUTO_REDEEM_GAMES, game)))) {
+          throw new Error("前瞻自动兑换设置无效")
+        }
+        const previous = publicMiyousheSettings(profile).autoRedeem
+        profile.auto_redeem = { enable: value.enabled ?? previous.enabled, games: [...new Set(value.games ?? previous.games)] }
+        if (profile.auto_redeem.enable && !profile.auto_redeem.games.length) throw new Error("开启自动兑换时，请至少选择一款游戏")
+      }
       const setBoolean = (key, target, field) => { if (input[key] !== undefined) { if (typeof input[key] !== "boolean") throw new Error(`${key} 必须为布尔值`); target[field] = input[key] } }
       setBoolean("enabled", profile, "enabled"); setBoolean("community", profile.mihoyobbs, "enable"); setBoolean("osEnabled", profile.games.os, "enable"); setBoolean("notify", profile.profile.notify, "enable")
       if (input.tasks !== undefined) for (const key of ["checkin", "read", "like", "cancel_like", "share"]) if (key in input.tasks) { if (typeof input.tasks[key] !== "boolean") throw new Error("任务开关必须为布尔值"); profile.mihoyobbs.tasks[key] = input.tasks[key] }
