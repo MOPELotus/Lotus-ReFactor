@@ -55,6 +55,7 @@ export class ProfileSigninService {
         onCaptchaEvent,
         beforeRequest: guard,
         communityRetryForums,
+        shortCommunityRetry: source === "scheduled",
       })
       const image = this.render
         ? await renderSigninResult({ result, profile: activeProfile, skipped }).catch(error => {

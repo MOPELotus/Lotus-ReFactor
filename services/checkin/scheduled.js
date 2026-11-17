@@ -10,7 +10,7 @@ import { ProfileSigninService, renderSigninFailure } from "./profileSignin.js"
 const taskState = globalThis[Symbol.for("lotus-plugin.scheduled-signin-tasks")] ||= { schedules: new Map(), plans: new Map() }
 const scheduleTasks = taskState.schedules
 const planTasks = taskState.plans
-const COMMUNITY_RETRY_DELAYS = [15, 60, 180].map(minutes => minutes * 60_000)
+const COMMUNITY_RETRY_DELAYS = [10, 60, 180].map(minutes => minutes * 60_000)
 
 export class ScheduledSigninService {
   constructor(options = {}) {

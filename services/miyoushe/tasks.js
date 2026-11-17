@@ -20,6 +20,18 @@ function isTransientRequestFailure(error) {
     || (error.name === "TypeError" && error.message === "fetch failed")
 }
 
+async function readMissionState(client, profile, options, shortRetry) {
+  const delays = shortRetry ? [5_000, 15_000] : []
+  for (let attempt = 0; ; attempt++) {
+    options.signal?.throwIfAborted()
+    try { return await client.missions(profile, options) }
+    catch (error) {
+      if (!delays[attempt] || error.httpStatus === 429 || !isTransientRequestFailure(error)) throw error
+      await sleep(delays[attempt], undefined, { signal: options.signal })
+    }
+  }
+}
+
 export class MiyousheTasks {
   constructor(options = {}) { this.client = options.client || new MiyousheClient(options); this.sleep = options.sleep || (() => sleep(3000 + Math.random() * 2000)) }
 
@@ -109,7 +121,9 @@ export class MiyousheTasks {
         : []
       if (bbs?.enable && (!options.communityRetryForums || signForums.length)) {
         const cfg = profile.mihoyobbs, enabled = cfg.tasks || cfg
-        const state = await run("missions", "before", "社区任务状态", async () => ({ data: await this.client.missions(profile, requestOptions) }))
+        const state = await run("missions", "before", "社区任务状态", async () => ({
+          data: await readMissionState(this.client, profile, requestOptions, options.shortCommunityRetry && signForums.length && profile.device?.id && profile.device?.fp),
+        }))
         before = state.data
         if (state.status !== "failed" && profile.device?.id && profile.device?.fp) {
           for (const id of signForums) {
