@@ -14,6 +14,12 @@ export const SIGNIN_GAMES = [
 ]
 const forums = { 1: ["崩坏3", 1], 2: ["原神", 26], 3: ["崩坏2", 30], 4: ["未定事件簿", 37], 5: ["大别野", 34], 6: ["星铁", 52], 8: ["绝区零", 57], 9: ["因缘精灵", 948], 10: ["星布谷地", 950] }
 
+function isTransientRequestFailure(error) {
+  const status = error.httpStatus
+  return status === 403 || status === 429 || status >= 500 || error.name === "TimeoutError"
+    || (error.name === "TypeError" && error.message === "fetch failed")
+}
+
 export class MiyousheTasks {
   constructor(options = {}) { this.client = options.client || new MiyousheClient(options); this.sleep = options.sleep || (() => sleep(3000 + Math.random() * 2000)) }
 
@@ -25,10 +31,15 @@ export class MiyousheTasks {
       const run = async (kind, key, label, work) => {
         let row
         try { options.signal?.throwIfAborted(); row = { kind, key, label, status: "success", ...(await work()) }; options.signal?.throwIfAborted() }
-        catch (error) { options.signal?.throwIfAborted(); if (isAccountChangedError(error)) throw error; row = { kind, key, label, status: "failed", message: error.message } }
+        catch (error) {
+          options.signal?.throwIfAborted()
+          if (isAccountChangedError(error)) throw error
+          row = { kind, key, label, status: "failed", message: error.message }
+          if ((kind === "community" || kind === "missions" && key === "before") && isTransientRequestFailure(error)) row.retryable = true
+        }
         tasks.push(row); events.push({ type: "task:result", ...row }); return row
       }
-      for (const side of ["cn", "os"]) {
+      for (const side of options.communityRetryForums ? [] : ["cn", "os"]) {
         const cfg = profile.games?.[side]
         if (!cfg?.enable) continue
         for (const game of SIGNIN_GAMES) {
@@ -79,7 +90,7 @@ export class MiyousheTasks {
         { side: "cn", key: "zzz", url: "https://cg-nap-api.mihoyo.com/nap_cn/cg/wallet/wallet/get" },
         { side: "os", key: "genshin", url: "https://sg-cg-api.hoyoverse.com/hk4e_global/cg/wallet/wallet/get" },
       ]
-      for (const { side, key, url } of cloudGames) {
+      for (const { side, key, url } of options.communityRetryForums ? [] : cloudGames) {
         const group = profile.cloud_games?.[side], cfg = group?.[key]
         if (group?.enable === false) continue
         if (cfg?.enable) await run("cloud", `${side}:${key}`, `云${key === "zzz" ? "绝区零" : "原神"}${side === "os" ? "国际服" : ""}`, async () => {
@@ -90,22 +101,28 @@ export class MiyousheTasks {
           return { message: `钱包查询成功，免费时长 ${data.free_time?.free_time ?? "未知"} 分钟；本次赠送 ${data.free_time?.send_freetime ?? "未知"} 分钟` }
         })
       }
-      let before, after
-      if (profile.mihoyobbs?.enable) {
+      let before, after, retryCommunityForums = []
+      const bbs = profile.mihoyobbs
+      const requestedForums = (bbs?.checkin_list || []).map(String)
+      const signForums = (bbs?.tasks || bbs)?.checkin
+        ? [...new Set(requestedForums)].filter(id => Object.hasOwn(forums, id) && (!options.communityRetryForums || options.communityRetryForums.includes(id)))
+        : []
+      if (bbs?.enable && (!options.communityRetryForums || signForums.length)) {
         const cfg = profile.mihoyobbs, enabled = cfg.tasks || cfg
         const state = await run("missions", "before", "社区任务状态", async () => ({ data: await this.client.missions(profile, requestOptions) }))
         before = state.data
         if (state.status !== "failed" && profile.device?.id && profile.device?.fp) {
-          if (enabled.checkin) for (const id of cfg.checkin_list || []) {
-            if (!forums[id]) continue
-            await run("community", String(id), `${forums[id][0]}社区`, async () => {
+          for (const id of signForums) {
+            const row = await run("community", id, `${forums[id][0]}社区`, async () => {
               const r = await sendRequest(`${BBS.origin}/apihub/app/api/signIn`, profile, { method: "POST", body: { gids: String(id) }, stoken: true, x6: true, onCaptchaEvent: options.onCaptchaEvent })
               if (r.retcode === 1008 || /已签到/.test(r.message)) return { status: "already", message: "今日已签到" }
               this.client.assert(r); return { message: "社区签到请求成功；米游币以任务回读为准" }
-            }); await this.sleep()
+            })
+            if (row.retryable) retryCommunityForums.push(id)
+            await this.sleep()
           }
           const states = Array.isArray(before.states) ? before.states : []
-          const pending = [["read", 59], ["like", 60], ["share", 61]].filter(([key, id]) => enabled[key] && states.some(s => Number(s.mission_id) === id && !s.is_get_award))
+          const pending = options.communityRetryForums ? [] : [["read", 59], ["like", 60], ["share", 61]].filter(([key, id]) => enabled[key] && states.some(s => Number(s.mission_id) === id && !s.is_get_award))
           if (pending.length) {
             const forumId = (cfg.checkin_list || []).find(id => forums[id])
             const posts = await run("posts", "list", "社区帖子查询", async () => {
@@ -131,6 +148,7 @@ export class MiyousheTasks {
           const reread = await run("missions", "after", "社区任务回读", async () => ({ data: await this.client.missions(profile, requestOptions) }))
           after = reread.data
         } else if (!(profile.device?.id && profile.device?.fp)) tasks.push({ kind: "community", key: "device", label: "社区任务", status: "skipped", message: "需要配对的设备 ID 与已签发 FP" })
+        else if (state.retryable) retryCommunityForums = signForums
       }
       for (const row of tasks.filter(row => row.kind === "mission" && row.status === "success")) {
         const id = { read: 59, like: 60, share: 61 }[row.key]
@@ -140,10 +158,11 @@ export class MiyousheTasks {
       const balance = Number(after?.total_points), received = Number(after?.already_received_points), initial = Number(before?.already_received_points)
       const coins = after && [balance, received, initial].every(Number.isFinite) ? { balance, received, gained: Math.max(0, received - initial) } : null
       const rows = tasks.map(({ roles, posts, data, ...row }) => row)
-      const ok = !rows.some(row => ["failed", "unverified"].includes(row.status))
+      const ok = (!options.communityRetryForums || rows.some(row => row.kind === "community" && ["success", "already"].includes(row.status)))
+        && !rows.some(row => ["failed", "unverified"].includes(row.status))
       const message = [...rows.map(row => `${row.label}：${row.message || row.status}`), ...(coins ? [`米游币：本次增加 ${coins.gained}，今日已领 ${coins.received}，余额 ${coins.balance}`] : [])].join("\n")
       options.signal?.throwIfAborted()
-      return { ok, tasks: rows, events, coins, message }
+      return { ok, tasks: rows, events, coins, message, retryCommunityForums }
     })
   }
 }

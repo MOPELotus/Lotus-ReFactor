@@ -171,7 +171,7 @@ export class SchedulerService {
         return createLateEntry(profile, scheduler, lateCount++, now)
       }
       previous.delete(key(entry))
-      if (current.done || current.runningAt) return current
+      if (current.done || current.runningAt || current.communityRetry) return current
       // Keep the day's already assigned random slots stable across restarts.
       if (entry.mode === "random" && ["random", "late_random"].includes(current.mode)) return current
       if (entry.mode === current.mode && entry.time === current.time) return current

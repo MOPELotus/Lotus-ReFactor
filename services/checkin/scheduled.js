@@ -10,6 +10,7 @@ import { ProfileSigninService, renderSigninFailure } from "./profileSignin.js"
 const taskState = globalThis[Symbol.for("lotus-plugin.scheduled-signin-tasks")] ||= { schedules: new Map(), plans: new Map() }
 const scheduleTasks = taskState.schedules
 const planTasks = taskState.plans
+const COMMUNITY_RETRY_DELAYS = [15, 60, 180].map(minutes => minutes * 60_000)
 
 export class ScheduledSigninService {
   constructor(options = {}) {
@@ -51,20 +52,38 @@ export class ScheduledSigninService {
     const dueEntries = plan.entries.filter(entry => isDue(entry, now))
     const results = []
     for (const entry of dueEntries) {
+      const previous = entry.communityRetry
+      if (previous && dateString(this.now()) !== planDate) break
       entry.runningAt = formatLocalIso()
       await this.scheduler.savePlan(plan)
-      const outcome = await this.runEntry(entry, options)
-      entry.done = true
-      entry.doneAt = formatLocalIso()
-      entry.ok = outcome.ok
+      const outcome = await this.runEntry(entry, { ...options, communityRetryForums: previous?.forums })
+      const retryForums = outcome.result?.retryCommunityForums || []
+      const attempts = previous ? previous.attempts + 1 : 0
+      const tasks = outcome.result?.tasks || []
+      const otherFailure = Boolean(previous?.otherFailure || tasks.some(row =>
+        (row.status === "failed" || row.status === "unverified") && !row.retryable))
+      const message = outcome.message || outcome.error?.message || ""
+      const initialMessage = previous?.initialMessage ?? message
+      const delay = COMMUNITY_RETRY_DELAYS[attempts]
+      const nextAt = delay && new Date(this.now().getTime() + delay)
+      if (retryForums.length && nextAt && dateString(nextAt) === planDate) {
+        entry.communityRetry = { forums: retryForums, attempts, nextAt: nextAt.toISOString(), otherFailure, initialMessage }
+      } else {
+        delete entry.communityRetry
+      }
+      const retriedAll = previous && previous.forums.every(id => tasks.some(row =>
+        row.kind === "community" && row.key === id && ["success", "already"].includes(row.status)))
+      entry.done = !entry.communityRetry
+      if (entry.done) entry.doneAt = formatLocalIso()
+      entry.ok = outcome.ok && (!previous || retriedAll && !otherFailure)
       entry.stage = outcome.stage
-      entry.message = outcome.message || outcome.error?.message || ""
+      entry.message = previous ? `${initialMessage}\n社区签到补跑第 ${attempts} 次：${message || "当前设置或设备不可用，未执行"}` : message
       delete entry.runningAt
       await this.scheduler.savePlan(plan)
       results.push({ entry: { ...entry }, outcome })
     }
     return {
-      ok: results.every(item => item.outcome.ok),
+      ok: results.every(item => item.entry.ok),
       date: planDate,
       count: results.length,
       results,
@@ -169,6 +188,8 @@ export class ScheduledSigninService {
         profileId: entry.profileId,
         profile,
         refresh: true,
+        source: options.communityRetryForums ? "scheduled_community_retry" : "scheduled",
+        communityRetryForums: options.communityRetryForums,
         onCaptchaEvent: async event => {
           await captchaReporter(event).catch(error => {
             logger?.warn?.(`[Lotus-Plugin] captcha notify failed: ${error.message}`)
@@ -176,8 +197,9 @@ export class ScheduledSigninService {
         },
       })
       profile = outcome.profile || profile
-      if (options.notify !== false && profile) {
-        await this.notify(profile, outcome.image || outcome.message, { bot: options.bot || this.bot })
+      if (options.notify !== false && profile && (outcome.image || outcome.message)) {
+        try { await this.notify(profile, outcome.image || outcome.message, { bot: options.bot || this.bot }) }
+        catch (error) { globalThis.logger?.warn?.(`[Lotus-Plugin] scheduled signin notify failed: ${error.message}`) }
       }
       return outcome
     } catch (error) {
@@ -216,6 +238,7 @@ function qqAvatar(qq) {
 
 function isDue(entry, now) {
   if (entry.done || entry.runningAt) return false
+  if (entry.communityRetry) return Date.parse(entry.communityRetry.nextAt) <= now.getTime()
   return timeToMinute(entry.time) <= now.getHours() * 60 + now.getMinutes()
 }
 

@@ -76,7 +76,7 @@ export class MiyousheClient {
       const freshHeaders = typeof headersFactory === "function" ? await headersFactory() : undefined
       await assertCurrent()
       const response = await this.fetch(target, { method, headers: { ...miyousheHeaders(profile, { web, stoken, x6, overseas, body: payload || "", query: target.search.slice(1) }), ...headers, ...freshHeaders, ...extra }, body: payload, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000) })
-      if (!response.ok) throw new Error(`米游社接口 HTTP ${response.status}`)
+      if (!response.ok) throw Object.assign(new Error(`米游社接口 HTTP ${response.status}`), { httpStatus: response.status })
       responseRequestContext = captchaRequestContext({ url: requestMetadata?.url || requestMetadata?.path || target, headers: response.headers })
       let result
       try { result = await response.json() } catch { throw new Error("米游社接口返回无效 JSON") }

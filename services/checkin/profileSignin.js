@@ -14,7 +14,7 @@ export class ProfileSigninService {
     this.beforeRequest = options.beforeRequest
   }
 
-  async run({ qq, profileId = 1, profile, refresh = true, onCaptchaEvent, beforeRequest = this.beforeRequest } = {}) {
+  async run({ qq, profileId = 1, profile, refresh = true, onCaptchaEvent, communityRetryForums, source = "manual", beforeRequest = this.beforeRequest } = {}) {
     const userId = String(qq || profile?.user?.qq || "")
     const id = Number(profileId || profile?.profile?.id || 1)
     let activeProfile = profile || await loadProfile(userId, id)
@@ -29,6 +29,7 @@ export class ProfileSigninService {
           error,
           message: "签到前刷新登录信息失败，本次签到已停止。",
           advice: "请重新扫码登录对应 profile，或检查 stoken 是否已失效。",
+          source,
         })
       }
     }
@@ -40,6 +41,7 @@ export class ProfileSigninService {
         error: new Error("profile has no cookie"),
         message: "profile 尚未保存 cookie，无法执行签到。",
         advice: "请先使用 #扫码登录 绑定当前 profile。",
+        source,
       })
     }
 
@@ -52,13 +54,18 @@ export class ProfileSigninService {
       const result = await this.runner.runProfile(prepareRunnableProfile(activeProfile), {
         onCaptchaEvent,
         beforeRequest: guard,
+        communityRetryForums,
       })
       const image = this.render
-        ? await renderSigninResult({ result, profile: activeProfile, skipped })
+        ? await renderSigninResult({ result, profile: activeProfile, skipped }).catch(error => {
+          globalThis.logger?.warn?.(`[Lotus-Plugin] signin result render failed: ${error.message}`)
+          return null
+        })
         : null
       const outcome = {
         ok: Boolean(result.ok),
         stage: "checkin",
+        source,
         profile: activeProfile,
         result,
         skipped,
@@ -74,11 +81,12 @@ export class ProfileSigninService {
         error,
         message: "米游社任务执行失败。",
         advice: "请确认 profile 登录态、设备信息及验证码模型。",
+        source,
       })
     }
   }
 
-  async failure({ stage, profile, error, message, advice }) {
+  async failure({ stage, profile, error, message, advice, source }) {
     const image = this.render
       ? await renderSigninFailure({
         stage,
@@ -91,6 +99,7 @@ export class ProfileSigninService {
     const outcome = {
       ok: false,
       stage,
+      source,
       profile,
       error,
       image,
