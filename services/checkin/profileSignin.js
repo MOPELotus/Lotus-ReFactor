@@ -15,6 +15,7 @@ export class ProfileSigninService {
   }
 
   async run({ qq, profileId = 1, profile, refresh = true, onCaptchaEvent, communityRetryForums, source = "manual", beforeRequest = this.beforeRequest } = {}) {
+    const render = this.render && !communityRetryForums
     const userId = String(qq || profile?.user?.qq || "")
     const id = Number(profileId || profile?.profile?.id || 1)
     let activeProfile = profile || await loadProfile(userId, id)
@@ -30,6 +31,7 @@ export class ProfileSigninService {
           message: "签到前刷新登录信息失败，本次签到已停止。",
           advice: "请重新扫码登录对应 profile，或检查 stoken 是否已失效。",
           source,
+          render,
         })
       }
     }
@@ -42,6 +44,7 @@ export class ProfileSigninService {
         message: "profile 尚未保存 cookie，无法执行签到。",
         advice: "请先使用 #扫码登录 绑定当前 profile。",
         source,
+        render,
       })
     }
 
@@ -57,7 +60,7 @@ export class ProfileSigninService {
         communityRetryForums,
         shortCommunityRetry: source === "scheduled",
       })
-      const image = this.render
+      const image = render
         ? await renderSigninResult({ result, profile: activeProfile, skipped }).catch(error => {
           globalThis.logger?.warn?.(`[Lotus-Plugin] signin result render failed: ${error.message}`)
           return null
@@ -83,12 +86,13 @@ export class ProfileSigninService {
         message: "米游社任务执行失败。",
         advice: "请确认 profile 登录态、设备信息及验证码模型。",
         source,
+        render,
       })
     }
   }
 
-  async failure({ stage, profile, error, message, advice, source }) {
-    const image = this.render
+  async failure({ stage, profile, error, message, advice, source, render = this.render }) {
+    const image = render
       ? await renderSigninFailure({
         stage,
         profile,

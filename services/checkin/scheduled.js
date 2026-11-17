@@ -5,6 +5,7 @@ import { renderTemplate } from "../../core/render/service.js"
 import { SchedulerService, dateString, nextDateString } from "../../core/scheduler/service.js"
 import { formatLocalIso } from "../../core/time.js"
 import { notifyProfile } from "../../core/transport/notify.js"
+import { communityForumName } from "../miyoushe/tasks.js"
 import { ProfileSigninService, renderSigninFailure } from "./profileSignin.js"
 
 const taskState = globalThis[Symbol.for("lotus-plugin.scheduled-signin-tasks")] ||= { schedules: new Map(), plans: new Map() }
@@ -80,6 +81,22 @@ export class ScheduledSigninService {
       entry.message = previous ? `${initialMessage}\n社区签到补跑第 ${attempts} 次：${message || "当前设置或设备不可用，未执行"}` : message
       delete entry.runningAt
       await this.scheduler.savePlan(plan)
+      if (previous && options.notify !== false && outcome.profile) {
+        const details = tasks.length || outcome.error ? message : outcome.skipped?.join("\n") || "本轮没有可补签的社区，请检查社区签到设置。"
+        const lines = [
+          `[荷花插件]社区签到补跑第 ${attempts} 次（Profile ${entry.profileId}）`,
+          `本轮只补签：${previous.forums.map(communityForumName).join("、")}。游戏签到结果以首轮为准。`,
+          details,
+        ]
+        if (entry.communityRetry) {
+          const time = formatLocalIso(new Date(entry.communityRetry.nextAt)).slice(11, 16)
+          lines.push(`预计 ${time} 后再试：${retryForums.map(communityForumName).join("、")}。`)
+        } else if (!retriedAll) {
+          lines.push("今日自动补跑已结束，仍有社区未确认签到。")
+        }
+        try { await this.notify(outcome.profile, lines.filter(Boolean).join("\n"), { bot: options.bot || this.bot }) }
+        catch (error) { globalThis.logger?.warn?.(`[Lotus-Plugin] scheduled signin notify failed: ${error.message}`) }
+      }
       results.push({ entry: { ...entry }, outcome })
     }
     return {
@@ -197,6 +214,7 @@ export class ScheduledSigninService {
         },
       })
       profile = outcome.profile || profile
+      if (options.communityRetryForums) return { ...outcome, profile }
       if (options.notify !== false && profile && (outcome.image || outcome.message)) {
         try { await this.notify(profile, outcome.image || outcome.message, { bot: options.bot || this.bot }) }
         catch (error) { globalThis.logger?.warn?.(`[Lotus-Plugin] scheduled signin notify failed: ${error.message}`) }
@@ -207,14 +225,14 @@ export class ScheduledSigninService {
         user: { qq: entry.qq },
         profile: { id: entry.profileId, notify: { prefer: "private", fallback_groups: [] } },
       }
-      const image = await renderSigninFailure({
+      const image = options.communityRetryForums ? null : await renderSigninFailure({
         stage: "schedule",
         profile: fallbackProfile,
         error,
         message: "计划签到执行失败。",
         advice: "检查 profile 配置文件是否存在，并确认签到环境已经初始化。",
       })
-      if (options.notify !== false) {
+      if (!options.communityRetryForums && options.notify !== false) {
         await this.notify(fallbackProfile, image, { bot: options.bot || this.bot }).catch(notifyError => {
           logger?.warn?.(`[Lotus-Plugin] scheduled signin notify failed: ${notifyError.message}`)
         })

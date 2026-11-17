@@ -14,6 +14,10 @@ export const SIGNIN_GAMES = [
 ]
 const forums = { 1: ["崩坏3", 1], 2: ["原神", 26], 3: ["崩坏2", 30], 4: ["未定事件簿", 37], 5: ["大别野", 34], 6: ["星铁", 52], 8: ["绝区零", 57], 9: ["因缘精灵", 948], 10: ["星布谷地", 950] }
 
+export function communityForumName(id) {
+  return forums[id]?.[0] || `分区 ${id}`
+}
+
 function isTransientRequestFailure(error) {
   const status = error.httpStatus
   return status === 403 || status === 429 || status >= 500 || error.name === "TimeoutError"
