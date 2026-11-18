@@ -35,6 +35,7 @@ export const DEFAULT_GLOBAL_CONFIG = Object.freeze({
     enable: true,
     plan_generate_cron: "0 0 0 * * ? *",
     run_due_cron: "0 * * * * ? *",
+    catch_up_cron: "0 */10 * * * ? *",
     mode: "fixed",
     fixed_time: "04:30",
     random: {

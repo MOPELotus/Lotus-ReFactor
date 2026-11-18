@@ -71,6 +71,7 @@ const NUMBER_FIELDS = new Set([
 const CRON_FIELDS = new Set([
   "scheduler.plan_generate_cron",
   "scheduler.run_due_cron",
+  "scheduler.catch_up_cron",
   "netease_partner.schedule",
   "atlas.auto_update.check_cron",
   "atlas.auto_update.challenge_cron",
@@ -126,6 +127,7 @@ const GUOBA_SCHEMAS = [
   sw("scheduler.enable", "启用自动调度", "关闭后只允许手动签到。"),
   cron("scheduler.plan_generate_cron", "生成计划时间", "每天按此 cron 生成次日签到表。"),
   cron("scheduler.run_due_cron", "到期扫描频率", "扫描到期任务并执行签到。"),
+  cron("scheduler.catch_up_cron", "计划补偿检查频率", "检查缺失的签到计划，留空恢复默认每 10 分钟；不影响签到失败后的重试。重启后生效。"),
   select("scheduler.mode", "全局签到模式", [
     { label: "固定时间", value: "fixed" },
     { label: "随机时间", value: "random" },

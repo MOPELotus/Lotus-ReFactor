@@ -194,6 +194,7 @@ function validateGlobalScheduler(scheduler = {}, errors) {
   if (typeof scheduler.enable !== "boolean") errors.push("scheduler.enable must be boolean")
   if (!isString(scheduler.plan_generate_cron)) errors.push("scheduler.plan_generate_cron must be a string")
   if (!isString(scheduler.run_due_cron)) errors.push("scheduler.run_due_cron must be a string")
+  if (typeof scheduler.catch_up_cron !== "string" || !scheduler.catch_up_cron.trim()) errors.push("scheduler.catch_up_cron must be a non-empty string")
   if (!GLOBAL_SCHEDULE_MODES.has(scheduler.mode)) {
     errors.push("scheduler.mode must be random/fixed")
   }

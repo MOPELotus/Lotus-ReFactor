@@ -93,7 +93,9 @@ export function migrateGlobalConfig(config = {}) {
   if (normalizedConfig.tools?.ffmpeg) delete normalizedConfig.tools.ffmpeg.enable
   if (normalizedConfig.captcha?.gtmanual) delete normalizedConfig.captcha.gtmanual.address
   if (normalizedConfig.tools) { delete normalizedConfig.tools.auto_install; delete normalizedConfig.tools.bbdown; delete normalizedConfig.tools.aria2 }
-  if (normalizedConfig.bilibili?.download) { delete normalizedConfig.bilibili.download.use_aria2; delete normalizedConfig.bilibili.download.extra_args }
+  if (normalizedConfig.bilibili?.download) {
+    for (const key of ["use_aria2", "extra_args", "aria2_args", "aria2_proxy"]) delete normalizedConfig.bilibili.download[key]
+  }
   if (normalizedConfig.tuneweave) delete normalizedConfig.tuneweave.auto_update
   if (normalizedConfig.captcha?.test_nine) {
     delete normalizedConfig.captcha.test_nine.auto_start
@@ -251,6 +253,9 @@ function normalizeCronFields(config = {}) {
   if (config.scheduler) {
     config.scheduler.plan_generate_cron = normalizeQuartzCron(config.scheduler.plan_generate_cron)
     config.scheduler.run_due_cron = normalizeQuartzCron(config.scheduler.run_due_cron)
+    const catchUp = config.scheduler.catch_up_cron
+    if (catchUp == null || (typeof catchUp === "string" && !catchUp.trim())) delete config.scheduler.catch_up_cron
+    else config.scheduler.catch_up_cron = normalizeQuartzCron(catchUp)
   }
   if (config.netease_partner) {
     delete config.netease_partner.api_url
