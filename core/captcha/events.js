@@ -35,7 +35,10 @@ function publicCaptchaEvent(event) {
   for (const key of ["attempt", "chainAttempt", "elapsedMs", "captchaVersion"]) {
     if (typeof event[key] === "number" && Number.isFinite(event[key])) result[key] = event[key]
   }
-  if (event.type === "captcha:manual-link") result.link = publicManualLink(event.link)
+  if (event.type === "captcha:manual-link") {
+    result.link = publicManualLink(event.link)
+    if (Number.isSafeInteger(event.expiresAt) && Number.isFinite(new Date(event.expiresAt).getTime())) result.expiresAt = event.expiresAt
+  }
   if (Array.isArray(event.attempts)) result.attempts = event.attempts.map(publicAttempt)
   return result
 }
@@ -98,8 +101,12 @@ export function formatCaptchaMessage(event = {}) {
       return `[荷花插件]${providerLabel}仍在处理中${elapsed}，请稍等。`
     case "captcha:refresh-challenge":
       return "[荷花插件]当前验证码参数已失效，正在重新请求验证码。"
-    case "captcha:manual-link":
-      return `[荷花插件]自动验证未通过，需要你手动完成验证：${event.link}`
+    case "captcha:manual-link": {
+      const time = Number.isSafeInteger(event.expiresAt) && Number.isFinite(new Date(event.expiresAt).getTime())
+        ? new Date(event.expiresAt).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : ""
+      const deadline = time ? `请在北京时间 ${time} 前完成。` : "请尽快完成。"
+      return `[荷花插件]需要手动完成验证。\n${event.link}\n${deadline}请只在一个页面打开；失效后请返回原操作重试。`
+    }
     case "captcha:manual-legacy":
       return "[荷花插件]当前外部人工验证服务为旧版，仅支持部分极验 v3。建议机器人主人启用荷花内置人工验证服务，或更新外部 GT-Manual。"
     case "captcha:success":

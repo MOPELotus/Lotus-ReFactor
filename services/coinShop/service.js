@@ -458,6 +458,7 @@ function shopCaptchaEvent(event, time) {
   if (!event || !["captcha:start", "captcha:provider-start", "captcha:provider-fail", "captcha:provider-skip", "captcha:provider-wait", "captcha:refresh-challenge", "captcha:manual-link", "captcha:success", "captcha:fail"].includes(event.type)) return null
   const result = { type: event.type, time, message: String(event.message || "验证码状态已更新。").slice(0, 1200) }
   if (event.type === "captcha:manual-link") {
+    if (Number.isSafeInteger(event.expiresAt)) result.expiresAt = event.expiresAt
     try {
       const url = new URL(event.link)
       if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) result.link = url.href

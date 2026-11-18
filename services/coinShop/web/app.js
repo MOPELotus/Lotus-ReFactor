@@ -237,8 +237,15 @@ function renderCaptchaStatus(container, data = {}) {
   events.forEach((event, index) => {
     const row = el("div", "captcha-event")
     if (Number.isFinite(event.time)) row.append(el("small", "muted", time(event.time).slice(11)))
-    row.append(el("p", "", event.type === "captcha:manual-link" ? "自动识别未通过，需要人工完成本次验证。" : event.message || "验证码状态已更新。"))
-    if (event.type === "captcha:manual-link" && index === latestManual && index > lastTerminal && data.running && event.link) {
+    const manual = event.type === "captcha:manual-link"
+    const expires = new Date(event.expiresAt)
+    const hasDeadline = Number.isFinite(expires.getTime())
+    const current = manual && index === latestManual && index > lastTerminal && data.running
+    const expired = hasDeadline && Date.now() + state.nowOffset >= event.expiresAt
+    const deadline = current && expired ? "验证链接已过期，请返回原操作重试。" : hasDeadline
+      ? `请在北京时间 ${expires.toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })} 前完成。` : ""
+    row.append(el("p", "", manual ? `需要人工完成本次验证。${deadline}` : event.message || "验证码状态已更新。"))
+    if (current && event.link && !expired) {
       try {
         const url = new URL(event.link)
         if (["https:", "http:"].includes(url.protocol)) {

@@ -17,6 +17,7 @@ function publicCaptchaEvent(event, now) {
   if (!isUserVisibleCaptchaEvent(event)) return null
   const result = { type: event.type, message: formatCaptchaMessage(event), time: now }
   if (event.type === "captcha:manual-link") {
+    if (Number.isSafeInteger(event.expiresAt)) result.expiresAt = event.expiresAt
     try {
       const link = new URL(event.link)
       if (["http:", "https:"].includes(link.protocol)) result.link = link.href

@@ -65,7 +65,7 @@ export const gtManualProvider = {
       deadline = Math.min(deadline, limits)
       if (expired()) return fail("manual_timeout")
 
-      await emitCaptchaEvent(context, { type: "captcha:manual-link", provider: this.name, link, resultUrl })
+      await emitCaptchaEvent(context, { type: "captcha:manual-link", provider: this.name, link, resultUrl, expiresAt: deadline })
       if (expired()) return fail("manual_timeout")
       await notifyManualLink(link, context)
       if (expired()) return fail("manual_timeout")
