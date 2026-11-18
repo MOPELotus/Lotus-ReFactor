@@ -1,3 +1,4 @@
+import { gachaRecordId, mergeGachaRecords } from "../genshinGacha/records.js"
 import { createProfileRequestGuard } from "../../core/login/requestGuard.js"
 import { AuthKeyService, buildGachaLogUrl, getServer } from "../mihoyoAuthKey/service.js"
 import { importRuntimeModule, pickRole, getRoleUid } from "../pluginBridge/common.js"
@@ -47,14 +48,14 @@ export class MiniappGachaService {
       const model = new GachaLog({ ...e, user_id: String(e.user_id), uid, isSr: false, game: "gs", msg: "#更新小助手抽卡记录" })
       model.uid = uid
       // Validate the entire response before touching the existing gacha files.
+      await guard?.()
       const pending = Object.entries(grouped).map(([type, records]) => {
         model.type = Number(type)
         const previous = model.readJson().list
         const merged = mergeGachaRecords(previous, records)
-        const previousIds = new Set(previous.map(record => String(record.id)))
-        return { type: Number(type), name: POOLS[type], received: records.length, added: merged.filter(record => !previousIds.has(String(record.id))).length, total: merged.length, merged }
+        const previousIds = new Set(previous.map(gachaRecordId))
+        return { type: Number(type), name: POOLS[type], received: records.length, added: merged.filter(record => !previousIds.has(gachaRecordId(record))).length, total: merged.length, merged }
       })
-      await guard?.()
       for (const pool of pending) {
         model.type = pool.type
         model.writeJson(pool.merged)
@@ -83,12 +84,4 @@ export function validateMiniappRecords(list, uid, responseUid) {
   return grouped
 }
 
-export function mergeGachaRecords(previous, incoming) {
-  const records = new Map()
-  for (const record of [...previous, ...incoming]) {
-    const id = String(record.id)
-    if (!/^\d+$/.test(id) || (typeof record.id === "number" && !Number.isSafeInteger(record.id))) throw new Error("本地抽卡记录 ID 无效，未导入。")
-    if (!records.has(id)) records.set(id, record)
-  }
-  return [...records.values()].sort((a, b) => BigInt(a.id) > BigInt(b.id) ? -1 : BigInt(a.id) < BigInt(b.id) ? 1 : 0)
-}
+export { mergeGachaRecords }

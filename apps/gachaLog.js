@@ -1,10 +1,7 @@
 import { ZZZ_COMMAND_PREFIX } from "../core/intercept/game-prefix.js"
-import { createProfileRequestGuard } from "../core/login/requestGuard.js"
 import { createRequestCaptchaReporter } from "../core/captcha/notify.js"
 const BasePlugin = globalThis.plugin
 
-import path from "node:path"
-import { pathToFileURL } from "node:url"
 import { LOTUS_INTERCEPT_PRIORITY } from "../core/intercept/priority.js"
 import {
   isMissingProfileError,
@@ -16,11 +13,7 @@ import {
 } from "../core/config/profile.js"
 import { renderStatusCard } from "../core/render/service.js"
 import { replyImage, replyText } from "../core/transport/reply.js"
-import {
-  AuthKeyService,
-  buildGachaLogUrl,
-  getServer,
-} from "../services/mihoyoAuthKey/service.js"
+import { GenshinGachaService } from "../services/genshinGacha/service.js"
 import { ZzzGachaBridge } from "../services/pluginBridge/zzzGacha.js"
 import { GenshinGachaDisplayBridge } from "../services/pluginBridge/genshinGacha.js"
 import { StarRailGachaDisplayBridge } from "../services/pluginBridge/starRailGacha.js"
@@ -81,7 +74,7 @@ export class LotusGachaLog extends BasePlugin {
   }
 
   async genshinGachaLog() {
-    return this.updateGachaLog("gs")
+    return this.updateGachaLog()
   }
 
   async miniappGachaLog() {
@@ -133,7 +126,7 @@ export class LotusGachaLog extends BasePlugin {
     const userId = String(this.e.user_id)
     const profileId = parseProfileIdFromMessage(this.e.msg)
     try {
-      await replyText(this, `[荷花插件]正在为 profile ${profileId} 更新星铁五星与垫抽记录。`)
+      await replyText(this, `[荷花插件]正在为 profile ${profileId} 补齐官方范围内的星铁五星与垫抽记录。`)
       const result = await this.runStarRailGachaLog({ userId, profileId })
       if (result.skipped) {
         await replyText(this, `[荷花插件]profile ${profileId} 没有同步星铁 UID。`)
@@ -276,15 +269,15 @@ export class LotusGachaLog extends BasePlugin {
     return true
   }
 
-  async updateGachaLog(game) {
+  async updateGachaLog() {
     const userId = String(this.e.user_id)
     const profileId = parseProfileIdFromMessage(this.e.msg)
 
     try {
-      await replyText(this, `[荷花插件]正在为 profile ${profileId} 获取 authkey 并更新抽卡记录。`)
-      const result = await this.runGenshinGachaLog({ userId, profileId, game })
+      await replyText(this, `[荷花插件]正在更新 Profile ${profileId} 的抽卡记录，会补齐官方范围内的缺档。`)
+      const result = await this.runGenshinGachaLog({ userId, profileId })
       if (result.skipped) {
-        await replyText(this, `[荷花插件]profile ${profileId} 没有同步${game === "sr" ? "星铁" : "原神"} UID。`)
+        await replyText(this, `[荷花插件]profile ${profileId} 没有同步原神 UID。`)
         return true
       }
 
@@ -292,16 +285,15 @@ export class LotusGachaLog extends BasePlugin {
         title: "抽卡记录",
         subtitle: `QQ ${userId} · Profile ${profileId} · UID ${result.uid}`,
         badge: "完成",
-        message: result.messages.join("\n").slice(0, 180) || "抽卡记录更新流程已结束。",
+        message: `新增 ${result.pools.reduce((sum, pool) => sum + pool.added, 0)} 条记录，已有记录已保留。`,
         userId,
         items: [
-          { label: "游戏", value: game === "sr" ? "星铁" : "原神" },
+          { label: "游戏", value: "原神" },
           { label: "Region", value: result.region },
-          { label: "Authkey", value: "已获取" },
-          { label: "消息数", value: String(result.messages.length) },
+          ...result.pools.map(pool => ({ label: pool.name, value: `新增 ${pool.added} 条 · 共 ${pool.total} 条` })),
         ],
       }, {
-        saveId: `lotus-gacha-${userId}-${profileId}-${game}`,
+        saveId: `lotus-gacha-${userId}-${profileId}-gs`,
       })
       await replyImage(this, image, "[荷花插件]抽卡记录更新完成。")
     } catch (error) {
@@ -323,7 +315,7 @@ export class LotusGachaLog extends BasePlugin {
           { label: "建议", value: "检查 profile stoken、UID 和登录状态。" },
         ],
       }, {
-        saveId: `lotus-gacha-error-${userId}-${profileId}-${game}`,
+        saveId: `lotus-gacha-error-${userId}-${profileId}-gs`,
       })
       await replyImage(this, image, `[荷花插件]抽卡记录更新失败：${message}`)
     }
@@ -344,7 +336,7 @@ export class LotusGachaLog extends BasePlugin {
     const results = []
     for (const profileId of profileIds) {
       try {
-        results.push(await this.runGenshinGachaLog({ userId, profileId, game: "gs" }))
+        results.push(await this.runGenshinGachaLog({ userId, profileId }))
       } catch (error) {
         results.push({ ok: false, profileId, game: "gs", error: error.message })
       }
@@ -384,53 +376,9 @@ export class LotusGachaLog extends BasePlugin {
     return true
   }
 
-  async runGenshinGachaLog({ userId, profileId, game }) {
-    const messages = []
+  async runGenshinGachaLog({ userId, profileId }) {
     const profile = await loadProfile(userId, profileId)
-    const role = pickRole(profile, game)
-    if (!role) {
-      return {
-        ok: false,
-        skipped: true,
-        profileId,
-        game,
-      }
-    }
-
-    const uid = String(role.uid || role.game_uid)
-    let guard = createProfileRequestGuard(profile)
-    const auth = await new AuthKeyService().getAuthKeyForProfile({
-      qq: String(userId),
-      profileId,
-      onRefreshedProfile: async updated => { guard = createProfileRequestGuard(updated); await guard?.() },
-      beforeRequest: async () => guard?.(),
-      profile,
-      game,
-      uid,
-      region: role.region || getServer(uid, game),
-      authAppId: "webview_gacha",
-    })
-    await guard?.()
-    const url = buildGachaLogUrl(auth)
-    const GachaLog = await loadGachaLogModel()
-    const event = createGachaEvent(this.e, {
-      game,
-      uid,
-      url,
-      messages,
-    })
-
-    await guard?.()
-    await new GachaLog(event).logUrl()
-    await guard?.()
-    return {
-      ok: true,
-      profileId,
-      game,
-      uid,
-      region: auth.region,
-      messages,
-    }
+    return new GenshinGachaService().sync({ e: this.e, profile, profileId })
   }
 
   async runStarRailGachaLog({ userId, profileId }) {
@@ -484,21 +432,6 @@ function pickRole(profile, game) {
   return roles[0]
 }
 
-function createGachaEvent(baseEvent, { game, uid, url, messages }) {
-  return {
-    ...baseEvent,
-    msg: url,
-    uid,
-    isSr: game === "sr",
-    isPrivate: true,
-    reply: async msg => {
-      const text = Array.isArray(msg) ? msg.join("\n") : String(msg)
-      messages.push(text)
-      return true
-    },
-  }
-}
-
 function gameLabel(game) {
   if (game === "gs") return "原神"
   if (game === "sr") return "星铁"
@@ -525,9 +458,4 @@ export function translateGachaError(error) {
     .replace(/cookie/gi, "cookie")
     .replace(/login/gi, "登录")
   return message
-}
-
-async function loadGachaLogModel() {
-  const file = path.join(process.cwd(), "plugins", "genshin", "model", "gachaLog.js")
-  return (await import(pathToFileURL(file).href)).default
 }
