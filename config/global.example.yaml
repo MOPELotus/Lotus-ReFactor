@@ -1,5 +1,13 @@
 version: 1
+# 网页服务：auto 优先共用 TRSS HTTP 服务，否则启用独立端口。
 coin_shop:
+  enable: true
+  mode: auto
+  host: 127.0.0.1
+  port: 18164
+  path: /lotus/coin-shop
+  public_url: ""
+  icp_number: "" # 本站 ICP 备案号；留空不显示
   ticket_minutes: 10
   panel_ticket_minutes: 10
   session_hours: 8
@@ -267,14 +275,3 @@ permissions:
       policy: master_only
     netease.partner:
       policy: master_only
-
-# 米游币兑换网页：auto 优先共用 TRSS HTTP 服务，否则启用独立端口。
-coin_shop:
-  enable: true
-  mode: auto
-  host: 127.0.0.1
-  port: 18164
-  path: /lotus/coin-shop
-  public_url: ""
-  icp_number: "" # 本站 ICP 备案号；留空不显示
-  session_hours: 8

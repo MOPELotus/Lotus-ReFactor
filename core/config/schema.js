@@ -81,13 +81,29 @@ export function validateGlobalConfig(config) {
     if (!Number.isFinite(shop?.[field]) || shop[field] * 3600 < 1 || !Number.isSafeInteger(Date.now() + shop[field] * 3600000)) errors.push(`coin_shop.${field} must be positive hours of at least one second`)
   }
   if (!isObject(shop) || typeof shop.enable !== "boolean" || !["auto", "shared", "standalone"].includes(shop.mode)
-      || typeof shop.host !== "string" || !Number.isInteger(shop.port) || shop.port < 1 || shop.port > 65535
+      || typeof shop.host !== "string" || !/^\S+$/.test(shop.host) || !Number.isInteger(shop.port) || shop.port < 1 || shop.port > 65535
       || typeof shop.path !== "string" || !/^\/[a-zA-Z0-9_/-]+$/.test(shop.path) || shop.path === "/"
-      || typeof shop.public_url !== "string" || (shop.icp_number !== undefined && typeof shop.icp_number !== "string")) {
-    errors.push("coin_shop requires a valid mode, host, port, path, public_url and session_hours")
+      || shop.path.includes("//") || /\/panel\/?$/i.test(shop.path)
+      || (shop.icp_number !== undefined && typeof shop.icp_number !== "string")) {
+    errors.push("网页登录的运行模式、监听地址、端口、挂载路径或备案号无效；用户挂载路径不能与同级 /panel 重合")
+  }
+  if (!isWebPublicUrl(shop?.public_url)) {
+    errors.push("公网访问地址必须留空或填写完整的 HTTP(S) 地址，不可包含凭据、查询参数或片段")
   }
 
   return errors
+}
+
+function isWebPublicUrl(value) {
+  if (typeof value !== "string" || value !== value.trim()) return false
+  if (!value) return true
+  if (!/^https?:\/\//i.test(value) || /[?#]/.test(value)) return false
+  try {
+    const url = new URL(value)
+    return Boolean(url.hostname) && !url.username && !url.password
+  } catch {
+    return false
+  }
 }
 
 export function assertValidGlobalConfig(config) {

@@ -22,6 +22,7 @@ const ARRAY_FIELDS = new Set([
 ])
 
 const NUMBER_FIELDS = new Set([
+  "coin_shop.port",
   "coin_shop.ticket_minutes", "coin_shop.panel_ticket_minutes",
   "coin_shop.session_hours", "coin_shop.panel_session_hours",
   "music.search_limit", "music.session_timeout_ms", "music.download_timeout_ms", "music.max_size_mb",
@@ -106,6 +107,17 @@ const SCOPE_LABELS = {
 
 const GUOBA_SCHEMAS = [
   group("网页登录"),
+  input("coin_shop.public_url", "公网访问地址", "填用户网页的完整地址，如 https://example.com/lotus/coin-shop/；管理面板使用同一地址的相邻路径。留空自动选择，重启后生效。"),
+  select("coin_shop.mode", "网页服务模式", [
+    { label: "自动选择", value: "auto" },
+    { label: "共用 TRSS 端口", value: "shared" },
+    { label: "独立端口", value: "standalone" },
+  ], "默认优先共用 TRSS 端口。修改后需重启；端口或路由配置错误时可从配置文件恢复。"),
+  input("coin_shop.host", "独立服务监听地址", "仅独立服务使用，默认 127.0.0.1；这是本机监听地址，不是发给用户的公网地址。重启后生效。"),
+  number("coin_shop.port", "独立服务监听端口", "仅独立服务使用，范围 1～65535，默认 18164。重启后生效。"),
+  input("coin_shop.path", "用户网页挂载路径", "默认 /lotus/coin-shop，管理面板挂在同级 /panel。修改后需重启，并同步修改反向代理规则。"),
+  sw("coin_shop.enable", "启用米游社用户网页", "关闭后不再签发用户登录链接，管理面板仍可用。重启后生效。"),
+  input("coin_shop.icp_number", "网页 ICP 备案号", "显示在米游社网页页脚；留空不显示。重启后生效。"),
   number("coin_shop.ticket_minutes", "用户登录链接有效期", "单位分钟，正整数，默认 10；用于米游社功能页的一次性登录链接，新链接立即采用新设置。"),
   number("coin_shop.panel_ticket_minutes", "管理链接有效期", "单位分钟，正整数，默认 10；仅影响主人管理面板的一次性登录链接，不改变登录后的会话时长。"),
   number("coin_shop.session_hours", "用户浏览器令牌有效期", "单位小时，正数，可填小数，默认 8；登录后由当前浏览器保存，机器人重启后仍可继续使用，退出后撤销。新登录采用新设置。"),
