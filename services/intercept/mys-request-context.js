@@ -416,6 +416,8 @@ function deviceFpRequest(result, api, device, input) {
       delete body.bbs_device_id
       const ext = JSON.parse(body.ext_fields)
       ext.packageName = "com.mihoyo.hoyolab"
+      // The shared Android builder starts from a CN app profile.
+      ext.packageVersion = MIHOYO_PROTOCOL.hoyolab.version
       body.ext_fields = JSON.stringify(ext)
     }
   } else {
