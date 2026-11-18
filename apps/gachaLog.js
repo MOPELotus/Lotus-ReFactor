@@ -226,16 +226,23 @@ export class LotusGachaLog extends BasePlugin {
     try {
       await replyText(this, `[荷花插件]正在为 profile ${profileId} 更新绝区零抽卡记录。`)
       const result = await this.runZzzGachaLog({ userId, profileId, e })
+      if (result.skipped) {
+        await replyText(this, `[荷花插件]profile ${profileId} 没有同步绝区零 UID。`)
+        return true
+      }
+      const official = result.source === "official_tuning_stats"
       const image = await renderStatusCard({
         title: "绝区零抽卡记录",
         subtitle: `QQ ${userId} · Profile ${profileId} · UID ${result.uid}`,
         badge: "完成",
-        message: "绝区零抽卡记录更新流程已结束。",
+        message: official ? "已同步米游社全历史调频统计与 S 级记录。" : "绝区零抽卡记录更新流程已结束。",
         userId,
         items: result.pools.length
           ? result.pools.map(pool => ({
             label: pool.name,
-            value: `新增 ${pool.added} / 总计 ${pool.total}`,
+            value: official
+              ? `共 ${pool.totalDraws} 抽 · S 级 ${pool.total}（新增 ${pool.added}）· 当前垫 ${pool.pity ?? "—"}`
+              : `新增 ${pool.added} / 总计 ${pool.total}`,
           }))
           : [{ label: "卡池", value: "无新增记录" }],
       }, {
@@ -257,8 +264,8 @@ export class LotusGachaLog extends BasePlugin {
         message,
         userId,
         items: [
-          { label: "阶段", value: "荷花插件 authkey / 绝区零抽卡接口" },
-          { label: "建议", value: "检查 profile stoken、绝区零 UID 和登录状态。" },
+          { label: "阶段", value: "绝区零调频记录同步" },
+          { label: "建议", value: "检查 profile 的绝区零 UID 和米游社登录状态。" },
         ],
       }, {
         saveId: `lotus-zzz-gacha-error-${userId}-${profileId}`,

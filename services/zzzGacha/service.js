@@ -17,6 +17,7 @@ import { MIHOYO, MIHOYO_PROTOCOL, mihoyoUserAgent } from "../../core/mihoyo/cons
 import { getDs2 } from "../../core/mihoyo/ds.js"
 import { isCookieRefreshableResponse } from "../../core/captcha/mysHandler.js"
 import { MiyousheClient } from "../miyoushe/client.js"
+import { summarizeTuningUpdate, ZzzTuningStatsClient } from "./tuningStats.js"
 
 export const ZZZ_GACHA_POOLS = Object.freeze({
   "音擎频段": ["3001"],
@@ -56,6 +57,7 @@ const CK_RARITY = Object.freeze({
 let zzzGachaRequestQueue = Promise.resolve()
 let zzzGachaLastRequestAt = 0
 let zzzGachaBlockedUntil = 0
+const tuningRefreshes = new Map()
 
 export class ZzzGachaService {
   constructor(options = {}) {
@@ -71,6 +73,8 @@ export class ZzzGachaService {
     this.requestContext = new AsyncLocalStorage()
     this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)))
     this.storageDir = options.storageDir || resolveData("zzzGachaJson")
+    this.tuningStorageDir = options.tuningStorageDir || (options.storageDir
+      ? path.join(options.storageDir, "tuningStats") : resolveData("zzzTuningStats"))
     this.authCacheFile = options.authCacheFile || resolveData("zzzGachaAuthkey", "cache.json")
     this.zzzPluginDir = options.zzzPluginDir || ""
     this.mirrorZzzPlugin = options.mirrorZzzPlugin !== false
@@ -93,10 +97,17 @@ export class ZzzGachaService {
         minIntervalMs: this.requestDelayMs, sleep: this.sleep,
       }),
     })
+    this.tuningClient = options.tuningClient || new ZzzTuningStatsClient((url, init) => this.requestTuningStats(url, init))
   }
 
   async updateByProfile({ qq, profile, profileId = 1, onCaptchaEvent } = {}) {
+    return this.withProfileContext({ qq, profile, profileId }, () => this.updateProfile({ qq, profile, profileId, onCaptchaEvent }))
+  }
+
+  async withProfileContext({ qq, profile, profileId }, work) {
+    qq = String(qq || profile?.user?.qq || "")
     const role = pickRole(profile, "zzz"), uid = getRoleUid(role)
+    if (!uid) throw new Error(`profile ${profileId} 没有同步绝区零 UID`)
     const region = role?.region || getServer(uid, "zzz")
     const context = { qq, profileId, uid, region, profile }
     context.generation = getAccountGeneration(qq, profileId)
@@ -104,8 +115,96 @@ export class ZzzGachaService {
     context.guard = this.createRequestGuard(profile, context)
     return this.requestContext.run(context, async () => {
       await this.assertRequestCurrent()
-      return this.updateProfile({ qq, profile, profileId, onCaptchaEvent })
+      return work()
     })
+  }
+
+  tuningFile(qq, uid) {
+    if (!/^[\w:-]+$/.test(String(qq || "")) || !/^\d+$/.test(String(uid || ""))) throw new Error("无效的绝区零调频记录路径")
+    return path.join(this.tuningStorageDir, String(qq), `${uid}.json`)
+  }
+
+  async loadTuningStats(qq, uid) {
+    const data = await readJsonFile(this.tuningFile(qq, uid))
+    return data?.version === 1 && data.uid === String(uid) && Array.isArray(data.pools) ? data : null
+  }
+
+  async readTuningStats({ qq, profile, profileId = 1, refresh = true } = {}) {
+    return this.withProfileContext({ qq, profile, profileId }, async () => (await this.updateTuningStats({ refresh })).stats)
+  }
+
+  async readTuningInventory({ qq, profile, profileId = 1, refresh = true } = {}) {
+    return this.withProfileContext({ qq, profile, profileId }, () => this.withTuningCookie((role, cookie) => this.tuningClient.inventory(role, cookie), { refresh }))
+  }
+
+  async updateTuningStats({ refresh = true } = {}) {
+    const ctx = this.requestContext.getStore()
+    const file = this.tuningFile(ctx.qq, ctx.uid)
+    const key = JSON.stringify([file, ctx.profileId, ctx.generation, ctx.lifetime, refresh])
+    let work = tuningRefreshes.get(key)
+    if (!work) {
+      work = (async () => {
+        const previous = await this.loadTuningStats(ctx.qq, ctx.uid)
+        const stats = await this.withTuningCookie((role, cookie) => this.tuningClient.snapshot(role, cookie, ctx.profileId), { refresh })
+        await this.assertRequestCurrent()
+        await fs.mkdir(path.dirname(file), { recursive: true })
+        const temp = `${file}.${crypto.randomUUID()}.tmp`
+        try {
+          await fs.writeFile(temp, JSON.stringify(stats, null, 2), { encoding: "utf8", mode: 0o600 })
+          await this.assertRequestCurrent()
+          await fs.rename(temp, file)
+        } finally {
+          await fs.rm(temp, { force: true }).catch(() => {})
+        }
+        await this.assertRequestCurrent()
+        return summarizeTuningUpdate(stats, previous)
+      })()
+      tuningRefreshes.set(key, work)
+      const cleanup = () => { if (tuningRefreshes.get(key) === work) tuningRefreshes.delete(key) }
+      work.then(cleanup, cleanup)
+    }
+    return work
+  }
+
+  async withTuningCookie(work, { refresh } = {}) {
+    const ctx = this.requestContext.getStore()
+    if (getZzzGameBiz(ctx.region) !== "nap_cn") throw new Error("官方调频统计目前仅支持绝区零国服")
+    const role = { uid: ctx.uid, region: ctx.region }
+    const run = async () => {
+      await this.assertRequestCurrent()
+      const cookie = ctx.profile.account?.cookie
+      if (!cookie) throw new Error(`profile ${ctx.profileId} 缺少米游社 Cookie，请扫码登录`)
+      return work(role, cookie)
+    }
+    try {
+      return await run()
+    } catch (error) {
+      if (!refresh || isAccountChangedError(error) || !ctx.profile.account?.stoken
+        || !(error.httpStatus === 401 || isCookieRefreshableResponse(error.response))) throw error
+      await this.assertRequestCurrent()
+      const profile = await refreshAccountAndSync(ctx.qq, ctx.profileId, { accountService: this.accountService, expectedProfile: ctx.profile })
+      await this.acceptRefreshedProfile(profile)
+      return run()
+    }
+  }
+
+  async requestTuningStats(url, init) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await scheduleZzzGachaRequest(async () => {
+          await this.assertRequestCurrent()
+          const response = await this.fetch(url, { ...init, signal: AbortSignal.timeout(15_000) })
+          const data = await response.json().catch(() => null)
+          await this.assertRequestCurrent()
+          if (!response.ok) throw Object.assign(new Error(`官方调频统计 HTTP ${response.status}`), { httpStatus: response.status })
+          if (Number(data?.retcode) !== 0) throw mihoyoResponseError(data, "官方调频统计")
+          return data
+        }, { minIntervalMs: this.requestDelayMs, sleep: this.sleep })
+      } catch (error) {
+        if (attempt >= this.rateLimitRetries || (error.httpStatus !== 429 && !isRateLimitedError(error))) throw error
+        markZzzGachaRateLimit(this.rateLimitBackoffMs * (attempt + 1))
+      }
+    }
   }
 
   createRequestGuard(profile, { qq, profileId, uid, region }) {
@@ -147,7 +246,7 @@ export class ZzzGachaService {
 
     const region = role?.region || getServer(uid, "zzz")
     const gameBiz = getZzzGameBiz(region)
-    let ckError = null
+    if (gameBiz === "nap_cn") return this.updateTuningStats()
     if (profile?.account?.cookie) {
       try {
         const result = await this.updateByCookie({
@@ -170,40 +269,9 @@ export class ZzzGachaService {
       } catch (error) {
         if (isAccountChangedError(error)) throw error
         await this.assertRequestCurrent()
-        ckError = error
         if (isRateLimitedError(error)) throw error
-        if (gameBiz === "nap_cn" && isCookieRefreshableResponse(error?.response) && profile?.account?.stoken) {
-          const refreshed = await refreshAccountAndSync(qq, profileId, { accountService: this.accountService, expectedProfile: profile })
-          await this.acceptRefreshedProfile(refreshed)
-          profile = refreshed
-          try {
-            const result = await this.updateByCookie({
-              qq,
-              uid,
-              cookie: refreshed.account?.cookie,
-              device: refreshed.device,
-              region,
-              gameBiz,
-              onCaptchaEvent,
-            })
-            return {
-              ...result,
-              uid,
-              profileId,
-              region,
-              gameBiz,
-              source: "cookie",
-              refreshedCookie: true,
-            }
-          } catch (retryError) {
-            if (isAccountChangedError(retryError)) throw retryError
-            await this.assertRequestCurrent()
-            ckError = retryError
-            if (isRateLimitedError(retryError)) throw retryError
-          }
-        }
-        if (!profile?.account?.stoken_cookie) throw ckError
-        logger?.warn?.(`[Lotus-Plugin] zzz ck gacha update failed, fallback to authkey: ${ckError.message}`)
+        if (!profile?.account?.stoken_cookie) throw error
+        globalThis.logger?.warn?.(`[Lotus-Plugin] zzz ck gacha update failed, fallback to authkey: ${error.message}`)
       }
     }
 

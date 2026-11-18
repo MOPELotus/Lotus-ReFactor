@@ -5,9 +5,12 @@ import { bindMysRequestProfile, withMysRequestProfile } from "../intercept/mys-r
 import path from "node:path"
 import { renderTemplate } from "../../core/render/service.js"
 import { pathToFileURL } from "node:url"
-import { resolveServer } from "../../core/mihoyo/regions.js"
+import { isCnServer, resolveServer } from "../../core/mihoyo/regions.js"
 import { parseAccountCookie } from "../../core/mihoyo/cookies.js"
+import { createProfileRequestGuard } from "../../core/login/requestGuard.js"
+import { ZzzGachaService } from "../zzzGacha/service.js"
 import { createIsolatedEvent, getRoleUid, importRuntimeModule, pickRole, shouldForwardReply } from "./common.js"
+import { buildZzzTuningDisplay, zzzInventoryReply } from "./zzzGachaDisplay.js"
 
 export class ZzzPanelBridge {
   constructor(options = {}) {
@@ -82,6 +85,7 @@ export class ZzzProfileQueryBridge {
     this.loadMonthlyClass = options.loadMonthlyClass || (() => loadZzzAppClass("monthly.js", "monthly"))
     this.loadHollowZeroClass = options.loadHollowZeroClass || (() => loadZzzAppClass("hollowZero.js", "HollowZero"))
     this.loadGachaClass = options.loadGachaClass || (() => loadZzzAppClass("gachalog.js", "GachaLog"))
+    this.gachaService = options.gachaService || new ZzzGachaService(options)
     this.loadExplorationDetailClass = options.loadExplorationDetailClass || (() => loadZzzAppClass("explorationDetail.js", "ExplorationDetail"))
     this.loadMysApiClass = options.loadMysApiClass || loadMysApiClass
     this.registerProfile = options.registerProfile || registerProfileWithGenshin
@@ -145,7 +149,67 @@ export class ZzzProfileQueryBridge {
   }
 
   async gachaLog(options = {}) {
-    return this.run({ ...options, PluginClass: await this.loadGachaClass(), method: "gachaLogAnalysis" })
+    const { e, profile, profileId = 1, command, forwardReplies = true } = options
+    const role = pickRole(profile, "zzz")
+    const uid = getRoleUid(role)
+    if (!uid) throw new Error(`profile ${profileId} 没有同步绝区零 UID`)
+    const region = resolveServer({ server: role?.region, uid, game: "zzz" })
+    const PluginClass = await this.loadGachaClass()
+    if (!isCnServer(region)) return this.run({ ...options, PluginClass, method: "gachaLogAnalysis" })
+
+    const qq = String(e.user_id)
+    // Profile Query already refreshes credentials before this bridge runs.
+    // Keep rendering and inventory tied to that same authenticated snapshot.
+    const request = { qq, profile, profileId, refresh: false }
+    const guard = this.gachaService.createRequestGuard?.(profile, { qq, profileId, uid, region })
+      || createProfileRequestGuard(profile, { qq, profileId })
+    await guard?.()
+    const cached = await this.gachaService.loadTuningStats(qq, uid)
+    const stats = cached || await this.gachaService.readTuningStats(request)
+    if (String(stats?.uid) !== uid || stats.region !== region) throw new Error("绝区零调频统计与当前角色不一致，请重新查询。")
+    const context = await createZzzProfilePluginInstance({
+      PluginClass, e, profile, profileId, command, forwardReplies,
+      // Only the renderer runs here; it does not need external user bindings.
+      registerProfile: async () => {}, syncDevice: async () => {},
+    })
+    const player = { ...role, game_uid: uid, region_name: role?.region_name || region }
+    try { await context.instance.getPlayerInfo?.(player) }
+    catch (error) { globalThis.logger?.debug?.(`[Lotus-Plugin] ZZZ gacha avatar: ${error.message}`) }
+    context.event.playerCard ||= {
+      player,
+      avatar: /^\d+$/.test(qq) ? `https://q1.qlogo.cn/g?b=qq&nk=${qq}&s=640` : "",
+    }
+    if (!context.event.playerCard.avatar && /^\d+$/.test(qq)) {
+      context.event.playerCard.avatar = `https://q1.qlogo.cn/g?b=qq&nk=${qq}&s=640`
+    }
+
+    const rendered = await context.instance.render("gachalog/index.html", {
+      data: buildZzzTuningDisplay(stats),
+      saveId: `lotus-zzz-gacha-${uid}`,
+    }, { retType: "base64" })
+    const image = zzzGachaImage(rendered)
+    if (!image) throw new Error("ZZZ-Plugin 未能生成抽卡记录图片。")
+    if (forwardReplies) {
+      await guard?.()
+      const reply = await context.event.reply(image)
+      // TRSS turns transport exceptions into a reply object with `error`.
+      if (reply === false || reply?.error || reply?.status === "failed" || !context.forwarded.length) {
+        throw new Error("绝区零抽卡记录图片发送失败。")
+      }
+      try {
+        // A snapshot assembled by this call already includes a live index.
+        const live = cached ? await this.gachaService.readTuningInventory(request) : stats
+        await guard?.()
+        const inventory = String(live?.uid) === uid ? zzzInventoryReply({ e, profileId, uid, inventory: live.inventory }) : null
+        if (inventory) await e.reply(inventory)
+      } catch (error) {
+        globalThis.logger?.warn?.(`[Lotus-Plugin] ZZZ gacha inventory unavailable: ${error.message}`)
+      }
+    }
+    return {
+      ok: true, game: "zzz", uid, profileId, image,
+      messages: context.messages.filter(Boolean), forwarded: context.forwarded,
+    }
   }
 
   async groupRank({ e, profile, profileId = 1, command, mode = "weighted", character, forwardReplies = true } = {}) {
@@ -230,6 +294,13 @@ export class ZzzProfileQueryBridge {
       forwarded: context.forwarded,
     }
   }
+}
+
+function zzzGachaImage(rendered) {
+  if (rendered?.type === "image") return rendered
+  if (!Buffer.isBuffer(rendered) && (typeof rendered !== "string" || !rendered)) return null
+  if (Buffer.isBuffer(rendered) && !rendered.length) return null
+  return globalThis.segment?.image?.(rendered) || { type: "image", file: rendered }
 }
 
 export async function createZzzProfilePluginInstance({ PluginClass, e, profile, profileId = 1, command = "%面板", forwardReplies = true, registerProfile = registerProfileWithGenshin, syncDevice = syncZzzDeviceWithRedis, loadMysApiClass: loadMysApiClassImpl = loadMysApiClass } = {}) {
