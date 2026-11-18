@@ -262,7 +262,15 @@ function sanitizeDeviceRaw(info = {}) {
   return copy
 }
 
+// Android 12 alone is ambiguous (API 31 or 32). Only infer unambiguous releases.
+const androidApiLevels = new Map(Object.entries({
+  "8": "26", "8.1": "27", "9": "28", "10": "29", "11": "30", "12L": "32",
+  "13": "33", "14": "34", "15": "35", "16": "36", "17": "37",
+}))
+
 function buildExtFields(info, brand, deviceGuid) {
+  const osVersion = deviceAndroidVersion(info)
+  const release = osVersion.replace(/^Android\s+/i, "").toUpperCase().replace(/(?:\.0)+$/, "")
   return {
     proxyStatus: 1,
     isRoot: 0,
@@ -289,7 +297,7 @@ function buildExtFields(info, brand, deviceGuid) {
     deviceInfo: info.deviceFingerprint,
     vaid: guid(),
     buildType: "user",
-    sdkVersion: info.sdkVersion || "32",
+    sdkVersion: info.sdkVersion || androidApiLevels.get(release),
     ui_mode: "UI_MODE_TYPE_NORMAL",
     isMockLocation: 0,
     cpuType: "arm64-v8a",
@@ -299,7 +307,7 @@ function buildExtFields(info, brand, deviceGuid) {
     manufacturer: info.manufacturer || brand,
     emulatorStatus: 0,
     appMemory: "512",
-    osVersion: deviceAndroidVersion(info) || "12",
+    osVersion: osVersion || undefined,
     vendor: "unknown",
     accelerometer: "0.10001241x9.800007x0.1999938",
     sdRemain: info.sdRemain || (info.romCapacity ? undefined : 119363),
