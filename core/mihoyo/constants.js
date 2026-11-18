@@ -1,10 +1,9 @@
-// Version/salt pairs are protocol-specific. BBS CN follows upstream
-// Womsxd/MihoyoBBSTools 01be3ba (2026-11-01); Passport and HoYoLAB
-// keep their own verified protocol identities rather than borrowing BBS salts.
+// Authkey, BBS, Passport and HoYoLAB use separate signing parameters.
 export const MIHOYO_PROTOCOL = Object.freeze({
-  bbsCn: Object.freeze({ version: "2.117.0", salt: "9c7b896d7483e9070b27c55f1959c4d5", webSalt: "4751cb5557bfad5e249e58462c39fb0a", x4Salt: "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs", x6Salt: "t0qEgfub6cvueAPgR5m9aQWWVciEer7v", clientType: "2", webClientType: "5" }),
+  bbsCn: Object.freeze({ version: "2.118.1", salt: "9c7b896d7483e9070b27c55f1959c4d5", webSalt: "4751cb5557bfad5e249e58462c39fb0a", x4Salt: "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs", x6Salt: "t0qEgfub6cvueAPgR5m9aQWWVciEer7v", clientType: "2", webClientType: "5" }),
+  authKey: Object.freeze({ salt: "7a047e46eadd8693f09513e55bdf6bd8" }),
   passport: Object.freeze({ version: "2.102.1", salt: "JwYDpKvLj6MrMqqYU6jTKF17KNO2PXoS", appId: "bll8iq97cem8", clientType: "2", sdkVersion: "1.3.1.2" }),
-  hoyolab: Object.freeze({ version: "2.57.1", salt: "okr4obncj8bw5a65hbnn5oo6ixjc3l9w", clientType: "2" }),
+  hoyolab: Object.freeze({ version: "4.23.0", salt: "okr4obncj8bw5a65hbnn5oo6ixjc3l9w", clientType: "2" }),
 })
 
 export const MIHOYO = Object.freeze({

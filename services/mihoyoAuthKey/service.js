@@ -1,4 +1,4 @@
-import { GAME_BIZ, MIHOYO } from "../../core/mihoyo/constants.js"
+import { GAME_BIZ, MIHOYO, MIHOYO_PROTOCOL } from "../../core/mihoyo/constants.js"
 import { getDs } from "../../core/mihoyo/ds.js"
 import { inferServerFromUid } from "../../core/mihoyo/regions.js"
 import { requireCnGachaRegion } from "./region.js"
@@ -78,12 +78,12 @@ export class AuthKeyService {
       method: "POST",
       headers: {
         "x-rpc-app_version": MIHOYO.appVersion,
-        "User-Agent": "okhttp/4.8.0",
+        "User-Agent": "okhttp/4.9.3",
         "x-rpc-client_type": "5",
         Referer: "https://app.mihoyo.com",
         Origin: "https://webstatic.mihoyo.com",
         Cookie: profile.account.stoken_cookie,
-        DS: getDs(MIHOYO.saltWeb),
+        DS: getDs(MIHOYO_PROTOCOL.authKey.salt),
         "x-rpc-sys_version": String(profile.device?.android_version || "12"),
         "x-rpc-channel": "mihoyo",
         "x-rpc-device_id": profile.device?.id || "00000000000000000000000000000000",
