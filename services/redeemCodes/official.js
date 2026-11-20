@@ -103,7 +103,7 @@ export class MiyoliveProvider {
       }
       if (!response.ok) {
         const error = new Error(`官方接口 HTTP ${response.status}`)
-        error.retryable = response.status >= 500 || response.status === 429
+        error.retryable = response.status >= 500 || response.status === 429 || (response.status === 410 && url.startsWith(`${LIVE}/`))
         error.httpStatus = response.status
         await response.body?.cancel().catch(() => {})
         throw error
@@ -115,7 +115,7 @@ export class MiyoliveProvider {
       if (!this.directRequest || error.retryable === false) throw new Error(`${endpoint}：${detail}`, { cause: error })
       globalThis.logger?.debug?.(`[Lotus-Plugin] 兑换码 ${endpoint} 请求失败（${detail}），改用直连重试`)
       let lastError
-      for (const waitMs of [0, 150, 350]) {
+      for (const waitMs of error.httpStatus === 410 ? [0] : [0, 150, 350]) {
         if (waitMs) await delay(waitMs)
         const remainingMs = deadline - Date.now()
         if (remainingMs <= 0) break

@@ -13,9 +13,13 @@ const busyKey = Symbol.for("lotus-plugin.automatic-preview-redemption")
 const cookieKeys = new Set(["account_id", "cookie_token", "ltuid", "ltoken", "account_id_v2", "cookie_token_v2", "account_mid_v2", "ltuid_v2", "ltoken_v2", "ltmid_v2", "mid"])
 const validCode = code => typeof code === "string" && /^[\p{L}\p{N}_-]{1,64}$/u.test(code)
 
+function previewExpired(result, now) {
+  return result.expiry != null && !(Number.isFinite(result.expiry.ms) && result.expiry.ms > now)
+}
+
 export function completePreview(result, game, now) {
   return result?.status === "available" && /^\d+\.\d+$/.test(result.version)
-    && Boolean(result.actId) && Number.isFinite(result.expiry?.ms) && result.expiry.ms > now
+    && Boolean(result.actId) && !previewExpired(result, now)
     && Array.isArray(result.codes) && result.codes.length >= game.count
     && result.codes.every(({ code }) => validCode(code))
     && new Set(result.codes.map(({ code }) => code.toLowerCase())).size === result.codes.length
@@ -85,7 +89,7 @@ export class AutoPreviewRedeem {
       else if (["expired", "unavailable"].includes(result.status)) this.nextLookup.set(id, now + 30 * 60_000)
       if (!completePreview(result, game, this.now())) continue
       for (const snapshot of subscribers) {
-        if (this.now() >= result.expiry.ms) break
+        if (previewExpired(result, this.now())) break
         try { await this.redeemProfile(journal, snapshot, id, game, result) }
         catch (error) { globalThis.logger?.warn?.(`[Lotus-Plugin] 前瞻自动兑换未完成：${error?.code || error?.name || "unknown"}`) }
       }
@@ -110,7 +114,7 @@ export class AutoPreviewRedeem {
     const role = selectRedeemRole(roles, game, selected)
     if (!role) return
     const uid = String(role.game_uid), key = batchKey(uid)
-    if (journal[key] || this.now() >= result.expiry.ms) return
+    if (journal[key] || previewExpired(result, this.now())) return
     const record = journal[key] = { time: this.now(), status: "started" }
     if (!selected) journal[batchKey("implicit")] = record
     // A request may actually succeed before a timeout or restart. Reserve this
@@ -119,7 +123,7 @@ export class AutoPreviewRedeem {
     const lines = []
     let stopped = false
     for (const { code } of result.codes) {
-      if (stopped || this.now() >= result.expiry.ms) { lines.push(`${code}：未提交`); continue }
+      if (stopped || previewExpired(result, this.now())) { lines.push(`${code}：未提交`); continue }
       try {
         const current = await this.readProfile(qq, profileId)
         if (!current.auto_redeem?.enable || !current.auto_redeem.games.includes(id) || String(current.account.current_uid?.[id] || "") !== selected) throw new Error("settings changed")
@@ -129,7 +133,7 @@ export class AutoPreviewRedeem {
         stopped = true
         continue
       }
-      if (this.now() >= result.expiry.ms) { lines.push(`${code}：兑换码已过期，未提交`); stopped = true; continue }
+      if (previewExpired(result, this.now())) { lines.push(`${code}：兑换码已过期，未提交`); stopped = true; continue }
       try {
         const url = new URL(`https://${game.host}/common/apicdkey/api/webExchangeCdkey`)
         url.search = new URLSearchParams({ cdkey: code, game_biz: game.biz, region: role.region, uid, lang: "zh-cn", t: String(this.now()) })
