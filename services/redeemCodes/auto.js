@@ -91,7 +91,11 @@ export class AutoPreviewRedeem {
       for (const snapshot of subscribers) {
         if (previewExpired(result, this.now())) break
         try { await this.redeemProfile(journal, snapshot, id, game, result) }
-        catch (error) { globalThis.logger?.warn?.(`[Lotus-Plugin] 前瞻自动兑换未完成：${error?.code || error?.name || "unknown"}`) }
+        catch (error) {
+          const reason = error?.httpStatus ? `HTTP ${error.httpStatus}`
+            : Number.isInteger(error?.retcode) ? `米游社返回 ${error.retcode}` : error?.code || error?.name || "unknown"
+          globalThis.logger?.warn?.(`[Lotus-Plugin] ${result.gameName} ${result.version} 前瞻自动兑换未完成：${reason}`)
+        }
       }
     }
   }
