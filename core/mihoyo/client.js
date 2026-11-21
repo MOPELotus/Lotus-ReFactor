@@ -1,5 +1,9 @@
+import { randomUUID } from "node:crypto"
 import { MIHOYO, MIHOYO_PROTOCOL, GAME_BIZ, mihoyoUserAgent } from "./constants.js"
 import { getDs2, randomString } from "./ds.js"
+
+const lifecycleId = randomUUID()
+const tokenType = { stoken: 1, ltoken: 2, cookieToken: 4 }
 
 export class MihoyoClient {
   constructor(options = {}) {
@@ -37,10 +41,11 @@ export class MihoyoClient {
   }
 
   async getLtokenByStoken({ stuid, stoken, mid }) {
+    if (String(stoken).startsWith("v2_")) return this.exchangeSessionToken({ stuid, stoken, mid }, tokenType.ltoken)
     const params = new URLSearchParams()
-    if (!String(stoken).startsWith("v2_")) params.set("stuid", stuid)
+    params.set("stuid", stuid)
     params.set("stoken", stoken)
-    if (!String(stoken).startsWith("v2_") && mid) params.set("mid", mid)
+    if (mid) params.set("mid", mid)
     return this.requestJson(`${MIHOYO.passApi}/account/auth/api/getLTokenBySToken?${params}`, {
       headers: this.tokenHeaders({ stuid, stoken, mid }, params.toString(), "5"),
     })
@@ -48,13 +53,8 @@ export class MihoyoClient {
 
   async getCookieTokenByStoken({ stuid, stoken, mid, method = "GET" }) {
     if (method !== "GET") throw new Error("stoken exchange only supports GET")
+    if (String(stoken).startsWith("v2_")) return this.exchangeSessionToken({ stuid, stoken, mid }, tokenType.cookieToken)
     const params = new URLSearchParams()
-    if (String(stoken).startsWith("v2_")) {
-      params.set("stoken", stoken)
-      return this.requestJson(`${MIHOYO.passApi}/account/auth/api/getCookieAccountInfoBySToken?${params}`, {
-        headers: this.tokenHeaders({ stuid, stoken, mid }, params.toString(), "2"),
-      })
-    }
     params.set("game_biz", "hk4e_cn")
     params.set("uid", stuid)
     params.set("stoken", stoken)
@@ -63,6 +63,23 @@ export class MihoyoClient {
     return this.requestJson(`${MIHOYO.webApi}/auth/api/getCookieAccountInfoBySToken?${params}`, {
       method,
       headers: this.tokenHeaders({ stuid, stoken, mid }, params.toString(), "5"),
+    })
+  }
+
+  async exchangeSessionToken({ stuid, stoken, mid }, target) {
+    if (!stuid || !stoken || !mid) throw new Error("stoken exchange credentials are incomplete")
+    const body = JSON.stringify({ dst_token_type: target, src_token: { token: stoken, token_type: tokenType.stoken }, mid })
+      .replace(/[<>&='\u2028\u2029]/gu, char => "\\u" + char.charCodeAt(0).toString(16).padStart(4, "0"))
+    const sdkVersion = MIHOYO_PROTOCOL.passport.exchangeSdkVersion
+    return this.requestJson(`${MIHOYO.passApi}/account/ma-cn-session/app/exchange`, {
+      method: "POST",
+      headers: {
+        ...this.passHeaders(body),
+        "x-rpc-sdk_version": sdkVersion,
+        "x-rpc-account_version": sdkVersion,
+        "x-rpc-lifecycle_id": lifecycleId,
+      },
+      body,
     })
   }
 

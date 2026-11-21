@@ -29,7 +29,7 @@ export async function exchangeStokenCredentials(client, credentials) {
 
   const ck = await requestToken("cookie_token", () => client.getCookieTokenByStoken({ stuid, stoken, mid }))
   if (ck?.retcode !== 0) throw exchangeError("cookie_token", "business", "cookie_token refresh failed; original credentials retained", { retcode: ck?.retcode })
-  const cookieToken = ck.data?.cookie_token
+  const cookieToken = ck.data?.cookie_token || ck.data?.token?.token
   if (!cookieToken) throw exchangeError("cookie_token", "missing_token", "cookie_token refresh returned no token")
   assertReturnedUid(ck.data, stuid, true, mid, "cookie_token")
   try {
