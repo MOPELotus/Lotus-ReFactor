@@ -265,7 +265,7 @@ export class LotusScheduler extends BasePlugin {
 
   communityRetryFinalTask() {
     return {
-      name: "荷花插件社区签到当日兜底",
+      name: "荷花插件签到当日兜底",
       cron: COMMUNITY_RETRY_FINAL_CRON,
       fnc: () => this.runDueCheckins({ communityRetriesOnly: true }),
       log: false,

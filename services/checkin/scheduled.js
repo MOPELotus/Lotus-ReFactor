@@ -5,7 +5,7 @@ import { renderTemplate } from "../../core/render/service.js"
 import { SchedulerService, dateString, nextDateString } from "../../core/scheduler/service.js"
 import { formatLocalIso } from "../../core/time.js"
 import { notifyProfile } from "../../core/transport/notify.js"
-import { communityForumName } from "../miyoushe/tasks.js"
+import { communityForumName, SIGNIN_GAMES } from "../miyoushe/tasks.js"
 import { ProfileSigninService, renderSigninFailure } from "./profileSignin.js"
 
 const taskState = globalThis[Symbol.for("lotus-plugin.scheduled-signin-tasks")] ||= { schedules: new Map(), plans: new Map() }
@@ -65,43 +65,51 @@ export class ScheduledSigninService {
       await this.scheduler.savePlan(plan)
       const remaining = retryDeadline && retryDeadline - this.now().getTime()
       const retrySignal = retryDeadline ? (remaining > 0 ? AbortSignal.timeout(remaining) : AbortSignal.abort()) : undefined
-      const outcome = await this.runEntry(entry, { ...options, communityRetryForums: previous?.forums, retrySignal })
+      const outcome = await this.runEntry(entry, {
+        ...options, communityRetryForums: previous?.forums, gameRetryKeys: previous?.games, retrySignal,
+      })
       const retryForums = outcome.result?.retryCommunityForums || []
+      const retryGames = outcome.result?.retryGameKeys || []
+      const hasPending = retryForums.length > 0 || retryGames.length > 0
       const attempts = previous ? previous.attempts + 1 : 0
       const tasks = outcome.result?.tasks || []
-      const otherFailure = Boolean(previous?.otherFailure || tasks.some(row =>
+      // A target that disappears when settings change must not become a success
+      // just because a different target finishes on a later attempt.
+      const pendingOrComplete = !previous || previous.forums.every(id => retryForums.includes(id) || forumCompleted(tasks, id))
+        && (previous.games || []).every(key => retryGames.includes(key) || gameCompleted(tasks, key))
+      const otherFailure = Boolean(previous?.otherFailure || !pendingOrComplete || tasks.some(row =>
         (row.status === "failed" || row.status === "unverified") && !row.retryable))
       const message = outcome.message || outcome.error?.message || ""
       const initialMessage = previous?.initialMessage ?? message
-      const nextAt = retryForums.length && !finalRetry && nextCommunityRetry(this.now(), attempts, planDate)
-      if (retryForums.length && nextAt && dateString(nextAt) === planDate) {
-        entry.communityRetry = { forums: retryForums, attempts, nextAt: nextAt.toISOString(), otherFailure, initialMessage }
+      const nextAt = hasPending && !finalRetry && nextCommunityRetry(this.now(), attempts, planDate)
+      if (nextAt && dateString(nextAt) === planDate) {
+        entry.communityRetry = { forums: retryForums, games: retryGames, attempts, nextAt: nextAt.toISOString(), otherFailure, initialMessage }
       } else {
         delete entry.communityRetry
       }
-      const retriedAll = previous && previous.forums.every(id => tasks.some(row =>
-        row.kind === "community" && row.key === id && ["success", "already"].includes(row.status)))
+      const retriedAll = pendingOrComplete && !hasPending
+      const label = previous?.games?.length ? "签到补跑" : "社区签到补跑"
       entry.done = !entry.communityRetry
       if (entry.done) entry.doneAt = formatLocalIso()
       entry.ok = outcome.ok && (!previous || retriedAll && !otherFailure)
       entry.stage = outcome.stage
-      entry.message = previous ? `${initialMessage}\n社区签到补跑第 ${attempts} 次：${message || "当前设置或设备不可用，未执行"}` : message
+      entry.message = previous ? `${initialMessage}\n${label}第 ${attempts} 次：${message || "当前设置或设备不可用，未执行"}` : message
       delete entry.runningAt
       await this.scheduler.savePlan(plan)
       if (previous && options.notify !== false && outcome.profile) {
-        const details = tasks.length || outcome.error ? message : outcome.skipped?.join("\n") || "本轮没有可补签的社区，请检查社区签到设置。"
+        const details = tasks.length || outcome.error ? message : outcome.skipped?.join("\n") || "本轮没有可执行的签到项目，请检查签到设置。"
         const lines = [
-          `[荷花插件]社区签到补跑第 ${attempts} 次（Profile ${entry.profileId}）`,
-          `本轮只补签：${previous.forums.map(communityForumName).join("、")}。游戏签到结果以首轮为准。`,
+          `[荷花插件]${label}第 ${attempts} 次（Profile ${entry.profileId}）`,
+          `本轮补签：${retryTargetNames(previous.forums, previous.games)}。`,
           details,
         ]
         if (entry.communityRetry) {
           const retryAt = new Date(entry.communityRetry.nextAt)
           const time = formatLocalIso(retryAt).slice(11, 16)
           const action = retryAt.getTime() >= communityRetryCutoff(retryAt) ? "做今天最后一次补签" : "再试"
-          lines.push(`预计 ${time} 后${action}：${retryForums.map(communityForumName).join("、")}。`)
+          lines.push(`预计 ${time} 后${action}：${retryTargetNames(retryForums, retryGames)}。`)
         } else if (!retriedAll) {
-          lines.push("今日自动补跑已结束，仍有社区未确认签到。")
+          lines.push("今日自动补跑已结束，仍有项目未确认签到。")
         }
         try { await this.notify(outcome.profile, lines.filter(Boolean).join("\n"), { bot: options.bot || this.bot }) }
         catch (error) { globalThis.logger?.warn?.(`[Lotus-Plugin] scheduled signin notify failed: ${error.message}`) }
@@ -214,8 +222,9 @@ export class ScheduledSigninService {
         profileId: entry.profileId,
         profile,
         refresh: true,
-        source: options.communityRetryForums ? "scheduled_community_retry" : "scheduled",
+        source: options.gameRetryKeys?.length ? "scheduled_signin_retry" : options.communityRetryForums ? "scheduled_community_retry" : "scheduled",
         communityRetryForums: options.communityRetryForums,
+        gameRetryKeys: options.gameRetryKeys,
         signal: options.retrySignal,
         onCaptchaEvent: async event => {
           await captchaReporter(event).catch(error => {
@@ -257,6 +266,20 @@ export class ScheduledSigninService {
       }
     }
   }
+}
+
+function forumCompleted(tasks, id) {
+  return tasks.some(row => row.kind === "community" && row.key === id && ["success", "already"].includes(row.status))
+}
+
+function gameCompleted(tasks, key) {
+  const roles = tasks.filter(row => row.kind === "game" && row.key === key)
+  return roles.length > 0 && roles.every(row => ["success", "already", "skipped"].includes(row.status))
+}
+
+function retryTargetNames(forums, games = []) {
+  const names = games.map(key => `${SIGNIN_GAMES.find(game => game.key === key)?.name || key}游戏签到`)
+  return [...names, ...forums.map(id => `${communityForumName(id)}社区签到`)].join("、")
 }
 
 function qqAvatar(qq) {

@@ -24,16 +24,20 @@ function isTransientRequestFailure(error) {
     || (error.name === "TypeError" && error.message === "fetch failed")
 }
 
-async function readMissionState(client, profile, options, shortRetry) {
+async function retryRead(read, signal, shortRetry, retryable = isTransientRequestFailure) {
   const delays = shortRetry ? [5_000, 15_000] : []
   for (let attempt = 0; ; attempt++) {
-    options.signal?.throwIfAborted()
-    try { return await client.missions(profile, options) }
+    signal?.throwIfAborted()
+    try { return await read() }
     catch (error) {
-      if (!delays[attempt] || error.httpStatus === 429 || !isTransientRequestFailure(error)) throw error
-      await sleep(delays[attempt], undefined, { signal: options.signal })
+      if (!delays[attempt] || error.httpStatus === 429 || !retryable(error)) throw error
+      await sleep(delays[attempt], undefined, { signal })
     }
   }
+}
+
+function retryableRoleLookup(error) {
+  return error.httpStatus === 410 || isTransientRequestFailure(error)
 }
 
 export class MiyousheTasks {
@@ -41,7 +45,8 @@ export class MiyousheTasks {
 
   async runProfile(profile, options = {}) {
     return withMiyousheAccount(profile, async () => {
-      const tasks = [], events = []
+      const tasks = [], events = [], retryGameKeys = []
+      const scopedRetry = Array.isArray(options.gameRetryKeys) || Array.isArray(options.communityRetryForums)
       const requestOptions = { onCaptchaEvent: options.onCaptchaEvent, signal: options.signal, beforeRequest: options.beforeRequest }
       const sendRequest = (url, selectedProfile, config = {}) => this.client.request(url, selectedProfile, { ...requestOptions, ...config })
       const run = async (kind, key, label, work) => {
@@ -51,15 +56,16 @@ export class MiyousheTasks {
           options.signal?.throwIfAborted()
           if (isAccountChangedError(error)) throw error
           row = { kind, key, label, status: "failed", message: error.message }
+          if (kind === "roles" && retryableRoleLookup(error)) row.retryable = true
           if ((kind === "community" || kind === "missions" && key === "before") && isTransientRequestFailure(error)) row.retryable = true
         }
         tasks.push(row); events.push({ type: "task:result", ...row }); return row
       }
-      for (const side of options.communityRetryForums ? [] : ["cn", "os"]) {
+      for (const side of scopedRetry ? ["cn"] : ["cn", "os"]) {
         const cfg = profile.games?.[side]
         if (!cfg?.enable) continue
         for (const game of SIGNIN_GAMES) {
-          if (!cfg[game.key]?.checkin) continue
+          if (!cfg[game.key]?.checkin || (scopedRetry && !options.gameRetryKeys?.includes(game.key))) continue
           if (side === "os" && !game.osAct) continue
           if (side === "os") {
             await run("game_os", game.key, `${game.name}国际服`, async () => {
@@ -78,8 +84,16 @@ export class MiyousheTasks {
               return { message: "已确认签到" }
             })
           } else {
-            const roles = await run("roles", game.key, `${game.name}角色查询`, async () => ({ roles: this.client.assert(await sendRequest(`${api}/binding/api/getUserGameRolesByCookie`, profile, { params: { game_biz: game.biz }, web: true })).list || [] }))
-            if (roles.status === "failed") continue
+            const roles = await run("roles", game.key, `${game.name}角色查询`, async () => {
+              const result = await retryRead(() => sendRequest(`${api}/binding/api/getUserGameRolesByCookie`, profile, {
+                params: { game_biz: game.biz }, web: true,
+              }), options.signal, options.shortReadRetry, retryableRoleLookup)
+              return { roles: this.client.assert(result).list || [] }
+            })
+            if (roles.status === "failed") {
+              if (roles.retryable) retryGameKeys.push(game.key)
+              continue
+            }
             tasks.pop(); events.pop()
             const eligible = roles.roles.filter(role => !(cfg[game.key].black_list || []).map(String).includes(String(role.game_uid)))
             if (!eligible.length) { tasks.push({ kind: "game", key: game.key, label: game.name, status: "skipped", message: "无可签到角色" }); continue }
@@ -99,14 +113,14 @@ export class MiyousheTasks {
           }
           await this.sleep()
         }
-        if (cfg.hna?.checkin) tasks.push({ kind: "game", key: "hna", label: "因缘精灵", status: "skipped", message: "暂无经核实的游戏签到活动，社区签到独立执行" })
+        if (!scopedRetry && cfg.hna?.checkin) tasks.push({ kind: "game", key: "hna", label: "因缘精灵", status: "skipped", message: "暂无经核实的游戏签到活动，社区签到独立执行" })
       }
       const cloudGames = [
         { side: "cn", key: "genshin", url: "https://api-cloudgame.mihoyo.com/hk4e_cg_cn/wallet/wallet/get" },
         { side: "cn", key: "zzz", url: "https://cg-nap-api.mihoyo.com/nap_cn/cg/wallet/wallet/get" },
         { side: "os", key: "genshin", url: "https://sg-cg-api.hoyoverse.com/hk4e_global/cg/wallet/wallet/get" },
       ]
-      for (const { side, key, url } of options.communityRetryForums ? [] : cloudGames) {
+      for (const { side, key, url } of scopedRetry ? [] : cloudGames) {
         const group = profile.cloud_games?.[side], cfg = group?.[key]
         if (group?.enable === false) continue
         if (cfg?.enable) await run("cloud", `${side}:${key}`, `云${key === "zzz" ? "绝区零" : "原神"}${side === "os" ? "国际服" : ""}`, async () => {
@@ -121,12 +135,12 @@ export class MiyousheTasks {
       const bbs = profile.mihoyobbs
       const requestedForums = (bbs?.checkin_list || []).map(String)
       const signForums = (bbs?.tasks || bbs)?.checkin
-        ? [...new Set(requestedForums)].filter(id => Object.hasOwn(forums, id) && (!options.communityRetryForums || options.communityRetryForums.includes(id)))
+        ? [...new Set(requestedForums)].filter(id => Object.hasOwn(forums, id) && (!scopedRetry || options.communityRetryForums?.includes(id)))
         : []
-      if (bbs?.enable && (!options.communityRetryForums || signForums.length)) {
+      if (bbs?.enable && (!scopedRetry || signForums.length)) {
         const cfg = profile.mihoyobbs, enabled = cfg.tasks || cfg
         const state = await run("missions", "before", "社区任务状态", async () => ({
-          data: await readMissionState(this.client, profile, requestOptions, options.shortCommunityRetry && signForums.length && profile.device?.id && profile.device?.fp),
+          data: await retryRead(() => this.client.missions(profile, requestOptions), options.signal, options.shortReadRetry && signForums.length && profile.device?.id && profile.device?.fp),
         }))
         before = state.data
         if (state.status !== "failed" && profile.device?.id && profile.device?.fp) {
@@ -140,7 +154,7 @@ export class MiyousheTasks {
             await this.sleep()
           }
           const states = Array.isArray(before.states) ? before.states : []
-          const pending = options.communityRetryForums ? [] : [["read", 59], ["like", 60], ["share", 61]].filter(([key, id]) => enabled[key] && states.some(s => Number(s.mission_id) === id && !s.is_get_award))
+          const pending = scopedRetry ? [] : [["read", 59], ["like", 60], ["share", 61]].filter(([key, id]) => enabled[key] && states.some(s => Number(s.mission_id) === id && !s.is_get_award))
           if (pending.length) {
             const forumId = (cfg.checkin_list || []).find(id => forums[id])
             const posts = await run("posts", "list", "社区帖子查询", async () => {
@@ -176,11 +190,12 @@ export class MiyousheTasks {
       const balance = Number(after?.total_points), received = Number(after?.already_received_points), initial = Number(before?.already_received_points)
       const coins = after && [balance, received, initial].every(Number.isFinite) ? { balance, received, gained: Math.max(0, received - initial) } : null
       const rows = tasks.map(({ roles, posts, data, ...row }) => row)
-      const ok = (!options.communityRetryForums || rows.some(row => row.kind === "community" && ["success", "already"].includes(row.status)))
+      const ok = (!scopedRetry || rows.some(row => (row.kind === "game" && ["skipped", "success", "already"].includes(row.status))
+        || (row.kind === "community" && ["success", "already"].includes(row.status))))
         && !rows.some(row => ["failed", "unverified"].includes(row.status))
       const message = [...rows.map(row => `${row.label}：${row.message || row.status}`), ...(coins ? [`米游币：本次增加 ${coins.gained}，今日已领 ${coins.received}，余额 ${coins.balance}`] : [])].join("\n")
       options.signal?.throwIfAborted()
-      return { ok, tasks: rows, events, coins, message, retryCommunityForums }
+      return { ok, tasks: rows, events, coins, message, retryCommunityForums, retryGameKeys }
     })
   }
 }

@@ -14,8 +14,8 @@ export class ProfileSigninService {
     this.beforeRequest = options.beforeRequest
   }
 
-  async run({ qq, profileId = 1, profile, refresh = true, onCaptchaEvent, communityRetryForums, signal, source = "manual", beforeRequest = this.beforeRequest } = {}) {
-    const render = this.render && !communityRetryForums
+  async run({ qq, profileId = 1, profile, refresh = true, onCaptchaEvent, communityRetryForums, gameRetryKeys, signal, source = "manual", beforeRequest = this.beforeRequest } = {}) {
+    const render = this.render && !communityRetryForums && !gameRetryKeys
     const userId = String(qq || profile?.user?.qq || "")
     const id = Number(profileId || profile?.profile?.id || 1)
     let activeProfile = profile || await loadProfile(userId, id)
@@ -58,8 +58,9 @@ export class ProfileSigninService {
         onCaptchaEvent,
         beforeRequest: guard,
         communityRetryForums,
+        gameRetryKeys,
         signal,
-        shortCommunityRetry: source === "scheduled",
+        shortReadRetry: source === "scheduled" || Boolean(gameRetryKeys?.length),
       })
       const image = render
         ? await renderSigninResult({ result, profile: activeProfile, skipped }).catch(error => {
@@ -83,7 +84,7 @@ export class ProfileSigninService {
       return this.failure({
         stage: "runner",
         profile: activeProfile,
-        error: signal?.aborted ? new Error("已到次日，今日社区签到补跑已停止。", { cause: error }) : error,
+        error: signal?.aborted ? new Error("已到次日，今日签到补跑已停止。", { cause: error }) : error,
         message: "米游社任务执行失败。",
         advice: "请确认 profile 登录态、设备信息及验证码模型。",
         source,
